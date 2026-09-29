@@ -1,0 +1,18 @@
+<Exp> ::= <Term> ((MINUS | PLUS) <Term>)*
+<Term> ::= <Factor> ((MUL | DIV) <Factor>)*
+<Factor> ::= (PLUS | MINUS)* <Factor>
+<Factor> ::= <Atom>
+<Atom> ::= INT | FLOAT | LPAR <Exp> RPAR
+
+PLUS é o +
+MUL é o *
+DIV é o /
+MINUS é o -
+POW é o ^
+LPAR é o (
+RPAR é o )
+INT é um inteiro qualquer
+FLOAT é um float qualquer
+ID é qualquer identificador
+LET é a palavra reservada let
+STRING algo entre aspas
