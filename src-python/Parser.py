@@ -1,4 +1,5 @@
 from error import Error
+from grammar import Grammar
 
 
 class AstInfo:
@@ -45,7 +46,7 @@ class Parser:
         self.__start([])
         Parser.singleton = self
 
-    def next_token(self):
+    def NextToken(self):
         self.tokenIndex += 1
         if self.tokenIndex < len(self.tokens):
             self.currentToken = self.tokens[self.tokenIndex]
@@ -71,7 +72,7 @@ class Parser:
 
     def __reset(self, _tokens):
         self.__start(_tokens)
-        self.next_token()
+        self.NextToken()
 
     @staticmethod
     def singletonInstance():

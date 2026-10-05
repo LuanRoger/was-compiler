@@ -44,8 +44,8 @@ class Repl(Cmd):
         astInfo = Parser.singletonInstance().Parsing(tokens)
         semanticNode, error = astInfo.node, astInfo.error
 
-        if error or not isinstance(semanticNode, Visitor):
-            return None, error
+        # if error or not isinstance(semanticNode, Visitor):
+        #     return None, error
 
         print(f'Parser: {semanticNode}')
 
