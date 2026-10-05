@@ -27,7 +27,7 @@ class NoOpBinaria:
         if ast.error:
             return ast
 
-        while Gvar1.CurrentToken().token in ops:
+        while Gvar1.CurrentToken().type in ops:
             token_operator = Gvar1.CurrentToken()
             Gvar1.NextToken()
             lado_direito = ast.registry(GVar2.Rule())

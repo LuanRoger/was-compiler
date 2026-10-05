@@ -14,8 +14,10 @@ class AstInfo:
         AstInfo.singleton = self
 
     def registry(self, ast_info):
-        if ast_info: self.error = ast_info.error
-        return ast_info
+        if ast_info:
+            self.error = ast_info.error
+            return ast_info.node
+        return None
 
     def success(self, node):
         self.node = node

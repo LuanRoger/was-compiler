@@ -28,8 +28,7 @@ class Grammar:
 
 class Exp(Grammar):
     def Rule(self):
-        pr = self.GetParserManager()
-        node = pr.registry(NoOpBinaria.Perform(Term(self.parser), (Consts.PLUS, Consts.MINUS)))
+        return NoOpBinaria.Perform(Term(self.parser), (Consts.PLUS, Consts.MINUS))
 
 class Term(Grammar):
     def Rule(self):
@@ -50,6 +49,8 @@ class Atom(Grammar):
         elif tok.type == Consts.LPAR:
             self.NextToken()
             exp = ast.registry(Exp(self.parser).Rule())
+            if ast.error:
+                return ast
             if self.CurrentToken().type == Consts.RPAR:
                 self.NextToken()
                 return ast.success(exp)
