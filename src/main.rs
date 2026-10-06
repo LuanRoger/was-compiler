@@ -1,3 +1,12 @@
+use crate::lexer::Lexer;
+
+mod lexer;
+mod span;
+mod tokens;
+
 fn main() {
-    println!("Hello, world!");
+    let source = "fn main() {}";
+    let tokens = Lexer::new(source).tokenize();
+
+    dbg!(tokens);
 }
