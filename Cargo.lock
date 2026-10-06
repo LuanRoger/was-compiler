@@ -110,6 +110,7 @@ dependencies = [
  "anyhow",
  "thiserror",
  "wasm-encoder",
+ "wasmparser",
 ]
 
 [[package]]

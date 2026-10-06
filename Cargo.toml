@@ -7,3 +7,6 @@ edition = "2024"
 anyhow = "1.0.104"
 thiserror = "2.0.21"
 wasm-encoder = "0.261.0"
+
+[dev-dependencies]
+wasmparser = { version = "0.261.0", default-features = false, features = ["std", "validate", "features"] }

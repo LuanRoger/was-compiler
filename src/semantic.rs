@@ -4,6 +4,7 @@ use thiserror::Error;
 
 use crate::{
     ast::{BinaryOp, Block, Expr, Function, Program, Statement, StatementKind, Type, UnaryOp},
+    host::HostFunctions,
     tokens::Span,
     typed_ast::{
         BuiltinFunction, FunctionId, FunctionRef, TypedBlock, TypedExpr, TypedExprKind,
@@ -78,6 +79,7 @@ struct VariableBinding {
 
 #[derive(Default)]
 pub struct SemanticAnalyzer {
+    host_functions: HostFunctions,
     functions: HashMap<String, FunctionSignature>,
     scopes: Vec<HashMap<String, VariableBinding>>,
     next_variable_id: usize,
@@ -86,6 +88,13 @@ pub struct SemanticAnalyzer {
 impl SemanticAnalyzer {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn with_host_functions(host_functions: &HostFunctions) -> Self {
+        Self {
+            host_functions: host_functions.clone(),
+            ..Self::default()
+        }
     }
 
     pub fn analyze(&mut self, program: &Program) -> Result<TypedProgram, SemanticError> {
@@ -101,6 +110,17 @@ impl SemanticAnalyzer {
                 return_type: Type::Number,
             },
         );
+
+        for function in self.host_functions.functions() {
+            self.functions.insert(
+                function.name.clone(),
+                FunctionSignature {
+                    reference: FunctionRef::Host(function.id),
+                    params: function.params.clone(),
+                    return_type: function.return_type,
+                },
+            );
+        }
 
         let result = self.analyze_program(program);
 
@@ -139,7 +159,10 @@ impl SemanticAnalyzer {
             functions.push(self.analyze_function(function, FunctionId(index))?);
         }
 
-        Ok(TypedProgram { functions })
+        Ok(TypedProgram {
+            host_functions: self.host_functions.functions().to_vec(),
+            functions,
+        })
     }
 
     fn analyze_function(

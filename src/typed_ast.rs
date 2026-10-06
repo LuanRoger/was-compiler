@@ -1,5 +1,6 @@
 use crate::{
     ast::{BinaryOp, Type, UnaryOp},
+    host::{HostFunction, HostFunctionId},
     tokens::Span,
 };
 
@@ -17,6 +18,7 @@ pub enum BuiltinFunction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FunctionRef {
     User(FunctionId),
+    Host(HostFunctionId),
     Builtin(BuiltinFunction),
 }
 
@@ -119,5 +121,6 @@ pub struct TypedParam {
 
 #[derive(Debug, PartialEq)]
 pub struct TypedProgram {
+    pub host_functions: Vec<HostFunction>,
     pub functions: Vec<TypedFunction>,
 }

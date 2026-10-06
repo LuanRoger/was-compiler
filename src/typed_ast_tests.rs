@@ -713,6 +713,7 @@ fn reusing_analyzer_after_success_failure_or_empty_program_resets_ids() {
                 })
                 .unwrap(),
             TypedProgram {
+                host_functions: Vec::new(),
                 functions: Vec::new()
             }
         );
@@ -749,6 +750,7 @@ fn typed_program_owns_names_literals_and_bodies_after_inputs_are_dropped() {
     assert_eq!(
         typed,
         TypedProgram {
+            host_functions: Vec::new(),
             functions: vec![TypedFunction {
                 id: FunctionId(0),
                 name: "echo".into(),
