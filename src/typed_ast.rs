@@ -22,13 +22,13 @@ pub enum FunctionRef {
     Builtin(BuiltinFunction),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TypedExpr {
     pub kind: TypedExprKind,
     pub ty: Type,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TypedExprKind {
     Number(String),
     String(String),
@@ -64,7 +64,7 @@ pub enum TypedExprKind {
     },
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TypedStatement {
     pub kind: TypedStatementKind,
     pub span: Span,
@@ -72,7 +72,7 @@ pub struct TypedStatement {
 
 pub type TypedBlock = Vec<TypedStatement>;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TypedStatementKind {
     Let {
         id: VariableId,
@@ -101,7 +101,7 @@ pub enum TypedStatementKind {
     Expression(TypedExpr),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TypedFunction {
     pub id: FunctionId,
     pub name: String,
@@ -111,7 +111,7 @@ pub struct TypedFunction {
     pub span: Span,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TypedParam {
     pub id: VariableId,
     pub name: String,
@@ -119,7 +119,7 @@ pub struct TypedParam {
     pub span: Span,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TypedProgram {
     pub host_functions: Vec<HostFunction>,
     pub functions: Vec<TypedFunction>,

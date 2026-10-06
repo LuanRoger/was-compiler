@@ -6,8 +6,10 @@ use wasm_encoder::{
 };
 
 mod abi;
+mod expression;
 mod function;
 mod layout;
+mod statement;
 
 #[cfg(test)]
 mod tests;
@@ -50,7 +52,43 @@ pub enum CodegenError {
         span: Span,
     },
 
-    #[error("empty function `{function}` cannot produce its declared {return_type:?} result")]
+    #[error("unsupported {kind} expression in function `{function}` at {span:?}")]
+    UnsupportedExpression {
+        function: String,
+        kind: &'static str,
+        span: Span,
+    },
+
+    #[error("invalid number literal `{literal}` in function `{function}` at {span:?}")]
+    InvalidNumberLiteral {
+        function: String,
+        literal: String,
+        span: Span,
+    },
+
+    #[error(
+        "number literal `{literal}` is outside the finite f64 range in function `{function}` at {span:?}"
+    )]
+    NumberLiteralOutOfRange {
+        function: String,
+        literal: String,
+        span: Span,
+    },
+
+    #[error(
+        "type mismatch in function `{function}`: expected {expected:?}, found {found:?} at {span:?}"
+    )]
+    TypeMismatch {
+        function: String,
+        expected: Type,
+        found: Type,
+        span: Span,
+    },
+
+    #[error("void function `{function}` cannot return a value at {span:?}")]
+    UnexpectedReturnValue { function: String, span: Span },
+
+    #[error("function `{function}` cannot produce its declared {return_type:?} result")]
     MissingReturnValue { function: String, return_type: Type },
 
     #[error("{what} exceeds the WebAssembly u32 limit")]
@@ -96,6 +134,24 @@ pub fn compile(program: &TypedProgram) -> Result<Vec<u8>, CodegenError> {
     module.section(&code);
 
     Ok(module.finish())
+}
+
+fn expect_type(
+    function: &str,
+    expected: Type,
+    found: Type,
+    span: Span,
+) -> Result<(), CodegenError> {
+    if expected != found {
+        return Err(CodegenError::TypeMismatch {
+            function: function.into(),
+            expected,
+            found,
+            span,
+        });
+    }
+
+    Ok(())
 }
 
 fn checked_u32(value: usize, what: &'static str) -> Result<u32, CodegenError> {

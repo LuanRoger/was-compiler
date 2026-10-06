@@ -5,6 +5,7 @@ use crate::{
     codegen::{self, CodegenError},
     host::{HostFunctionId, HostFunctions, HostRegistrationError},
     lexer::Lexer,
+    optimization::{self, OptimizationLevel},
     parser::{ParseError, Parser},
     semantic::{SemanticAnalyzer, SemanticError},
     typed_ast::TypedProgram,
@@ -22,14 +23,35 @@ pub enum CompileError {
     Codegen(#[from] CodegenError),
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct CompilerOptions {
+    pub optimization_level: OptimizationLevel,
+}
+
 #[derive(Debug, Default)]
 pub struct Compiler {
+    options: CompilerOptions,
     host_functions: HostFunctions,
 }
 
 impl Compiler {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn with_options(options: CompilerOptions) -> Self {
+        Self {
+            options,
+            ..Self::default()
+        }
+    }
+
+    pub fn options(&self) -> &CompilerOptions {
+        &self.options
+    }
+
+    pub fn set_optimization_level(&mut self, level: OptimizationLevel) {
+        self.options.optimization_level = level;
     }
 
     pub fn register_host_function(
@@ -59,7 +81,9 @@ impl Compiler {
     }
 
     pub fn compile(&self, program: &TypedProgram) -> Result<Vec<u8>, CodegenError> {
-        codegen::compile(program)
+        let optimized = optimization::optimize(program, self.options.optimization_level);
+
+        codegen::compile(optimized.as_ref())
     }
 
     pub fn compile_source(&self, source: &str) -> Result<Vec<u8>, CompileError> {
@@ -90,6 +114,87 @@ mod tests {
             .unwrap();
 
         compiler
+    }
+
+    #[test]
+    fn default_compiler_disables_optimization() {
+        assert_eq!(
+            Compiler::new().options().optimization_level,
+            OptimizationLevel::None
+        );
+        assert_eq!(Compiler::default().options(), &CompilerOptions::default());
+    }
+
+    #[test]
+    fn options_and_level_changes_preserve_host_registration() {
+        let mut compiler = Compiler::with_options(CompilerOptions {
+            optimization_level: OptimizationLevel::Standard,
+        });
+
+        assert_eq!(
+            compiler.options().optimization_level,
+            OptimizationLevel::Standard
+        );
+
+        compiler
+            .register_host_function("clock", "env", "clock", vec![], Type::Number)
+            .unwrap();
+        compiler.set_optimization_level(OptimizationLevel::Aggressive);
+
+        assert_eq!(
+            compiler.options().optimization_level,
+            OptimizationLevel::Aggressive
+        );
+        assert_eq!(compiler.host_functions().functions().len(), 1);
+        assert_eq!(compiler.host_functions().functions()[0].name, "clock");
+    }
+
+    #[test]
+    fn optimization_levels_preserve_wasm_and_the_input_program() {
+        let mut compiler = compiler();
+        let source = "fn main() -> number { return 42; } fn decimal() -> number { return 0.25; }";
+        let program = compiler.analyze(source).unwrap();
+        let original = program.clone();
+        let expected = compiler.compile(&program).unwrap();
+
+        for level in [
+            OptimizationLevel::None,
+            OptimizationLevel::Basic,
+            OptimizationLevel::Standard,
+            OptimizationLevel::Aggressive,
+        ] {
+            compiler.set_optimization_level(level);
+
+            assert_eq!(compiler.compile(&program).unwrap(), expected);
+            assert_eq!(compiler.compile_source(source).unwrap(), expected);
+            assert_eq!(compiler.analyze(source).unwrap(), original);
+            assert_eq!(program, original);
+        }
+    }
+
+    #[test]
+    fn optimization_levels_preserve_errors() {
+        let mut compiler = Compiler::new();
+
+        for source in [
+            "fn",
+            "fn main() -> void { missing(); }",
+            "fn main() -> number { return 1 + 2; }",
+        ] {
+            compiler.set_optimization_level(OptimizationLevel::None);
+
+            let expected = compiler.compile_source(source).unwrap_err();
+
+            for level in [
+                OptimizationLevel::Basic,
+                OptimizationLevel::Standard,
+                OptimizationLevel::Aggressive,
+            ] {
+                compiler.set_optimization_level(level);
+
+                assert_eq!(compiler.compile_source(source).unwrap_err(), expected);
+            }
+        }
     }
 
     #[test]
@@ -252,7 +357,7 @@ mod tests {
             ))
         ));
         assert!(matches!(
-            compiler.compile_source("fn main() -> number { return 1; }"),
+            compiler.compile_source("fn main() -> number { return 1 + 2; }"),
             Err(CompileError::Codegen(_))
         ));
         assert!(matches!(

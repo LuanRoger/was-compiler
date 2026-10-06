@@ -1,37 +1,24 @@
-use crate::{
-    ast::Type,
-    typed_ast::{TypedFunction, TypedStatementKind},
-};
+use crate::{ast::Type, typed_ast::TypedFunction};
 use wasm_encoder::{Function, Instruction};
 
-use super::CodegenError;
+use super::{CodegenError, statement};
 
 pub(super) fn emit(function: &TypedFunction) -> Result<Function, CodegenError> {
-    if let Some(statement) = function.body.first() {
-        let kind = match &statement.kind {
-            TypedStatementKind::Let { .. } => "let",
-            TypedStatementKind::Assignment { .. } => "assignment",
-            TypedStatementKind::If { .. } => "if",
-            TypedStatementKind::While { .. } => "while",
-            TypedStatementKind::Return(_) => "return",
-            TypedStatementKind::Expression(_) => "expression",
-        };
+    let mut body = Function::new([]);
+    let mut always_returns = false;
 
-        return Err(CodegenError::UnsupportedStatement {
-            function: function.name.clone(),
-            kind,
-            span: statement.span,
-        });
+    for statement in &function.body {
+        let returns = statement::emit(statement, &mut body, function)?;
+
+        always_returns |= returns;
     }
 
-    if function.return_type != Type::Void {
+    if function.return_type != Type::Void && !always_returns {
         return Err(CodegenError::MissingReturnValue {
             function: function.name.clone(),
             return_type: function.return_type,
         });
     }
-
-    let mut body = Function::new([]);
 
     body.instruction(&Instruction::End);
 

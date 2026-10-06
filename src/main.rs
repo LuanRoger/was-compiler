@@ -2,9 +2,11 @@ use was_compiler::Compiler;
 
 fn main() -> anyhow::Result<()> {
     let compiler = Compiler::new();
-    let wasm = compiler.compile_source("fn main() -> void {}")?;
+    let wasm = compiler.compile_source("fn main() -> number { return 42; }")?;
 
-    println!("Compiled {} bytes of WebAssembly", wasm.len());
+    let wat = wasmprinter::print_bytes(&wasm)?;
+
+    print!("{wat}");
 
     Ok(())
 }
