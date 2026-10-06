@@ -15,6 +15,7 @@ pub enum ParseError {
         found: &'static str,
         span: Span,
     },
+
     #[error("Assignment target must be a variable or array element at {span:?}")]
     InvalidAssignmentTarget { span: Span },
 }
@@ -30,13 +31,15 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
     }
 
     pub fn parse_program(&mut self) -> Result<Program, ParseError> {
-        let mut functions = vec![self.parse_function()?];
+        let mut functions = vec![];
+
         while !self.at_end() {
             functions.push(self.parse_function()?);
         }
 
         if self.check(&TokenKind::Eof) {
             self.advance();
+
             if self.peek().is_some() {
                 return Err(self.unexpected("end of input"));
             }
@@ -48,19 +51,24 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
     fn parse_function(&mut self) -> Result<Function, ParseError> {
         let start = self.expect(TokenKind::Fn)?.span.start();
         let name = self.parse_identifier()?;
+
         self.expect(TokenKind::LeftParen)?;
 
         let mut params = Vec::new();
+
         if !self.check(&TokenKind::RightParen) {
             loop {
                 params.push(self.parse_param()?);
+
                 if !self.consume(TokenKind::Comma) {
                     break;
                 }
             }
         }
+
         self.expect(TokenKind::RightParen)?;
         self.expect(TokenKind::Arrow)?;
+
         let return_type = self.parse_type()?;
         let body = self.parse_block()?;
 
@@ -76,8 +84,11 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
     fn parse_param(&mut self) -> Result<Param, ParseError> {
         let start = self.current_span().start();
         let name = self.parse_identifier()?;
+
         self.expect(TokenKind::Colon)?;
+
         let ty = self.parse_type()?;
+
         Ok(Param {
             name,
             ty,
@@ -93,9 +104,12 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
             Some(TokenKind::Void) => Type::Void,
             _ => return Err(self.unexpected("type")),
         };
+
         self.advance();
+
         if ty == Type::Number && self.consume(TokenKind::LeftBracket) {
             self.expect(TokenKind::RightBracket)?;
+
             Ok(Type::NumberArray)
         } else {
             Ok(ty)
@@ -104,19 +118,25 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
 
     fn parse_block(&mut self) -> Result<Block, ParseError> {
         self.expect(TokenKind::LeftBrace)?;
+
         let mut statements = Vec::new();
+
         while !self.check(&TokenKind::RightBrace) {
             if self.at_end() {
                 return Err(self.unexpected("}"));
             }
+
             statements.push(self.parse_statement()?);
         }
+
         self.expect(TokenKind::RightBrace)?;
+
         Ok(statements)
     }
 
     fn parse_statement(&mut self) -> Result<Statement, ParseError> {
         let start = self.current_span().start();
+
         let kind = match self.peek().map(|token| &token.kind) {
             Some(TokenKind::Let) => self.parse_let()?,
             Some(TokenKind::If) => self.parse_if()?,
@@ -124,6 +144,7 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
             Some(TokenKind::Return) => self.parse_return()?,
             _ => self.parse_expression_statement()?,
         };
+
         Ok(Statement {
             kind,
             span: self.span_since(start),
@@ -138,46 +159,58 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
         self.expect(TokenKind::Equal)?;
         let value = self.parse_expression()?;
         self.expect(TokenKind::Semicolon)?;
+
         Ok(StatementKind::Let { name, ty, value })
     }
 
     fn parse_if(&mut self) -> Result<StatementKind, ParseError> {
         self.expect(TokenKind::If)?;
+
         let cond = Box::new(self.parse_expression()?);
         let then = self.parse_block()?;
+
         let else_ = if self.consume(TokenKind::Else) {
             Some(self.parse_block()?)
         } else {
             None
         };
+
         Ok(StatementKind::If { cond, then, else_ })
     }
 
     fn parse_while(&mut self) -> Result<StatementKind, ParseError> {
         self.expect(TokenKind::While)?;
+
         let cond = Box::new(self.parse_expression()?);
         let body = self.parse_block()?;
+
         Ok(StatementKind::While { cond, body })
     }
 
     fn parse_return(&mut self) -> Result<StatementKind, ParseError> {
         self.expect(TokenKind::Return)?;
+
         let value = if self.check(&TokenKind::Semicolon) {
             None
         } else {
             Some(self.parse_expression()?)
         };
+
         self.expect(TokenKind::Semicolon)?;
+
         Ok(StatementKind::Return(value))
     }
 
     fn parse_expression_statement(&mut self) -> Result<StatementKind, ParseError> {
         let start = self.current_span().start();
+
         let starts_with_identifier = matches!(
             self.peek().map(|token| &token.kind),
             Some(TokenKind::Identifier(_))
         );
+
         let expr = self.parse_expression()?;
+
         let kind = if self.check(&TokenKind::Equal) {
             if !starts_with_identifier || !matches!(expr, Expr::Identifier(_) | Expr::Index { .. })
             {
@@ -185,7 +218,9 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
                     span: self.span_since(start),
                 });
             }
+
             self.advance();
+
             let value = self.parse_expression()?;
             StatementKind::Assignment {
                 target: expr,
@@ -194,7 +229,9 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
         } else {
             StatementKind::Expression(expr)
         };
+
         self.expect(TokenKind::Semicolon)?;
+
         Ok(kind)
     }
 
@@ -204,11 +241,14 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
 
     fn parse_binary(&mut self, min_precedence: u8) -> Result<Expr, ParseError> {
         let mut left = self.parse_unary()?;
+
         while let Some((op, precedence)) = self.binary_operator() {
             if precedence < min_precedence {
                 break;
             }
+
             self.advance();
+
             let right = self.parse_binary(precedence + 1)?;
             left = Expr::Binary {
                 left: Box::new(left),
@@ -216,6 +256,7 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
                 right: Box::new(right),
             };
         }
+
         Ok(left)
     }
 
@@ -223,17 +264,22 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
         Some(match &self.peek()?.kind {
             TokenKind::OrOr => (BinaryOp::Or, 1),
             TokenKind::AndAnd => (BinaryOp::And, 2),
+
             TokenKind::EqualEqual => (BinaryOp::Equal, 3),
             TokenKind::BangEqual => (BinaryOp::NotEqual, 3),
+
             TokenKind::Less => (BinaryOp::LessThan, 4),
             TokenKind::LessEqual => (BinaryOp::LessThanOrEqual, 4),
             TokenKind::Greater => (BinaryOp::GreaterThan, 4),
             TokenKind::GreaterEqual => (BinaryOp::GreaterThanOrEqual, 4),
+
             TokenKind::Plus => (BinaryOp::Add, 5),
             TokenKind::Minus => (BinaryOp::Subtract, 5),
+
             TokenKind::Star => (BinaryOp::Multiply, 6),
             TokenKind::Slash => (BinaryOp::Divide, 6),
             TokenKind::Percent => (BinaryOp::Remainder, 6),
+
             _ => return None,
         })
     }
@@ -244,7 +290,9 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
             Some(TokenKind::Minus) => UnaryOp::Negate,
             _ => return self.parse_primary(),
         };
+
         self.advance();
+
         Ok(Expr::Unary {
             op,
             expr: Box::new(self.parse_unary()?),
@@ -257,14 +305,19 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
             Some(TokenKind::StringLiteral(value)) => Expr::String(value.clone()),
             Some(TokenKind::True) => Expr::Bool(true),
             Some(TokenKind::False) => Expr::Bool(false),
+
             Some(TokenKind::Identifier(_)) => {
                 let name = self.parse_identifier()?;
+
                 return if self.consume(TokenKind::LeftParen) {
                     let args = self.parse_expression_list(TokenKind::RightParen)?;
+
                     Ok(Expr::Call { func: name, args })
                 } else if self.consume(TokenKind::LeftBracket) {
                     let index = Box::new(self.parse_expression()?);
+
                     self.expect(TokenKind::RightBracket)?;
+
                     Ok(Expr::Index {
                         expr: Box::new(Expr::Identifier(name)),
                         index,
@@ -273,35 +326,48 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
                     Ok(Expr::Identifier(name))
                 };
             }
+
             Some(TokenKind::LeftBracket) => {
                 self.advance();
+
                 return Ok(Expr::Array(
                     self.parse_expression_list(TokenKind::RightBracket)?,
                 ));
             }
+
             Some(TokenKind::LeftParen) => {
                 self.advance();
+
                 let expr = self.parse_expression()?;
+
                 self.expect(TokenKind::RightParen)?;
+
                 return Ok(expr);
             }
+
             _ => return Err(self.unexpected("expression")),
         };
+
         self.advance();
+
         Ok(expr)
     }
 
     fn parse_expression_list(&mut self, end: TokenKind<'source>) -> Result<Vec<Expr>, ParseError> {
         let mut expressions = Vec::new();
+
         if !self.check(&end) {
             loop {
                 expressions.push(self.parse_expression()?);
+
                 if !self.consume(TokenKind::Comma) {
                     break;
                 }
             }
         }
+
         self.expect(end)?;
+
         Ok(expressions)
     }
 
@@ -309,9 +375,12 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
         match self.peek().map(|token| &token.kind) {
             Some(TokenKind::Identifier(name)) => {
                 let name = name.to_string();
+
                 self.advance();
+
                 Ok(name)
             }
+
             _ => Err(self.unexpected("identifier")),
         }
     }
@@ -322,7 +391,9 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
 
     fn advance(&mut self) -> Option<&'tokens Token<'source>> {
         let token = self.peek()?;
+
         self.current += 1;
+
         Some(token)
     }
 
@@ -367,6 +438,7 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
             .checked_sub(1)
             .and_then(|index| self.tokens.get(index))
             .map_or(start, |token| token.span.end());
+
         Span::new(start, end)
     }
 
@@ -389,40 +461,53 @@ fn token_name(kind: &TokenKind<'_>) -> &'static str {
         TokenKind::Else => "else",
         TokenKind::While => "while",
         TokenKind::Return => "return",
+
         TokenKind::True => "true",
         TokenKind::False => "false",
+
         TokenKind::Number => "number",
         TokenKind::Bool => "bool",
         TokenKind::String => "string",
         TokenKind::Void => "void",
+
         TokenKind::Identifier(_) => "identifier",
         TokenKind::NumberLiteral(_) => "number literal",
         TokenKind::StringLiteral(_) => "string literal",
+
         TokenKind::LeftParen => "(",
         TokenKind::RightParen => ")",
+
         TokenKind::LeftBrace => "{",
         TokenKind::RightBrace => "}",
+
         TokenKind::LeftBracket => "[",
         TokenKind::RightBracket => "]",
+
         TokenKind::Comma => ",",
         TokenKind::Colon => ":",
         TokenKind::Semicolon => ";",
+
         TokenKind::Plus => "+",
         TokenKind::Minus => "-",
         TokenKind::Star => "*",
         TokenKind::Slash => "/",
         TokenKind::Percent => "%",
+
         TokenKind::Equal => "=",
         TokenKind::EqualEqual => "==",
         TokenKind::Bang => "!",
         TokenKind::BangEqual => "!=",
+
         TokenKind::Less => "<",
         TokenKind::LessEqual => "<=",
         TokenKind::Greater => ">",
         TokenKind::GreaterEqual => ">=",
+
         TokenKind::AndAnd => "&&",
         TokenKind::OrOr => "||",
+
         TokenKind::Arrow => "->",
+
         TokenKind::Eof => "end of input",
         TokenKind::Invalid => "invalid token",
     }
@@ -435,17 +520,21 @@ mod tests {
 
     fn parse(source: &str) -> Result<Program, ParseError> {
         let tokens = Lexer::new(source).tokenize();
+
         Parser::new(&tokens).parse_program()
     }
 
     fn expression(source: &str) -> Expr {
         let tokens = Lexer::new(source).tokenize();
         let mut parser = Parser::new(&tokens);
+
         let expr = parser.parse_expression().unwrap();
+
         assert!(
             parser.check(&TokenKind::Eof),
             "unconsumed expression tokens"
         );
+
         expr
     }
 
@@ -469,8 +558,11 @@ mod tests {
     fn parses_functions_parameters_and_types() {
         let source = "fn compute(n: number, xs: number[], flag: bool, text: string) -> number { return n; }\nfn main() -> void {}";
         let program = parse(source).unwrap();
+
         assert_eq!(program.functions.len(), 2);
+
         let function = &program.functions[0];
+
         assert_eq!(function.name, "compute");
         assert_eq!(function.return_type, Type::Number);
         assert_eq!(
@@ -515,6 +607,7 @@ mod tests {
         let source = "fn main() -> void { let xs: number[] = [1, 2]; xs[0] = 3; value = xs[1]; }";
         let program = parse(source).unwrap();
         let statements = &program.functions[0].body;
+
         assert_eq!(
             statements[0].kind,
             StatementKind::Let {
@@ -543,7 +636,9 @@ mod tests {
                 },
             }
         );
+
         let start = source.find("let").unwrap();
+
         assert_eq!(
             statements[0].span,
             Span::new(start, start + "let xs: number[] = [1, 2];".len())
@@ -555,6 +650,7 @@ mod tests {
         let source = "fn main() -> void { if true { while false { return; } } else { if false { return 1; } } if false {} }";
         let program = parse(source).unwrap();
         let statements = &program.functions[0].body;
+
         let StatementKind::If {
             cond,
             then,
@@ -563,25 +659,32 @@ mod tests {
         else {
             panic!("expected if/else");
         };
+
         assert_eq!(**cond, Expr::Bool(true));
+
         let StatementKind::While { cond, body } = &then[0].kind else {
             panic!("expected while");
         };
+
         assert_eq!(**cond, Expr::Bool(false));
         assert_eq!(body[0].kind, StatementKind::Return(None));
+
         let StatementKind::If {
             then, else_: None, ..
         } = &otherwise[0].kind
         else {
             panic!("expected nested if");
         };
+
         assert_eq!(then[0].kind, StatementKind::Return(Some(number("1"))));
         assert!(matches!(
             statements[1].kind,
             StatementKind::If { else_: None, .. }
         ));
+
         let start = source.find("if true").unwrap();
         let end = source.find(" if false {}").unwrap();
+
         assert_eq!(statements[0].span, Span::new(start, end));
     }
 
@@ -610,7 +713,9 @@ mod tests {
         assert_eq!(expression("12.34"), number("12.34"));
         assert_eq!(expression("\"\""), Expr::String(String::new()));
         assert_eq!(expression("name1"), identifier("name1"));
+
         let program = parse("fn main() -> void { call(); }").unwrap();
+
         assert_eq!(
             program.functions[0].body[0].kind,
             StatementKind::Expression(Expr::Call {
@@ -735,6 +840,7 @@ mod tests {
     fn reports_missing_semicolon_at_the_offending_token() {
         let source = "fn main() -> number { return 1 }";
         let position = source.find('}').unwrap();
+
         assert_eq!(
             parse(source).unwrap_err(),
             ParseError::UnexpectedToken {
@@ -748,6 +854,7 @@ mod tests {
     #[test]
     fn reports_missing_closing_brace_at_eof() {
         let source = "fn main() -> void {";
+
         assert_eq!(
             parse(source).unwrap_err(),
             ParseError::UnexpectedToken {
@@ -762,6 +869,7 @@ mod tests {
     fn rejects_invalid_assignment_targets() {
         for target in ["1", "a + b", "call()", "[1]", "(a)", "-a", "!a"] {
             let source = format!("fn main() -> void {{ {target} = 1; }}");
+
             assert_eq!(
                 parse(&source).unwrap_err(),
                 ParseError::InvalidAssignmentTarget {
@@ -811,9 +919,13 @@ mod tests {
     fn handles_token_slices_without_eof_and_empty_slices() {
         let source = "fn main() -> void {}";
         let mut tokens = Lexer::new(source).tokenize();
+
         tokens.pop();
+
         assert!(Parser::new(&tokens).parse_program().is_ok());
+
         tokens.pop();
+
         assert_eq!(
             Parser::new(&tokens).parse_program().unwrap_err(),
             ParseError::UnexpectedToken {
@@ -835,7 +947,9 @@ mod tests {
     #[test]
     fn rejects_tokens_after_eof() {
         let mut tokens = Lexer::new("fn main() -> void {}").tokenize();
+
         tokens.push(Token::new(TokenKind::Fn, Span::new(20, 22)));
+
         assert_eq!(
             Parser::new(&tokens).parse_program().unwrap_err(),
             ParseError::UnexpectedToken {
@@ -849,6 +963,7 @@ mod tests {
     #[test]
     fn truncated_programs_never_panic() {
         let tokens = Lexer::new("fn compute(xs: number[], x: number) -> number { let y: number = xs[x] + call(1, 2); if y > 0 { return y; } else { return -y; } }").tokenize();
+
         for end in 0..tokens.len() - 1 {
             assert!(
                 Parser::new(&tokens[..end]).parse_program().is_err(),
