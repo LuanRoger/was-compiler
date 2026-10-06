@@ -19,7 +19,7 @@ fn assert_valid(source: &str) {
     let program = parse(source);
 
     assert_eq!(
-        SemanticAnalyzer::new().analyze(&program),
+        SemanticAnalyzer::new().analyze(&program).map(|_| ()),
         Ok(()),
         "{source}"
     );
@@ -29,7 +29,7 @@ fn assert_error(source: &str, expected: SemanticError) {
     let program = parse(source);
 
     assert_eq!(
-        SemanticAnalyzer::new().analyze(&program),
+        SemanticAnalyzer::new().analyze(&program).map(|_| ()),
         Err(expected),
         "{source}"
     );
@@ -56,9 +56,14 @@ fn accepts_empty_program_without_an_entrypoint() {
     };
     let mut analyzer = SemanticAnalyzer::new();
 
-    assert_eq!(analyzer.analyze(&program), Ok(()));
-    assert_eq!(analyzer.analyze(&parse("fn helper() -> void {}")), Ok(()));
-    assert_eq!(analyzer.analyze(&program), Ok(()));
+    assert_eq!(analyzer.analyze(&program).map(|_| ()), Ok(()));
+    assert_eq!(
+        analyzer
+            .analyze(&parse("fn helper() -> void {}"))
+            .map(|_| ()),
+        Ok(())
+    );
+    assert_eq!(analyzer.analyze(&program).map(|_| ()), Ok(()));
 }
 
 #[test]
@@ -1053,9 +1058,9 @@ fn analyzer_can_reanalyze_the_same_program_after_success_or_failure() {
     let mut analyzer = SemanticAnalyzer::new();
 
     for _ in 0..3 {
-        assert_eq!(analyzer.analyze(&valid), Ok(()));
+        assert_eq!(analyzer.analyze(&valid).map(|_| ()), Ok(()));
         assert_eq!(
-            analyzer.analyze(&invalid),
+            analyzer.analyze(&invalid).map(|_| ()),
             Err(SemanticError::UndefinedVariable {
                 name: "missing".into(),
                 span: span(source, "missing;"),
@@ -1069,12 +1074,12 @@ fn analyzer_does_not_preserve_functions_or_locals_after_success() {
     let mut analyzer = SemanticAnalyzer::new();
     let first = parse("fn carried(hidden: number) -> void { let local: bool = true; }");
 
-    assert_eq!(analyzer.analyze(&first), Ok(()));
+    assert_eq!(analyzer.analyze(&first).map(|_| ()), Ok(()));
 
     let source = "fn next() -> void { carried(1); }";
 
     assert_eq!(
-        analyzer.analyze(&parse(source)),
+        analyzer.analyze(&parse(source)).map(|_| ()),
         Err(SemanticError::UndefinedFunction {
             name: "carried".into(),
             span: span(source, "carried(1);"),
@@ -1082,12 +1087,12 @@ fn analyzer_does_not_preserve_functions_or_locals_after_success() {
     );
 
     for name in ["hidden", "local"] {
-        assert_eq!(analyzer.analyze(&first), Ok(()));
+        assert_eq!(analyzer.analyze(&first).map(|_| ()), Ok(()));
 
         let source = format!("fn next() -> void {{ {name}; }}");
 
         assert_eq!(
-            analyzer.analyze(&parse(&source)),
+            analyzer.analyze(&parse(&source)).map(|_| ()),
             Err(SemanticError::UndefinedVariable {
                 name: name.into(),
                 span: span(&source, &format!("{name};")),
@@ -1096,9 +1101,11 @@ fn analyzer_does_not_preserve_functions_or_locals_after_success() {
     }
 
     assert_eq!(
-        analyzer.analyze(&parse(
-            "fn carried(hidden: bool) -> bool { return hidden; }"
-        )),
+        analyzer
+            .analyze(&parse(
+                "fn carried(hidden: bool) -> bool { return hidden; }"
+            ))
+            .map(|_| ()),
         Ok(())
     );
 }
@@ -1121,7 +1128,7 @@ fn analyzer_cleans_nested_scopes_and_registered_functions_after_failure() {
 
     for name in ["hidden", "outer", "inner"] {
         assert_eq!(
-            analyzer.analyze(&invalid),
+            analyzer.analyze(&invalid).map(|_| ()),
             Err(SemanticError::UndefinedVariable {
                 name: "missing".into(),
                 span: span(source, "missing;"),
@@ -1131,7 +1138,7 @@ fn analyzer_cleans_nested_scopes_and_registered_functions_after_failure() {
         let next = format!("fn next() -> void {{ {name}; }}");
 
         assert_eq!(
-            analyzer.analyze(&parse(&next)),
+            analyzer.analyze(&parse(&next)).map(|_| ()),
             Err(SemanticError::UndefinedVariable {
                 name: name.into(),
                 span: span(&next, &format!("{name};")),
@@ -1144,7 +1151,7 @@ fn analyzer_cleans_nested_scopes_and_registered_functions_after_failure() {
     let next = "fn next() -> void { carried(); }";
 
     assert_eq!(
-        analyzer.analyze(&parse(next)),
+        analyzer.analyze(&parse(next)).map(|_| ()),
         Err(SemanticError::UndefinedFunction {
             name: "carried".into(),
             span: span(next, "carried();"),
@@ -1153,10 +1160,12 @@ fn analyzer_cleans_nested_scopes_and_registered_functions_after_failure() {
 
     assert!(analyzer.analyze(&invalid).is_err());
     assert_eq!(
-        analyzer.analyze(&parse(
-            "fn carried() -> number { return len([]); }
+        analyzer
+            .analyze(&parse(
+                "fn carried() -> number { return len([]); }
             fn broken(hidden: bool) -> bool { return hidden; }"
-        )),
+            ))
+            .map(|_| ()),
         Ok(())
     );
 }
@@ -1177,9 +1186,11 @@ fn analyzer_recovers_after_registration_parameter_and_return_errors() {
     ] {
         assert!(analyzer.analyze(&parse(source)).is_err(), "{source}");
         assert_eq!(
-            analyzer.analyze(&parse(
-                "fn test(value: number[]) -> number { return len(value); }"
-            )),
+            analyzer
+                .analyze(&parse(
+                    "fn test(value: number[]) -> number { return len(value); }"
+                ))
+                .map(|_| ()),
             Ok(()),
             "after {source}"
         );
@@ -1242,7 +1253,7 @@ fn rejects_manually_constructed_invalid_assignment_targets() {
         };
 
         assert_eq!(
-            SemanticAnalyzer::new().analyze(&program),
+            SemanticAnalyzer::new().analyze(&program).map(|_| ()),
             Err(SemanticError::InvalidAssignmentTarget { span: error_span })
         );
     }
@@ -1267,7 +1278,10 @@ fn manually_constructed_index_expressions_can_read_nonidentifier_arrays() {
             index: Box::new(Expr::Number("0".into())),
         }));
 
-        assert_eq!(SemanticAnalyzer::new().analyze(&program), Ok(()));
+        assert_eq!(
+            SemanticAnalyzer::new().analyze(&program).map(|_| ()),
+            Ok(())
+        );
     }
 }
 
@@ -1288,7 +1302,7 @@ fn manually_constructed_index_checks_void_base_and_preserves_statement_span() {
     };
 
     assert_eq!(
-        SemanticAnalyzer::new().analyze(&program),
+        SemanticAnalyzer::new().analyze(&program).map(|_| ()),
         Err(SemanticError::TypeMismatch {
             expected: Type::NumberArray,
             found: Type::Void,

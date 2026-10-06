@@ -5,6 +5,10 @@ use thiserror::Error;
 use crate::{
     ast::{BinaryOp, Block, Expr, Function, Program, Statement, StatementKind, Type, UnaryOp},
     tokens::Span,
+    typed_ast::{
+        BuiltinFunction, FunctionId, FunctionRef, TypedBlock, TypedExpr, TypedExprKind,
+        TypedFunction, TypedParam, TypedProgram, TypedStatement, TypedStatementKind, VariableId,
+    },
 };
 
 #[derive(Debug, Error, PartialEq)]
@@ -61,14 +65,22 @@ pub enum SemanticError {
 }
 
 struct FunctionSignature {
+    reference: FunctionRef,
     params: Vec<Type>,
     return_type: Type,
+}
+
+#[derive(Clone, Copy)]
+struct VariableBinding {
+    id: VariableId,
+    ty: Type,
 }
 
 #[derive(Default)]
 pub struct SemanticAnalyzer {
     functions: HashMap<String, FunctionSignature>,
-    scopes: Vec<HashMap<String, Type>>,
+    scopes: Vec<HashMap<String, VariableBinding>>,
+    next_variable_id: usize,
 }
 
 impl SemanticAnalyzer {
@@ -76,13 +88,15 @@ impl SemanticAnalyzer {
         Self::default()
     }
 
-    pub fn analyze(&mut self, program: &Program) -> Result<(), SemanticError> {
+    pub fn analyze(&mut self, program: &Program) -> Result<TypedProgram, SemanticError> {
         self.functions.clear();
         self.scopes.clear();
+        self.next_variable_id = 0;
 
         self.functions.insert(
             "len".into(),
             FunctionSignature {
+                reference: FunctionRef::Builtin(BuiltinFunction::Len),
                 params: vec![Type::NumberArray],
                 return_type: Type::Number,
             },
@@ -95,9 +109,10 @@ impl SemanticAnalyzer {
         result
     }
 
-    fn analyze_program(&mut self, program: &Program) -> Result<(), SemanticError> {
-        for function in &program.functions {
+    fn analyze_program(&mut self, program: &Program) -> Result<TypedProgram, SemanticError> {
+        for (index, function) in program.functions.iter().enumerate() {
             let signature = FunctionSignature {
+                reference: FunctionRef::User(FunctionId(index)),
                 params: function.params.iter().map(|param| param.ty).collect(),
                 return_type: function.return_type,
             };
@@ -118,29 +133,50 @@ impl SemanticAnalyzer {
             }
         }
 
-        for function in &program.functions {
-            self.analyze_function(function)?;
+        let mut functions = Vec::with_capacity(program.functions.len());
+
+        for (index, function) in program.functions.iter().enumerate() {
+            functions.push(self.analyze_function(function, FunctionId(index))?);
         }
 
-        Ok(())
+        Ok(TypedProgram { functions })
     }
 
-    fn analyze_function(&mut self, function: &Function) -> Result<(), SemanticError> {
+    fn analyze_function(
+        &mut self,
+        function: &Function,
+        id: FunctionId,
+    ) -> Result<TypedFunction, SemanticError> {
+        self.next_variable_id = 0;
+
         self.scopes.push(HashMap::new());
 
-        let result = self.analyze_function_body(function);
+        let result = self.analyze_function_body(function, id);
 
         self.scopes.pop();
 
         result
     }
 
-    fn analyze_function_body(&mut self, function: &Function) -> Result<(), SemanticError> {
+    fn analyze_function_body(
+        &mut self,
+        function: &Function,
+        id: FunctionId,
+    ) -> Result<TypedFunction, SemanticError> {
+        let mut params = Vec::with_capacity(function.params.len());
+
         for param in &function.params {
-            self.declare_variable(&param.name, param.ty, param.span)?;
+            let id = self.declare_variable(&param.name, param.ty, param.span)?;
+
+            params.push(TypedParam {
+                id,
+                name: param.name.clone(),
+                ty: param.ty,
+                span: param.span,
+            });
         }
 
-        let always_returns = self.analyze_block(&function.body, function.return_type)?;
+        let (body, always_returns) = self.analyze_block(&function.body, function.return_type)?;
 
         if function.return_type != Type::Void && !always_returns {
             return Err(SemanticError::MissingReturn {
@@ -149,26 +185,40 @@ impl SemanticAnalyzer {
             });
         }
 
-        Ok(())
+        Ok(TypedFunction {
+            id,
+            name: function.name.clone(),
+            params,
+            return_type: function.return_type,
+            body,
+            span: function.span,
+        })
     }
 
-    fn analyze_block(&mut self, block: &Block, return_type: Type) -> Result<bool, SemanticError> {
+    fn analyze_block(
+        &mut self,
+        block: &Block,
+        return_type: Type,
+    ) -> Result<(TypedBlock, bool), SemanticError> {
+        let mut statements = Vec::with_capacity(block.len());
         let mut always_returns = false;
 
         for statement in block {
-            let returns = self.analyze_statement(statement, return_type)?;
+            let (statement, returns) = self.analyze_statement(statement, return_type)?;
+
+            statements.push(statement);
 
             always_returns |= returns;
         }
 
-        Ok(always_returns)
+        Ok((statements, always_returns))
     }
 
     fn analyze_scoped_block(
         &mut self,
         block: &Block,
         return_type: Type,
-    ) -> Result<bool, SemanticError> {
+    ) -> Result<(TypedBlock, bool), SemanticError> {
         self.scopes.push(HashMap::new());
 
         let result = self.analyze_block(block, return_type);
@@ -182,74 +232,107 @@ impl SemanticAnalyzer {
         &mut self,
         statement: &Statement,
         return_type: Type,
-    ) -> Result<bool, SemanticError> {
+    ) -> Result<(TypedStatement, bool), SemanticError> {
         let span = statement.span;
+        let mut always_returns = false;
 
-        match &statement.kind {
+        let kind = match &statement.kind {
             StatementKind::Let { name, ty, value } => {
                 self.check_variable_type(name, *ty, span)?;
 
-                let found = self.analyze_expr(value, span)?;
+                let value = self.analyze_expr(value, span)?;
 
-                self.expect_type(*ty, found, span)?;
-                self.declare_variable(name, *ty, span)?;
+                self.expect_type(*ty, value.ty, span)?;
+
+                let id = self.declare_variable(name, *ty, span)?;
+
+                TypedStatementKind::Let {
+                    id,
+                    name: name.clone(),
+                    ty: *ty,
+                    value,
+                }
             }
 
             StatementKind::Assignment { target, value } => {
-                let expected = self.analyze_assignment_target(target, span)?;
-                let found = self.analyze_expr(value, span)?;
+                let target = self.analyze_assignment_target(target, span)?;
+                let value = self.analyze_expr(value, span)?;
 
-                self.expect_type(expected, found, span)?;
+                self.expect_type(target.ty, value.ty, span)?;
+
+                TypedStatementKind::Assignment { target, value }
             }
 
             StatementKind::If { cond, then, else_ } => {
-                let condition_type = self.analyze_expr(cond, span)?;
+                let cond = Box::new(self.analyze_expr(cond, span)?);
 
-                self.expect_type(Type::Bool, condition_type, span)?;
+                self.expect_type(Type::Bool, cond.ty, span)?;
 
-                let then_returns = self.analyze_scoped_block(then, return_type)?;
-                let else_returns = match else_ {
-                    Some(block) => self.analyze_scoped_block(block, return_type)?,
-                    None => false,
+                let (then, then_returns) = self.analyze_scoped_block(then, return_type)?;
+                let (else_, else_returns) = match else_ {
+                    Some(block) => {
+                        let (block, returns) = self.analyze_scoped_block(block, return_type)?;
+
+                        (Some(block), returns)
+                    }
+
+                    None => (None, false),
                 };
 
-                return Ok(then_returns && else_returns);
+                always_returns = then_returns && else_returns;
+
+                TypedStatementKind::If { cond, then, else_ }
             }
 
             StatementKind::While { cond, body } => {
-                let condition_type = self.analyze_expr(cond, span)?;
+                let cond = Box::new(self.analyze_expr(cond, span)?);
 
-                self.expect_type(Type::Bool, condition_type, span)?;
-                self.analyze_scoped_block(body, return_type)?;
+                self.expect_type(Type::Bool, cond.ty, span)?;
+
+                let (body, _) = self.analyze_scoped_block(body, return_type)?;
+
+                TypedStatementKind::While { cond, body }
             }
 
             StatementKind::Return(value) => {
-                match value {
+                let value = match value {
                     Some(_) if return_type == Type::Void => {
                         return Err(SemanticError::UnexpectedReturnValue { span });
                     }
 
                     Some(expr) => {
-                        let found = self.analyze_expr(expr, span)?;
+                        let expr = self.analyze_expr(expr, span)?;
 
-                        self.expect_type(return_type, found, span)?;
+                        self.expect_type(return_type, expr.ty, span)?;
+
+                        Some(expr)
                     }
 
-                    None => self.expect_type(return_type, Type::Void, span)?,
-                }
+                    None => {
+                        self.expect_type(return_type, Type::Void, span)?;
 
-                return Ok(true);
+                        None
+                    }
+                };
+
+                always_returns = true;
+
+                TypedStatementKind::Return(value)
             }
 
             StatementKind::Expression(expr) => {
-                self.analyze_expr(expr, span)?;
+                TypedStatementKind::Expression(self.analyze_expr(expr, span)?)
             }
-        }
+        };
 
-        Ok(false)
+        Ok((TypedStatement { kind, span }, always_returns))
     }
 
-    fn analyze_assignment_target(&self, target: &Expr, span: Span) -> Result<Type, SemanticError> {
+    fn analyze_assignment_target(
+        &self,
+        target: &Expr,
+        span: Span,
+    ) -> Result<TypedExpr, SemanticError> {
         match target {
             Expr::Identifier(_) => self.analyze_expr(target, span),
             Expr::Index { expr, .. } if matches!(**expr, Expr::Identifier(_)) => {
@@ -260,66 +343,94 @@ impl SemanticAnalyzer {
         }
     }
 
-    fn analyze_expr(&self, expr: &Expr, span: Span) -> Result<Type, SemanticError> {
-        match expr {
-            Expr::Number(_) => Ok(Type::Number),
-            Expr::String(_) => Ok(Type::String),
-            Expr::Bool(_) => Ok(Type::Bool),
+    fn analyze_expr(&self, expr: &Expr, span: Span) -> Result<TypedExpr, SemanticError> {
+        let (kind, ty) = match expr {
+            Expr::Number(value) => (TypedExprKind::Number(value.clone()), Type::Number),
+            Expr::String(value) => (TypedExprKind::String(value.clone()), Type::String),
+            Expr::Bool(value) => (TypedExprKind::Bool(*value), Type::Bool),
 
             Expr::Identifier(name) => {
-                self.lookup_variable(name)
-                    .ok_or_else(|| SemanticError::UndefinedVariable {
+                let binding =
+                    self.lookup_variable(name)
+                        .ok_or_else(|| SemanticError::UndefinedVariable {
+                            name: name.clone(),
+                            span,
+                        })?;
+
+                (
+                    TypedExprKind::Identifier {
+                        id: binding.id,
                         name: name.clone(),
-                        span,
-                    })
+                    },
+                    binding.ty,
+                )
             }
 
             Expr::Unary { op, expr } => {
-                let found = self.analyze_expr(expr, span)?;
-                let expected = match op {
+                let expr = Box::new(self.analyze_expr(expr, span)?);
+                let ty = match op {
                     UnaryOp::Not => Type::Bool,
                     UnaryOp::Negate => Type::Number,
                 };
 
-                self.expect_type(expected, found, span)?;
+                self.expect_type(ty, expr.ty, span)?;
 
-                Ok(expected)
+                (TypedExprKind::Unary { op: *op, expr }, ty)
             }
 
             Expr::Binary { left, op, right } => {
-                let left = self.analyze_expr(left, span)?;
-                let right = self.analyze_expr(right, span)?;
+                let left = Box::new(self.analyze_expr(left, span)?);
+                let right = Box::new(self.analyze_expr(right, span)?);
+                let ty = self.analyze_binary(op, left.ty, right.ty, span)?;
 
-                self.analyze_binary(op, left, right, span)
+                (
+                    TypedExprKind::Binary {
+                        left,
+                        op: *op,
+                        right,
+                    },
+                    ty,
+                )
             }
 
-            Expr::Call { func, args } => self.analyze_call(func, args, span),
+            Expr::Call { func, args } => return self.analyze_call(func, args, span),
 
             Expr::Array(elements) => {
-                for element in elements {
-                    let found = self.analyze_expr(element, span)?;
+                let mut values = Vec::with_capacity(elements.len());
 
-                    self.expect_type(Type::Number, found, span)?;
+                for element in elements {
+                    let value = self.analyze_expr(element, span)?;
+
+                    self.expect_type(Type::Number, value.ty, span)?;
+
+                    values.push(value);
                 }
 
-                Ok(Type::NumberArray)
+                (TypedExprKind::Array(values), Type::NumberArray)
             }
 
             Expr::Index { expr, index } => {
-                let array_type = self.analyze_expr(expr, span)?;
+                let expr = Box::new(self.analyze_expr(expr, span)?);
 
-                self.expect_type(Type::NumberArray, array_type, span)?;
+                self.expect_type(Type::NumberArray, expr.ty, span)?;
 
-                let index_type = self.analyze_expr(index, span)?;
+                let index = Box::new(self.analyze_expr(index, span)?);
 
-                self.expect_type(Type::Number, index_type, span)?;
+                self.expect_type(Type::Number, index.ty, span)?;
 
-                Ok(Type::Number)
+                (TypedExprKind::Index { expr, index }, Type::Number)
             }
-        }
+        };
+
+        Ok(TypedExpr { kind, ty })
     }
 
-    fn analyze_call(&self, name: &str, args: &[Expr], span: Span) -> Result<Type, SemanticError> {
+    fn analyze_call(
+        &self,
+        name: &str,
+        args: &[Expr],
+        span: Span,
+    ) -> Result<TypedExpr, SemanticError> {
         if self.lookup_variable(name).is_some() {
             return Err(SemanticError::NotCallable {
                 name: name.into(),
@@ -344,13 +455,24 @@ impl SemanticAnalyzer {
             });
         }
 
-        for (arg, expected) in args.iter().zip(&signature.params) {
-            let found = self.analyze_expr(arg, span)?;
+        let mut arguments = Vec::with_capacity(args.len());
 
-            self.expect_type(*expected, found, span)?;
+        for (arg, expected) in args.iter().zip(&signature.params) {
+            let arg = self.analyze_expr(arg, span)?;
+
+            self.expect_type(*expected, arg.ty, span)?;
+
+            arguments.push(arg);
         }
 
-        Ok(signature.return_type)
+        Ok(TypedExpr {
+            kind: TypedExprKind::Call {
+                func: signature.reference,
+                name: name.into(),
+                args: arguments,
+            },
+            ty: signature.return_type,
+        })
     }
 
     fn analyze_binary(
@@ -403,14 +525,19 @@ impl SemanticAnalyzer {
         Ok(result_type)
     }
 
-    fn lookup_variable(&self, name: &str) -> Option<Type> {
+    fn lookup_variable(&self, name: &str) -> Option<VariableBinding> {
         self.scopes
             .iter()
             .rev()
             .find_map(|scope| scope.get(name).copied())
     }
 
-    fn declare_variable(&mut self, name: &str, ty: Type, span: Span) -> Result<(), SemanticError> {
+    fn declare_variable(
+        &mut self,
+        name: &str,
+        ty: Type,
+        span: Span,
+    ) -> Result<VariableId, SemanticError> {
         let scope = self
             .scopes
             .last_mut()
@@ -423,9 +550,13 @@ impl SemanticAnalyzer {
             }),
 
             Entry::Vacant(entry) => {
-                entry.insert(ty);
+                let id = VariableId(self.next_variable_id);
 
-                Ok(())
+                self.next_variable_id += 1;
+
+                entry.insert(VariableBinding { id, ty });
+
+                Ok(id)
             }
         }
     }
@@ -457,3 +588,7 @@ impl SemanticAnalyzer {
 #[cfg(test)]
 #[path = "semantic_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "typed_ast_tests.rs"]
+mod typed_tests;

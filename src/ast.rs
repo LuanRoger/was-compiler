@@ -9,7 +9,7 @@ pub enum Type {
     Void,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryOp {
     Add,
     Subtract,
@@ -29,7 +29,7 @@ pub enum BinaryOp {
     Or,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnaryOp {
     Not,
     Negate,
