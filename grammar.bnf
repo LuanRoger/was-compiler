@@ -1,0 +1,183 @@
+<program> ::= <ws> <function_list> <ws>
+
+<function_list> ::= <function> ( <ws> <function> )*
+
+<function> ::= "fn" <ws1> <identifier> <ws>
+               "(" <ws> <parameter_list>? <ws> ")"
+               <ws> "->" <ws> <type>
+               <ws> <block>
+
+<parameter_list> ::= <parameter> ( <ws> "," <ws> <parameter> )*
+
+<parameter> ::= <identifier> <ws> ":" <ws> <type>
+
+
+<type> ::= "number" <array_type_suffix>?
+         | "bool"
+         | "string"
+         | "void"
+
+<array_type_suffix> ::= "[" <ws> "]"
+
+
+<block> ::= "{" <ws> <statement_list>? <ws> "}"
+
+<statement_list> ::= <statement> ( <ws> <statement> )*
+
+
+<statement> ::= <variable_declaration>
+              | <assignment>
+              | <if_statement>
+              | <while_statement>
+              | <return_statement>
+              | <expression_statement>
+
+
+<variable_declaration> ::= "let" <ws1> <identifier>
+                           <ws> ":" <ws> <type>
+                           <ws> "=" <ws> <expression>
+                           <ws> ";"
+
+
+<assignment> ::= <identifier> <ws> "=" <ws> <expression> <ws> ";"
+               | <array_access> <ws> "=" <ws> <expression> <ws> ";"
+
+
+<if_statement> ::= "if" <ws1> <expression>
+                   <ws> <block>
+                   ( <ws> "else" <ws> <block> )?
+
+
+<while_statement> ::= "while" <ws1> <expression>
+                      <ws> <block>
+
+
+<return_statement> ::= "return" <ws> ";"
+                     | "return" <ws1> <expression> <ws> ";"
+
+
+<expression_statement> ::= <expression> <ws> ";"
+
+
+<expression> ::= <logical_or_expression>
+
+
+<logical_or_expression> ::= <logical_and_expression>
+                            ( <ws> "||" <ws> <logical_and_expression> )*
+
+
+<logical_and_expression> ::= <equality_expression>
+                             ( <ws> "&&" <ws> <equality_expression> )*
+
+
+<equality_expression> ::= <comparison_expression>
+                          ( <ws> <equality_operator>
+                            <ws> <comparison_expression> )*
+
+<equality_operator> ::= "==" | "!="
+
+
+<comparison_expression> ::= <additive_expression>
+                            ( <ws> <comparison_operator>
+                              <ws> <additive_expression> )*
+
+<comparison_operator> ::= "<"
+                        | "<="
+                        | ">"
+                        | ">="
+
+
+<additive_expression> ::= <multiplicative_expression>
+                          ( <ws> <additive_operator>
+                            <ws> <multiplicative_expression> )*
+
+<additive_operator> ::= "+"
+                      | "-"
+
+
+<multiplicative_expression> ::= <unary_expression>
+                                ( <ws> <multiplicative_operator>
+                                  <ws> <unary_expression> )*
+
+<multiplicative_operator> ::= "*"
+                            | "/"
+                            | "%"
+
+
+<unary_expression> ::= <postfix_expression>
+                     | "!" <ws> <unary_expression>
+                     | "-" <ws> <unary_expression>
+
+
+<postfix_expression> ::= <identifier> <ws> "(" <ws> <argument_list>? <ws> ")"
+                       | <identifier> <ws> "[" <ws> <expression> <ws> "]"
+                       | <primary_expression>
+
+
+<primary_expression> ::= <number_literal>
+                       | <string_literal>
+                       | <boolean_literal>
+                       | <identifier>
+                       | <array_literal>
+                       | "(" <ws> <expression> <ws> ")"
+
+
+<argument_list> ::= <expression>
+                    ( <ws> "," <ws> <expression> )*
+
+
+<array_access> ::= <identifier>
+                   <ws> "["
+                   <ws> <expression>
+                   <ws> "]"
+
+
+<array_literal> ::= "[" <ws> <expression_list>? <ws> "]"
+
+<expression_list> ::= <expression>
+                      ( <ws> "," <ws> <expression> )*
+
+
+<boolean_literal> ::= "true"
+                    | "false"
+
+
+<identifier> ::= <identifier_start> <identifier_rest>*
+
+<identifier_start> ::= [a-z]
+                     | [A-Z]
+                     | "_"
+
+<identifier_rest> ::= <identifier_start>
+                    | [0-9]
+
+
+<number_literal> ::= <integer_literal>
+                   | <decimal_literal>
+
+<integer_literal> ::= [0-9]+
+
+<decimal_literal> ::= [0-9]+ "." [0-9]+
+
+
+<string_literal> ::= "\"" <string_character>* "\""
+
+<string_character> ::= [a-z]
+                     | [A-Z]
+                     | [0-9]
+                     | " "
+                     | "_"
+                     | "-"
+                     | "."
+                     | ","
+                     | "!"
+                     | "?"
+
+
+<ws> ::= <whitespace_character>*
+
+<ws1> ::= <whitespace_character>+
+
+<whitespace_character> ::= " "
+                         | "\n"
+                         | "\t"
