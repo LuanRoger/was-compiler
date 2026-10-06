@@ -1,6 +1,6 @@
 use crate::tokens::Span;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Type {
     Number,
     String,

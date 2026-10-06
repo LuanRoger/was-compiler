@@ -31,7 +31,7 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
     }
 
     pub fn parse_program(&mut self) -> Result<Program, ParseError> {
-        let mut functions = vec![];
+        let mut functions = vec![self.parse_function()?];
 
         while !self.at_end() {
             functions.push(self.parse_function()?);
