@@ -152,7 +152,19 @@ mod tests {
     #[test]
     fn optimization_levels_preserve_wasm_and_the_input_program() {
         let mut compiler = compiler();
-        let source = "fn main() -> number { return 42; } fn decimal() -> number { return 0.25; }";
+        let source = "
+            fn main(value: number) -> number {
+                let result: number = value * 2;
+                result = result + 1;
+                result;
+                return result;
+            }
+
+            fn flag(value: bool) -> bool {
+                let copy: bool = value;
+                return copy;
+            }
+        ";
         let program = compiler.analyze(source).unwrap();
         let original = program.clone();
         let expected = compiler.compile(&program).unwrap();
@@ -179,7 +191,7 @@ mod tests {
         for source in [
             "fn",
             "fn main() -> void { missing(); }",
-            "fn main() -> number { return 1 + 2; }",
+            "fn main() -> number { return 1 % 2; }",
         ] {
             compiler.set_optimization_level(OptimizationLevel::None);
 
@@ -357,7 +369,7 @@ mod tests {
             ))
         ));
         assert!(matches!(
-            compiler.compile_source("fn main() -> number { return 1 + 2; }"),
+            compiler.compile_source("fn main() -> number { return 1 % 2; }"),
             Err(CompileError::Codegen(_))
         ));
         assert!(matches!(

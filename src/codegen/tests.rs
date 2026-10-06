@@ -5,8 +5,9 @@ use std::{
 
 use crate::{
     ast::{BinaryOp, Type, UnaryOp},
-    compiler::Compiler,
+    compiler::{CompileError, Compiler, CompilerOptions},
     host::{HostFunction, HostFunctionId},
+    optimization::OptimizationLevel,
     tokens::Span,
     typed_ast::{
         FunctionId, FunctionRef, TypedExpr, TypedExprKind, TypedFunction, TypedParam, TypedProgram,
@@ -15,11 +16,20 @@ use crate::{
 };
 use wasmparser::{ExternalKind, Operator, Parser, Payload, TypeRef, ValType, Validator};
 
-use super::{CodegenError, checked_u32, compile};
+use super::{CodegenError, checked_u32, compile, locals::LocalLayout};
 
 #[derive(Debug, PartialEq)]
 enum DecodedInstruction {
     F64Const(f64),
+    I32Const(i32),
+    LocalGet(u32),
+    LocalSet(u32),
+    Drop,
+    F64Add,
+    F64Sub,
+    F64Mul,
+    F64Div,
+    F64Neg,
     Return,
     End,
 }
@@ -32,6 +42,7 @@ struct DecodedModule {
     functions: Vec<u32>,
     exports: Vec<(String, ExternalKind, u32)>,
     bodies: Vec<Vec<DecodedInstruction>>,
+    locals: Vec<Vec<ValType>>,
 }
 
 fn decode(bytes: &[u8]) -> DecodedModule {
@@ -88,7 +99,15 @@ fn decode(bytes: &[u8]) -> DecodedModule {
                 }
             }
             Payload::CodeSectionEntry(body) => {
-                assert_eq!(body.get_locals_reader().expect("locals").get_count(), 0);
+                let mut locals = Vec::new();
+
+                for local in body.get_locals_reader().expect("locals") {
+                    let (count, ty) = local.expect("local declaration");
+
+                    locals.extend(std::iter::repeat_n(ty, count as usize));
+                }
+
+                module.locals.push(locals);
 
                 let mut operators = body.get_operators_reader().expect("operators");
 
@@ -99,6 +118,19 @@ fn decode(bytes: &[u8]) -> DecodedModule {
                         Operator::F64Const { value } => {
                             DecodedInstruction::F64Const(f64::from_bits(value.bits()))
                         }
+                        Operator::I32Const { value } => DecodedInstruction::I32Const(value),
+                        Operator::LocalGet { local_index } => {
+                            DecodedInstruction::LocalGet(local_index)
+                        }
+                        Operator::LocalSet { local_index } => {
+                            DecodedInstruction::LocalSet(local_index)
+                        }
+                        Operator::Drop => DecodedInstruction::Drop,
+                        Operator::F64Add => DecodedInstruction::F64Add,
+                        Operator::F64Sub => DecodedInstruction::F64Sub,
+                        Operator::F64Mul => DecodedInstruction::F64Mul,
+                        Operator::F64Div => DecodedInstruction::F64Div,
+                        Operator::F64Neg => DecodedInstruction::F64Neg,
                         Operator::Return => DecodedInstruction::Return,
                         Operator::End => DecodedInstruction::End,
                         operator => panic!("unexpected instruction: {operator:?}"),
@@ -156,6 +188,27 @@ fn number_literal(literal: &str) -> TypedExpr {
     }
 }
 
+fn unary(op: UnaryOp, expr: TypedExpr) -> TypedExpr {
+    TypedExpr {
+        kind: TypedExprKind::Unary {
+            op,
+            expr: Box::new(expr),
+        },
+        ty: Type::Number,
+    }
+}
+
+fn binary(left: TypedExpr, op: BinaryOp, right: TypedExpr) -> TypedExpr {
+    TypedExpr {
+        kind: TypedExprKind::Binary {
+            left: Box::new(left),
+            op,
+            right: Box::new(right),
+        },
+        ty: Type::Number,
+    }
+}
+
 fn return_program(value: Option<TypedExpr>, return_type: Type, span: Span) -> TypedProgram {
     let mut function = user(0, "bad", &[], return_type);
 
@@ -163,6 +216,46 @@ fn return_program(value: Option<TypedExpr>, return_type: Type, span: Span) -> Ty
         kind: TypedStatementKind::Return(value),
         span,
     });
+
+    TypedProgram {
+        functions: vec![function],
+        host_functions: vec![],
+    }
+}
+
+fn identifier(id: usize, name: &str, ty: Type) -> TypedExpr {
+    TypedExpr {
+        kind: TypedExprKind::Identifier {
+            id: VariableId(id),
+            name: name.to_owned(),
+        },
+        ty,
+    }
+}
+
+fn declaration(id: usize, ty: Type, value: TypedExpr, span: Span) -> TypedStatement {
+    TypedStatement {
+        kind: TypedStatementKind::Let {
+            id: VariableId(id),
+            name: "x".to_owned(),
+            ty,
+            value,
+        },
+        span,
+    }
+}
+
+fn assignment(target: TypedExpr, value: TypedExpr, span: Span) -> TypedStatement {
+    TypedStatement {
+        kind: TypedStatementKind::Assignment { target, value },
+        span,
+    }
+}
+
+fn local_program(body: Vec<TypedStatement>) -> TypedProgram {
+    let mut function = user(0, "bad", &[], Type::Void);
+
+    function.body = body;
 
     TypedProgram {
         functions: vec![function],
@@ -231,6 +324,7 @@ fn empty_void_functions_have_only_end_and_are_exported_in_source_order() {
 
     assert_eq!(module.signatures, vec![(vec![], vec![])]);
     assert_eq!(module.functions, vec![0, 0]);
+    assert_eq!(module.locals, vec![vec![], vec![]]);
     assert_eq!(
         module.exports,
         vec![
@@ -461,22 +555,6 @@ fn every_unsupported_statement_kind_is_rejected_with_its_span_even_after_return(
     for after_return in [false, true] {
         let kinds = vec![
             (
-                "let",
-                TypedStatementKind::Let {
-                    id: VariableId(0),
-                    name: "x".to_owned(),
-                    ty: Type::Number,
-                    value: number(),
-                },
-            ),
-            (
-                "assignment",
-                TypedStatementKind::Assignment {
-                    target: number(),
-                    value: number(),
-                },
-            ),
-            (
                 "if",
                 TypedStatementKind::If {
                     cond: Box::new(boolean()),
@@ -491,7 +569,6 @@ fn every_unsupported_statement_kind_is_rejected_with_its_span_even_after_return(
                     body: vec![],
                 },
             ),
-            ("expression", TypedStatementKind::Expression(number())),
         ];
 
         for (kind_name, kind) in kinds {
@@ -527,27 +604,18 @@ fn every_unsupported_statement_kind_is_rejected_with_its_span_even_after_return(
 }
 
 #[test]
-fn arithmetic_and_host_calls_are_not_emitted() {
-    let expressions = vec![
-        TypedExpr {
-            kind: TypedExprKind::Binary {
-                left: Box::new(number()),
-                op: BinaryOp::Add,
-                right: Box::new(number()),
-            },
-            ty: Type::Number,
+fn host_call_statements_are_rejected_including_void_calls() {
+    let expressions = [Type::Number, Type::Bool, Type::Void].map(|ty| TypedExpr {
+        kind: TypedExprKind::Call {
+            func: FunctionRef::Host(HostFunctionId(0)),
+            name: "host".to_owned(),
+            args: vec![],
         },
-        TypedExpr {
-            kind: TypedExprKind::Call {
-                func: FunctionRef::Host(HostFunctionId(0)),
-                name: "host".to_owned(),
-                args: vec![],
-            },
-            ty: Type::Void,
-        },
-    ];
+        ty,
+    });
 
     for expression in expressions {
+        let expression_type = expression.ty;
         let mut function = user(0, "bad", &[], Type::Void);
 
         function.body.push(TypedStatement {
@@ -557,13 +625,16 @@ fn arithmetic_and_host_calls_are_not_emitted() {
 
         let program = TypedProgram {
             functions: vec![function],
-            host_functions: vec![host(0, "host", &[], Type::Void)],
+            host_functions: vec![host(0, "host", &[], expression_type)],
         };
 
-        assert!(
-            matches!(compile(&program), Err(CodegenError::UnsupportedStatement {
-            kind: "expression", span, ..
-        }) if span == Span::new(5, 9))
+        assert_eq!(
+            compile(&program),
+            Err(CodegenError::UnsupportedExpression {
+                function: "bad".to_owned(),
+                kind: "call",
+                span: Span::new(5, 9),
+            }),
         );
     }
 }
@@ -604,6 +675,536 @@ fn source_numeric_literals_emit_f64_const_return_and_end() {
             Compiler::new().compile_source(&source).unwrap(),
             bytes,
             "deterministic literal {literal}",
+        );
+    }
+}
+
+#[test]
+fn source_arithmetic_emits_operands_before_each_f64_opcode() {
+    use DecodedInstruction::*;
+
+    for (expression, instruction) in [
+        ("8 + 2", F64Add),
+        ("8 - 2", F64Sub),
+        ("8 * 2", F64Mul),
+        ("8 / 2", F64Div),
+    ] {
+        let source = format!("fn value() -> number {{ return {expression}; }}");
+        let bytes = Compiler::new()
+            .compile_source(&source)
+            .expect("compile arithmetic return");
+        let module = decode(&bytes);
+
+        assert_eq!(module.signatures, vec![(vec![], vec![ValType::F64])]);
+        assert_eq!(module.functions, vec![0]);
+        assert_eq!(
+            module.exports,
+            vec![("value".to_owned(), ExternalKind::Func, 0)],
+        );
+        assert_eq!(
+            module.bodies,
+            vec![vec![F64Const(8.0), F64Const(2.0), instruction, Return, End]],
+            "expression {expression}",
+        );
+    }
+}
+
+#[test]
+fn source_unary_negation_emits_f64_neg_without_folding() {
+    use DecodedInstruction::*;
+
+    for (expression, instructions) in [
+        ("-42", vec![F64Const(42.0), F64Neg]),
+        ("-0", vec![F64Const(0.0), F64Neg]),
+        ("-(-2)", vec![F64Const(2.0), F64Neg, F64Neg]),
+        (
+            "-(1 + 2)",
+            vec![F64Const(1.0), F64Const(2.0), F64Add, F64Neg],
+        ),
+    ] {
+        let source = format!("fn value() -> number {{ return {expression}; }}");
+        let bytes = Compiler::new()
+            .compile_source(&source)
+            .expect("compile unary negation");
+        let mut expected = instructions;
+
+        expected.extend([Return, End]);
+
+        assert_eq!(decode(&bytes).bodies, vec![expected], "{expression}");
+    }
+}
+
+#[test]
+fn nested_arithmetic_preserves_precedence_associativity_and_operand_order() {
+    use DecodedInstruction::*;
+
+    for (expression, instructions) in [
+        (
+            "1 + 2 * 3",
+            vec![F64Const(1.0), F64Const(2.0), F64Const(3.0), F64Mul, F64Add],
+        ),
+        (
+            "(1 + 2) * 3",
+            vec![F64Const(1.0), F64Const(2.0), F64Add, F64Const(3.0), F64Mul],
+        ),
+        (
+            "10 - 3 - 2",
+            vec![F64Const(10.0), F64Const(3.0), F64Sub, F64Const(2.0), F64Sub],
+        ),
+        (
+            "20 / 2 / 5",
+            vec![F64Const(20.0), F64Const(2.0), F64Div, F64Const(5.0), F64Div],
+        ),
+        (
+            "20 / (2 + 3)",
+            vec![F64Const(20.0), F64Const(2.0), F64Const(3.0), F64Add, F64Div],
+        ),
+        (
+            "1 / (2 / 4)",
+            vec![F64Const(1.0), F64Const(2.0), F64Const(4.0), F64Div, F64Div],
+        ),
+        (
+            "10 - (3 - 2)",
+            vec![F64Const(10.0), F64Const(3.0), F64Const(2.0), F64Sub, F64Sub],
+        ),
+        (
+            "(8 - 2) / (1 + 2)",
+            vec![
+                F64Const(8.0),
+                F64Const(2.0),
+                F64Sub,
+                F64Const(1.0),
+                F64Const(2.0),
+                F64Add,
+                F64Div,
+            ],
+        ),
+    ] {
+        let source = format!("fn value() -> number {{ return {expression}; }}");
+        let bytes = Compiler::new()
+            .compile_source(&source)
+            .expect("compile nested arithmetic");
+        let mut expected = instructions;
+
+        expected.extend([Return, End]);
+
+        assert_eq!(decode(&bytes).bodies, vec![expected], "{expression}");
+    }
+}
+
+#[test]
+fn arithmetic_preserves_import_indices_and_is_not_folded_at_any_optimization_level() {
+    use DecodedInstruction::*;
+
+    let mut expected_bytes = None;
+
+    for level in [
+        OptimizationLevel::None,
+        OptimizationLevel::Basic,
+        OptimizationLevel::Standard,
+        OptimizationLevel::Aggressive,
+    ] {
+        let mut compiler = Compiler::with_options(CompilerOptions {
+            optimization_level: level,
+        });
+
+        compiler
+            .register_host_function("numeric", "env", "numeric", vec![], Type::Number)
+            .unwrap();
+        compiler
+            .register_host_function("ready", "provider", "ready", vec![], Type::Bool)
+            .unwrap();
+
+        let source = "fn value(n: number, flag: bool) -> number { return -(1 + 2 * 3); }
+                      fn quotient() -> number { return 1 / (2 / 4); }";
+        let program = compiler.analyze(source).expect("analyze arithmetic");
+        let original = program.clone();
+        let bytes = compiler.compile(&program).expect("compile arithmetic");
+        let module = decode(&bytes);
+
+        assert_eq!(program, original);
+        assert_eq!(compiler.compile_source(source).unwrap(), bytes);
+        assert_eq!(module.sections, vec![1, 2, 3, 7, 10]);
+        assert_eq!(
+            module.signatures,
+            vec![
+                (vec![], vec![ValType::F64]),
+                (vec![], vec![ValType::I32]),
+                (vec![ValType::F64, ValType::I32], vec![ValType::F64]),
+            ],
+        );
+        assert_eq!(
+            module.imports,
+            vec![
+                ("env".to_owned(), "numeric".to_owned(), 0),
+                ("provider".to_owned(), "ready".to_owned(), 1),
+            ],
+        );
+        assert_eq!(module.functions, vec![2, 0]);
+        assert_eq!(
+            module.exports,
+            vec![
+                ("value".to_owned(), ExternalKind::Func, 2),
+                ("quotient".to_owned(), ExternalKind::Func, 3),
+            ],
+        );
+        assert_eq!(
+            module.bodies,
+            vec![
+                vec![
+                    F64Const(1.0),
+                    F64Const(2.0),
+                    F64Const(3.0),
+                    F64Mul,
+                    F64Add,
+                    F64Neg,
+                    Return,
+                    End,
+                ],
+                vec![
+                    F64Const(1.0),
+                    F64Const(2.0),
+                    F64Const(4.0),
+                    F64Div,
+                    F64Div,
+                    Return,
+                    End
+                ],
+            ],
+            "optimization level {level:?}",
+        );
+
+        if let Some(expected) = &expected_bytes {
+            assert_eq!(&bytes, expected, "optimization level {level:?}");
+        } else {
+            expected_bytes = Some(bytes);
+        }
+    }
+}
+
+#[test]
+fn arithmetic_requires_numeric_roots_and_operands_even_in_nested_typed_ast() {
+    let span = Span::new(12, 34);
+    let mut roots = vec![unary(UnaryOp::Negate, number())];
+
+    for op in [
+        BinaryOp::Add,
+        BinaryOp::Subtract,
+        BinaryOp::Multiply,
+        BinaryOp::Divide,
+    ] {
+        roots.push(binary(number(), op, number()));
+    }
+
+    for mut value in roots {
+        value.ty = Type::Bool;
+
+        assert_eq!(
+            compile(&return_program(Some(value), Type::Bool, span)),
+            Err(CodegenError::TypeMismatch {
+                function: "bad".to_owned(),
+                expected: Type::Number,
+                found: Type::Bool,
+                span,
+            }),
+        );
+    }
+
+    for found in [Type::Bool, Type::String, Type::NumberArray, Type::Void] {
+        let mut operand = number();
+
+        operand.ty = found;
+
+        let mut expressions = vec![unary(UnaryOp::Negate, operand.clone())];
+
+        for op in [
+            BinaryOp::Add,
+            BinaryOp::Subtract,
+            BinaryOp::Multiply,
+            BinaryOp::Divide,
+        ] {
+            expressions.push(binary(operand.clone(), op, number()));
+            expressions.push(binary(number(), op, operand.clone()));
+        }
+
+        for expression in expressions {
+            for value in [
+                expression.clone(),
+                binary(expression.clone(), BinaryOp::Add, number()),
+                binary(number(), BinaryOp::Divide, expression.clone()),
+                unary(UnaryOp::Negate, expression),
+            ] {
+                assert_eq!(
+                    compile(&return_program(Some(value), Type::Number, span)),
+                    Err(CodegenError::TypeMismatch {
+                        function: "bad".to_owned(),
+                        expected: Type::Number,
+                        found,
+                        span,
+                    }),
+                );
+            }
+        }
+    }
+
+    let mut nested_root = binary(number(), BinaryOp::Multiply, number());
+
+    nested_root.ty = Type::Bool;
+
+    for value in [
+        unary(UnaryOp::Negate, nested_root.clone()),
+        binary(nested_root.clone(), BinaryOp::Subtract, number()),
+        binary(number(), BinaryOp::Divide, nested_root),
+    ] {
+        assert_eq!(
+            compile(&return_program(Some(value), Type::Number, span)),
+            Err(CodegenError::TypeMismatch {
+                function: "bad".to_owned(),
+                expected: Type::Number,
+                found: Type::Bool,
+                span,
+            }),
+        );
+    }
+}
+
+#[test]
+fn nested_numeric_literal_errors_preserve_the_enclosing_statement_span() {
+    let span = Span::new(12, 34);
+    let overflow = "9".repeat(400);
+
+    for literal in ["-1", "NaN", "1e3", "1.", overflow.as_str()] {
+        for value in [
+            unary(UnaryOp::Negate, number_literal(literal)),
+            binary(
+                unary(UnaryOp::Negate, number_literal(literal)),
+                BinaryOp::Multiply,
+                number(),
+            ),
+            binary(
+                number(),
+                BinaryOp::Divide,
+                binary(number(), BinaryOp::Add, number_literal(literal)),
+            ),
+        ] {
+            let expected = if literal == overflow {
+                CodegenError::NumberLiteralOutOfRange {
+                    function: "bad".to_owned(),
+                    literal: literal.to_owned(),
+                    span,
+                }
+            } else {
+                CodegenError::InvalidNumberLiteral {
+                    function: "bad".to_owned(),
+                    literal: literal.to_owned(),
+                    span,
+                }
+            };
+
+            assert_eq!(
+                compile(&return_program(Some(value), Type::Number, span)),
+                Err(expected),
+                "literal {literal:?}",
+            );
+        }
+    }
+
+    for expression in [
+        format!("-({overflow})"),
+        format!("{overflow} + 1"),
+        format!("1 / (2 + {overflow})"),
+    ] {
+        let source = format!("fn bad() -> number {{ return {expression}; }}");
+        let compiler = Compiler::new();
+        let program = compiler.analyze(&source).expect("analyze nested overflow");
+
+        assert_eq!(
+            compiler.compile(&program),
+            Err(CodegenError::NumberLiteralOutOfRange {
+                function: "bad".to_owned(),
+                literal: overflow.clone(),
+                span: program.functions[0].body[0].span,
+            }),
+        );
+    }
+}
+
+#[test]
+fn unsupported_operators_are_rejected_before_their_root_or_operand_type_checks() {
+    let span = Span::new(12, 34);
+    let mut expressions = vec![("!", unary(UnaryOp::Not, boolean()))];
+
+    for (op, label) in [
+        (BinaryOp::Remainder, "%"),
+        (BinaryOp::Equal, "=="),
+        (BinaryOp::NotEqual, "!="),
+        (BinaryOp::LessThan, "<"),
+        (BinaryOp::LessThanOrEqual, "<="),
+        (BinaryOp::GreaterThan, ">"),
+        (BinaryOp::GreaterThanOrEqual, ">="),
+        (BinaryOp::And, "&&"),
+        (BinaryOp::Or, "||"),
+    ] {
+        expressions.push((label, binary(boolean(), op, boolean())));
+    }
+
+    for (operator, expression) in expressions {
+        for ty in [Type::Number, Type::Bool] {
+            let mut value = expression.clone();
+
+            value.ty = ty;
+
+            assert_eq!(
+                compile(&return_program(Some(value), ty, span)),
+                Err(CodegenError::UnsupportedOperator {
+                    function: "bad".to_owned(),
+                    operator,
+                    span,
+                }),
+                "operator {operator}, root type {ty:?}",
+            );
+        }
+    }
+}
+
+#[test]
+fn source_returns_reject_every_nonarithmetic_operator_with_its_label() {
+    for (expression, return_type, operator) in [
+        ("1 % 2", "number", "%"),
+        ("1 == 2", "bool", "=="),
+        ("1 != 2", "bool", "!="),
+        ("1 < 2", "bool", "<"),
+        ("1 <= 2", "bool", "<="),
+        ("1 > 2", "bool", ">"),
+        ("1 >= 2", "bool", ">="),
+        ("true && false", "bool", "&&"),
+        ("true || false", "bool", "||"),
+        ("!true", "bool", "!"),
+        ("flag && true", "bool", "&&"),
+        ("flag || false", "bool", "||"),
+        ("flag == true", "bool", "=="),
+        ("!flag", "bool", "!"),
+    ] {
+        let source = format!("fn bad(flag: bool) -> {return_type} {{ return {expression}; }}");
+        let compiler = Compiler::new();
+        let program = compiler
+            .analyze(&source)
+            .expect("analyze unsupported operator");
+
+        assert_eq!(
+            compiler.compile(&program),
+            Err(CodegenError::UnsupportedOperator {
+                function: "bad".to_owned(),
+                operator,
+                span: program.functions[0].body[0].span,
+            }),
+            "expression {expression}",
+        );
+    }
+}
+
+#[test]
+fn nested_unsupported_expressions_and_operators_propagate_in_left_to_right_order() {
+    let span = Span::new(12, 34);
+    let cases = vec![
+        (
+            unary(UnaryOp::Not, number()),
+            CodegenError::UnsupportedOperator {
+                function: "bad".to_owned(),
+                operator: "!",
+                span,
+            },
+        ),
+        (
+            binary(number(), BinaryOp::Remainder, number()),
+            CodegenError::UnsupportedOperator {
+                function: "bad".to_owned(),
+                operator: "%",
+                span,
+            },
+        ),
+        (
+            TypedExpr {
+                kind: TypedExprKind::Identifier {
+                    id: VariableId(99),
+                    name: "x".to_owned(),
+                },
+                ty: Type::Number,
+            },
+            CodegenError::UnknownVariable {
+                function: "bad".to_owned(),
+                id: VariableId(99),
+                span,
+            },
+        ),
+        (
+            TypedExpr {
+                kind: TypedExprKind::Call {
+                    func: FunctionRef::Host(HostFunctionId(0)),
+                    name: "numeric".to_owned(),
+                    args: vec![],
+                },
+                ty: Type::Number,
+            },
+            CodegenError::UnsupportedExpression {
+                function: "bad".to_owned(),
+                kind: "call",
+                span,
+            },
+        ),
+    ];
+
+    for (expression, expected) in cases {
+        for value in [
+            unary(UnaryOp::Negate, expression.clone()),
+            binary(expression.clone(), BinaryOp::Add, number()),
+            binary(number(), BinaryOp::Subtract, expression.clone()),
+            binary(
+                binary(expression, BinaryOp::Multiply, number()),
+                BinaryOp::Divide,
+                number_literal("NaN"),
+            ),
+        ] {
+            let mut program = return_program(Some(value), Type::Number, span);
+
+            program
+                .host_functions
+                .push(host(0, "numeric", &[], Type::Number));
+            program.functions[0].params.push(TypedParam {
+                id: VariableId(0),
+                name: "x".to_owned(),
+                ty: Type::Number,
+                span: Span::new(0, 1),
+            });
+
+            assert_eq!(
+                compile(&program).expect_err("reject nested expression"),
+                expected,
+            );
+        }
+    }
+}
+
+#[test]
+fn source_arithmetic_with_wrong_types_is_still_rejected_by_semantic_analysis() {
+    for expression in [
+        "-true",
+        "1 + true",
+        "true - 1",
+        "1 * false",
+        "false / 2",
+        "1 + (2 * true)",
+        "1 + \"text\"",
+        "[1] / 2",
+    ] {
+        let source = format!("fn bad() -> number {{ return {expression}; }}");
+
+        assert!(
+            matches!(
+                Compiler::new().compile_source(&source),
+                Err(CompileError::Semantic(_))
+            ),
+            "expression {expression}",
         );
     }
 }
@@ -801,32 +1402,9 @@ fn overflowing_numeric_literals_are_rejected_in_source_and_typed_ast() {
 }
 
 #[test]
-fn every_other_expression_kind_is_rejected_in_returns_with_the_statement_span() {
+fn unsupported_expression_kinds_are_rejected_with_the_statement_span() {
     let expressions = vec![
         ("string", TypedExprKind::String("text".to_owned())),
-        ("bool", TypedExprKind::Bool(true)),
-        (
-            "identifier",
-            TypedExprKind::Identifier {
-                id: VariableId(0),
-                name: "x".to_owned(),
-            },
-        ),
-        (
-            "unary",
-            TypedExprKind::Unary {
-                op: UnaryOp::Negate,
-                expr: Box::new(number()),
-            },
-        ),
-        (
-            "binary",
-            TypedExprKind::Binary {
-                left: Box::new(number()),
-                op: BinaryOp::Add,
-                right: Box::new(number()),
-            },
-        ),
         (
             "call",
             TypedExprKind::Call {
@@ -850,38 +1428,47 @@ fn every_other_expression_kind_is_rejected_in_returns_with_the_statement_span() 
     let span = Span::new(12, 34);
 
     for (kind_name, kind) in expressions {
-        let mut program = return_program(
-            Some(TypedExpr {
-                kind,
-                ty: Type::Number,
-            }),
-            Type::Number,
-            span,
-        );
-
-        program
-            .host_functions
-            .push(host(0, "numeric", &[], Type::Number));
-        program.functions[0].params.push(TypedParam {
-            id: VariableId(0),
-            name: "x".to_owned(),
+        let value = TypedExpr {
+            kind,
             ty: Type::Number,
-            span: Span::new(0, 1),
-        });
+        };
 
-        assert_eq!(
-            compile(&program),
-            Err(CodegenError::UnsupportedExpression {
-                function: "bad".to_owned(),
-                kind: kind_name,
-                span,
-            }),
-        );
+        for is_statement in [false, true] {
+            let mut program = if is_statement {
+                let mut value = value.clone();
+
+                value.ty = match kind_name {
+                    "string" => Type::String,
+                    "array" => Type::NumberArray,
+                    _ => Type::Number,
+                };
+
+                local_program(vec![TypedStatement {
+                    kind: TypedStatementKind::Expression(value),
+                    span,
+                }])
+            } else {
+                return_program(Some(value.clone()), Type::Number, span)
+            };
+
+            program
+                .host_functions
+                .push(host(0, "numeric", &[], Type::Number));
+
+            assert_eq!(
+                compile(&program),
+                Err(CodegenError::UnsupportedExpression {
+                    function: "bad".to_owned(),
+                    kind: kind_name,
+                    span,
+                }),
+            );
+        }
     }
 }
 
 #[test]
-fn source_returns_reject_unary_arithmetic_identifiers_calls_and_bools() {
+fn source_returns_reject_calls() {
     let mut compiler = Compiler::new();
 
     compiler
@@ -889,17 +1476,8 @@ fn source_returns_reject_unary_arithmetic_identifiers_calls_and_bools() {
         .unwrap();
 
     for (expression, return_type, kind) in [
-        ("-1", "number", "unary"),
-        ("1 + 2", "number", "binary"),
-        ("1 - 2", "number", "binary"),
-        ("1 * 2", "number", "binary"),
-        ("1 / 2", "number", "binary"),
-        ("1 % 2", "number", "binary"),
-        ("n", "number", "identifier"),
         ("numeric()", "number", "call"),
         ("len([1])", "number", "call"),
-        ("true", "bool", "bool"),
-        ("!true", "bool", "unary"),
     ] {
         let source = format!("fn bad(n: number) -> {return_type} {{ return {expression}; }}");
         let program = compiler
@@ -951,14 +1529,14 @@ fn invalid_unreachable_returns_are_not_skipped() {
         (
             Some(TypedExpr {
                 kind: TypedExprKind::Unary {
-                    op: UnaryOp::Negate,
+                    op: UnaryOp::Not,
                     expr: Box::new(number()),
                 },
                 ty: Type::Number,
             }),
-            CodegenError::UnsupportedExpression {
+            CodegenError::UnsupportedOperator {
                 function: "bad".to_owned(),
-                kind: "unary",
+                operator: "!",
                 span,
             },
         ),
@@ -1136,6 +1714,1064 @@ fn node_executes_numeric_exports_with_unused_provider_imports() {
         assert.equal(calls, 0);
         "#,
     );
+}
+
+#[test]
+#[ignore = "requires Node.js"]
+fn node_executes_nested_arithmetic_with_unused_provider_imports() {
+    let mut compiler = Compiler::new();
+
+    compiler
+        .register_host_function("numeric", "env", "numeric", vec![], Type::Number)
+        .unwrap();
+    compiler
+        .register_host_function("ready", "provider", "ready", vec![], Type::Bool)
+        .unwrap();
+
+    let bytes = compiler
+        .compile_source(
+            "fn precedence(n: number, flag: bool) -> number { return 1 + 2 * 3; }
+             fn parentheses() -> number { return (1 + 2) * 3; }
+             fn negate() -> number { return -(1 + 2); }
+             fn subtract() -> number { return 10 - 3 - 2; }
+             fn divide() -> number { return 20 / (2 + 3); }
+             fn rightdivide() -> number { return 1 / (2 / 4); }
+             fn rightsubtract() -> number { return 10 - (3 - 2); }
+             fn noop() -> void {}",
+        )
+        .expect("compile runtime nested arithmetic");
+    let module = decode(&bytes);
+
+    assert_eq!(
+        module.exports[0],
+        ("precedence".to_owned(), ExternalKind::Func, 2)
+    );
+    assert_eq!(
+        module.exports[7],
+        ("noop".to_owned(), ExternalKind::Func, 9)
+    );
+
+    run_node(
+        &bytes,
+        r#"
+        const assert = require('node:assert/strict');
+        const bytes = require('node:fs').readFileSync(0);
+        let calls = 0;
+        const imports = {
+            env: { numeric: () => { calls += 1; return 99; } },
+            provider: { ready: () => { calls += 1; return 1; } },
+        };
+        const instance = new WebAssembly.Instance(new WebAssembly.Module(bytes), imports);
+
+        assert.equal(instance.exports.precedence(100, 1), 7);
+        assert.equal(instance.exports.parentheses(), 9);
+        assert.equal(instance.exports.negate(), -3);
+        assert.equal(instance.exports.subtract(), 5);
+        assert.equal(instance.exports.divide(), 4);
+        assert.equal(instance.exports.rightdivide(), 2);
+        assert.equal(instance.exports.rightsubtract(), 9);
+        assert.equal(instance.exports.noop(), undefined);
+        assert.equal(calls, 0);
+        "#,
+    );
+}
+
+#[test]
+#[ignore = "requires Node.js"]
+fn node_executes_arithmetic_with_ieee754_rounding_and_special_results() {
+    let finite = format!("1{}", "0".repeat(200));
+    let source = format!(
+        "fn decimal() -> number {{ return 0.1 + 0.2; }}
+         fn fraction() -> number {{ return 1 / 10; }}
+         fn rounded() -> number {{ return 9007199254740993 + 1; }}
+         fn nan() -> number {{ return 0 / 0; }}
+         fn positiveinfinity() -> number {{ return 1 / 0; }}
+         fn negativeinfinity() -> number {{ return -1 / 0; }}
+         fn negativezero() -> number {{ return -0; }}
+         fn dividedzero() -> number {{ return 0 / -1; }}
+         fn positivezero() -> number {{ return -0 * -1; }}
+         fn overflow() -> number {{ return {finite} * {finite}; }}",
+    );
+    let bytes = Compiler::new()
+        .compile_source(&source)
+        .expect("compile runtime IEEE 754 arithmetic");
+    let module = decode(&bytes);
+
+    assert_eq!(
+        module.bodies[9],
+        vec![
+            DecodedInstruction::F64Const(1e200),
+            DecodedInstruction::F64Const(1e200),
+            DecodedInstruction::F64Mul,
+            DecodedInstruction::Return,
+            DecodedInstruction::End,
+        ],
+    );
+
+    run_node(
+        &bytes,
+        r#"
+        const assert = require('node:assert/strict');
+        const bytes = require('node:fs').readFileSync(0);
+        const instance = new WebAssembly.Instance(new WebAssembly.Module(bytes));
+
+        assert.equal(instance.exports.decimal(), 0.30000000000000004);
+        assert.equal(instance.exports.fraction(), 0.1);
+        assert.equal(instance.exports.rounded(), 9007199254740992);
+        assert.ok(Number.isNaN(instance.exports.nan()));
+        assert.equal(instance.exports.positiveinfinity(), Infinity);
+        assert.equal(instance.exports.negativeinfinity(), -Infinity);
+        assert.ok(Object.is(instance.exports.negativezero(), -0));
+        assert.ok(Object.is(instance.exports.dividedzero(), -0));
+        assert.ok(Object.is(instance.exports.positivezero(), 0));
+        assert.equal(instance.exports.overflow(), Infinity);
+        "#,
+    );
+}
+
+#[test]
+fn scalar_parameters_locals_and_mutations_emit_dense_slots_at_all_optimization_levels() {
+    use DecodedInstruction::*;
+
+    let source = "fn update(n: number, flag: bool) -> number {
+                      let value: number = n * 2 + 1;
+                      let ready: bool = flag;
+                      n = value - 3;
+                      ready = false;
+                      value = -n / 2;
+                      return value;
+                  }";
+    let mut expected_bytes = None;
+
+    for level in [
+        OptimizationLevel::None,
+        OptimizationLevel::Basic,
+        OptimizationLevel::Standard,
+        OptimizationLevel::Aggressive,
+    ] {
+        let compiler = Compiler::with_options(CompilerOptions {
+            optimization_level: level,
+        });
+        let program = compiler.analyze(source).expect("analyze scalar mutations");
+        let original = program.clone();
+        let bytes = compiler
+            .compile(&program)
+            .expect("compile scalar mutations");
+        let module = decode(&bytes);
+
+        assert_eq!(program, original);
+        assert_eq!(compiler.compile_source(source).unwrap(), bytes);
+        assert_eq!(
+            module.signatures,
+            vec![(vec![ValType::F64, ValType::I32], vec![ValType::F64])],
+        );
+        assert_eq!(module.locals, vec![vec![ValType::F64, ValType::I32]]);
+        assert_eq!(
+            module.bodies,
+            vec![vec![
+                LocalGet(0),
+                F64Const(2.0),
+                F64Mul,
+                F64Const(1.0),
+                F64Add,
+                LocalSet(2),
+                LocalGet(1),
+                LocalSet(3),
+                LocalGet(2),
+                F64Const(3.0),
+                F64Sub,
+                LocalSet(0),
+                I32Const(0),
+                LocalSet(3),
+                LocalGet(0),
+                F64Neg,
+                F64Const(2.0),
+                F64Div,
+                LocalSet(2),
+                LocalGet(2),
+                Return,
+                End,
+            ]],
+            "optimization level {level:?}",
+        );
+
+        if let Some(expected) = &expected_bytes {
+            assert_eq!(&bytes, expected, "optimization level {level:?}");
+        } else {
+            expected_bytes = Some(bytes);
+        }
+    }
+}
+
+#[test]
+fn bool_literals_variables_and_returns_preserve_mixed_local_order_and_reset_function_ids() {
+    use DecodedInstruction::*;
+
+    let bytes = Compiler::new()
+        .compile_source(
+            "fn first(flag: bool, n: number) -> bool {
+                 let value: number = n;
+                 let ready: bool = true;
+                 let other: number = value;
+                 let copy: bool = flag;
+                 ready = copy;
+                 flag = false;
+                 return ready;
+             }
+             fn second(flag: bool) -> bool {
+                 let ready: bool = flag;
+                 ready = false;
+                 return ready;
+             }
+             fn yes() -> bool { return true; }
+             fn no() -> bool { return false; }",
+        )
+        .expect("compile bool bindings and returns");
+    let module = decode(&bytes);
+
+    assert_eq!(
+        module.locals,
+        vec![
+            vec![ValType::F64, ValType::I32, ValType::F64, ValType::I32],
+            vec![ValType::I32],
+            vec![],
+            vec![],
+        ],
+    );
+    assert_eq!(
+        module.bodies,
+        vec![
+            vec![
+                LocalGet(1),
+                LocalSet(2),
+                I32Const(1),
+                LocalSet(3),
+                LocalGet(2),
+                LocalSet(4),
+                LocalGet(0),
+                LocalSet(5),
+                LocalGet(5),
+                LocalSet(3),
+                I32Const(0),
+                LocalSet(0),
+                LocalGet(3),
+                Return,
+                End,
+            ],
+            vec![
+                LocalGet(0),
+                LocalSet(1),
+                I32Const(0),
+                LocalSet(1),
+                LocalGet(1),
+                Return,
+                End,
+            ],
+            vec![I32Const(1), Return, End],
+            vec![I32Const(0), Return, End],
+        ],
+    );
+}
+
+#[test]
+fn scalar_expression_statements_drop_values_even_after_return() {
+    use DecodedInstruction::*;
+
+    let bytes = Compiler::new()
+        .compile_source(
+            "fn discard(n: number, flag: bool) -> void {
+                 n + 1;
+                 true;
+                 flag;
+                 return;
+                 let value: number = n;
+                 value = 2;
+                 value;
+                 false;
+             }",
+        )
+        .expect("compile discarded scalar expressions");
+    let module = decode(&bytes);
+
+    assert_eq!(module.locals, vec![vec![ValType::F64]]);
+    assert_eq!(
+        module.bodies,
+        vec![vec![
+            LocalGet(0),
+            F64Const(1.0),
+            F64Add,
+            Drop,
+            I32Const(1),
+            Drop,
+            LocalGet(1),
+            Drop,
+            Return,
+            LocalGet(0),
+            LocalSet(2),
+            F64Const(2.0),
+            LocalSet(2),
+            LocalGet(2),
+            Drop,
+            I32Const(0),
+            Drop,
+            End,
+        ]],
+    );
+}
+
+#[test]
+fn sparse_variable_ids_and_diagnostic_names_do_not_determine_wasm_indices() {
+    use DecodedInstruction::*;
+
+    let span = Span::new(12, 34);
+    let mut function = user(0, "sparse", &[Type::Number, Type::Bool], Type::Number);
+
+    function.params[0].id = VariableId(90);
+    function.params[1].id = VariableId(3);
+    function.body = vec![
+        declaration(
+            usize::MAX,
+            Type::Bool,
+            identifier(3, "renamed", Type::Bool),
+            span,
+        ),
+        declaration(
+            7,
+            Type::Number,
+            identifier(90, "not_p0", Type::Number),
+            span,
+        ),
+        assignment(
+            identifier(90, "renamed", Type::Number),
+            identifier(7, "not_x", Type::Number),
+            span,
+        ),
+        TypedStatement {
+            kind: TypedStatementKind::Return(Some(identifier(7, "p0", Type::Number))),
+            span,
+        },
+    ];
+
+    let layout = LocalLayout::new(&function).expect("layout sparse variable IDs");
+
+    assert_eq!(
+        layout.types,
+        vec![wasm_encoder::ValType::I32, wasm_encoder::ValType::F64]
+    );
+
+    for (id, index, ty) in [
+        (90, 0, Type::Number),
+        (3, 1, Type::Bool),
+        (usize::MAX, 2, Type::Bool),
+        (7, 3, Type::Number),
+    ] {
+        let local = layout.get(VariableId(id)).expect("mapped variable");
+        let copied = local;
+
+        assert_eq!((local.index, local.ty), (index, ty));
+        assert_eq!((copied.index, copied.ty), (index, ty));
+    }
+
+    assert!(layout.get(VariableId(0)).is_none());
+
+    let module = decode(
+        &compile(&TypedProgram {
+            functions: vec![function],
+            host_functions: vec![],
+        })
+        .expect("compile sparse variable IDs"),
+    );
+
+    assert_eq!(module.locals, vec![vec![ValType::I32, ValType::F64]]);
+    assert_eq!(
+        module.bodies,
+        vec![vec![
+            LocalGet(1),
+            LocalSet(2),
+            LocalGet(0),
+            LocalSet(3),
+            LocalGet(3),
+            LocalSet(0),
+            LocalGet(3),
+            Return,
+            End,
+        ]]
+    );
+}
+
+#[test]
+fn local_layout_collects_nested_shadow_bindings_in_preorder_without_emitting_control_flow() {
+    fn check_binding(layout: &LocalLayout, expr: &TypedExpr, index: u32, ty: Type) {
+        let TypedExprKind::Identifier { id, .. } = &expr.kind else {
+            panic!("expected resolved identifier");
+        };
+        let local = layout.get(*id).expect("shadow binding");
+
+        assert_eq!((local.index, local.ty), (index, ty));
+    }
+
+    fn collect(block: &[TypedStatement], ids: &mut Vec<(VariableId, Type)>) {
+        for statement in block {
+            match &statement.kind {
+                TypedStatementKind::Let { id, ty, .. } => ids.push((*id, *ty)),
+                TypedStatementKind::If { then, else_, .. } => {
+                    collect(then, ids);
+
+                    if let Some(else_) = else_ {
+                        collect(else_, ids);
+                    }
+                }
+                TypedStatementKind::While { body, .. } => collect(body, ids),
+                _ => {}
+            }
+        }
+    }
+
+    let program = Compiler::new()
+        .analyze(
+            "fn shadow(value: number) -> number {
+             let copy: number = value;
+             if true {
+                 let value: bool = true;
+                 if value {
+                     let copy: number = 2;
+                     copy;
+                 } else {
+                     let copy: bool = false;
+                     copy;
+                 }
+                 value;
+             } else {
+                 let value: number = 3;
+                 value;
+             }
+             while false {
+                 let value: bool = false;
+                 value;
+             }
+             let tail: number = copy;
+             return value;
+         }",
+        )
+        .expect("analyze nested shadow bindings");
+    let function = &program.functions[0];
+    let layout = LocalLayout::new(function).expect("layout nested shadow bindings");
+    let mut ids = vec![(function.params[0].id, Type::Number)];
+
+    collect(&function.body, &mut ids);
+
+    assert_eq!(
+        layout.types,
+        vec![
+            wasm_encoder::ValType::F64,
+            wasm_encoder::ValType::I32,
+            wasm_encoder::ValType::F64,
+            wasm_encoder::ValType::I32,
+            wasm_encoder::ValType::F64,
+            wasm_encoder::ValType::I32,
+            wasm_encoder::ValType::F64,
+        ]
+    );
+    assert_eq!(ids.len(), 8);
+
+    for (index, (id, ty)) in ids.into_iter().enumerate() {
+        let local = layout.get(id).expect("preorder local slot");
+
+        assert_eq!((local.index, local.ty), (index as u32, ty));
+    }
+
+    let TypedStatementKind::If {
+        then,
+        else_: Some(else_),
+        ..
+    } = &function.body[1].kind
+    else {
+        panic!("expected outer if");
+    };
+    let TypedStatementKind::If {
+        cond,
+        then: inner_then,
+        else_: Some(inner_else),
+    } = &then[1].kind
+    else {
+        panic!("expected nested if");
+    };
+
+    check_binding(&layout, cond, 2, Type::Bool);
+
+    for (statement, index, ty) in [
+        (&inner_then[1], 3, Type::Number),
+        (&inner_else[1], 4, Type::Bool),
+        (&then[2], 2, Type::Bool),
+        (&else_[1], 5, Type::Number),
+    ] {
+        let TypedStatementKind::Expression(expr) = &statement.kind else {
+            panic!("expected shadow expression");
+        };
+
+        check_binding(&layout, expr, index, ty);
+    }
+
+    let TypedStatementKind::While { body, .. } = &function.body[2].kind else {
+        panic!("expected while");
+    };
+    let TypedStatementKind::Expression(expr) = &body[1].kind else {
+        panic!("expected loop shadow expression");
+    };
+
+    check_binding(&layout, expr, 6, Type::Bool);
+
+    let TypedStatementKind::Let { value, .. } = &function.body[3].kind else {
+        panic!("expected trailing declaration");
+    };
+
+    check_binding(&layout, value, 1, Type::Number);
+
+    let TypedStatementKind::Return(Some(value)) = &function.body[4].kind else {
+        panic!("expected restored parameter return");
+    };
+
+    check_binding(&layout, value, 0, Type::Number);
+}
+
+#[test]
+fn duplicate_variable_ids_are_rejected_at_the_repeated_parameter_or_declaration() {
+    let first = Span::new(1, 4);
+    let repeated = Span::new(12, 34);
+    let mut parameters = user(0, "bad", &[Type::Number, Type::Bool], Type::Void);
+
+    parameters.params[0].id = VariableId(77);
+    parameters.params[1].id = VariableId(77);
+    parameters.params[1].span = repeated;
+
+    let mut parameter_local = user(0, "bad", &[Type::Number], Type::Void);
+
+    parameter_local.params[0].id = VariableId(77);
+    parameter_local
+        .body
+        .push(declaration(77, Type::Bool, boolean(), repeated));
+
+    let mut locals = user(0, "bad", &[], Type::Void);
+
+    locals.body = vec![
+        declaration(77, Type::Number, number(), first),
+        TypedStatement {
+            kind: TypedStatementKind::Return(None),
+            span: first,
+        },
+        declaration(77, Type::Bool, boolean(), repeated),
+    ];
+
+    let mut nested = user(0, "bad", &[], Type::Void);
+
+    nested.body = vec![TypedStatement {
+        kind: TypedStatementKind::If {
+            cond: Box::new(boolean()),
+            then: vec![declaration(77, Type::Number, number(), first)],
+            else_: Some(vec![TypedStatement {
+                kind: TypedStatementKind::While {
+                    cond: Box::new(boolean()),
+                    body: vec![declaration(77, Type::Bool, boolean(), repeated)],
+                },
+                span: first,
+            }]),
+        },
+        span: first,
+    }];
+
+    for function in [parameters, parameter_local, locals, nested] {
+        let expected = CodegenError::DuplicateVariableId {
+            function: "bad".to_owned(),
+            id: VariableId(77),
+            span: repeated,
+        };
+
+        assert_eq!(LocalLayout::new(&function).err(), Some(expected));
+        assert_eq!(
+            compile(&TypedProgram {
+                functions: vec![function],
+                host_functions: vec![],
+            }),
+            Err(CodegenError::DuplicateVariableId {
+                function: "bad".to_owned(),
+                id: VariableId(77),
+                span: repeated,
+            })
+        );
+    }
+}
+
+#[test]
+fn unknown_ids_are_rejected_for_reads_and_assignments_without_name_or_cross_function_lookup() {
+    let span = Span::new(12, 34);
+
+    for ty in [Type::Number, Type::Bool, Type::String, Type::Void] {
+        for kind in [
+            TypedStatementKind::Expression(identifier(99, "p0", ty)),
+            TypedStatementKind::Assignment {
+                target: identifier(99, "p0", ty),
+                value: number_literal("NaN"),
+            },
+        ] {
+            let mut previous = user(0, "previous", &[], Type::Void);
+
+            previous
+                .body
+                .push(declaration(99, Type::Number, number(), Span::new(0, 1)));
+
+            let mut function = user(1, "bad", &[Type::Number], Type::Void);
+
+            function.body.push(TypedStatement { kind, span });
+
+            assert_eq!(
+                compile(&TypedProgram {
+                    functions: vec![previous, function],
+                    host_functions: vec![],
+                }),
+                Err(CodegenError::UnknownVariable {
+                    function: "bad".to_owned(),
+                    id: VariableId(99),
+                    span,
+                })
+            );
+        }
+    }
+}
+
+#[test]
+fn forward_reads_self_initializers_and_assignments_before_declaration_are_uninitialized() {
+    let span = Span::new(12, 34);
+    let later = Span::new(40, 60);
+    let cases = vec![
+        vec![
+            TypedStatement {
+                kind: TypedStatementKind::Expression(identifier(7, "x", Type::Number)),
+                span,
+            },
+            declaration(7, Type::Number, number(), later),
+        ],
+        vec![
+            declaration(8, Type::Number, identifier(7, "x", Type::Number), span),
+            declaration(7, Type::Number, number(), later),
+        ],
+        vec![declaration(
+            7,
+            Type::Number,
+            identifier(7, "renamed", Type::Number),
+            span,
+        )],
+        vec![
+            assignment(
+                identifier(7, "x", Type::Number),
+                number_literal("NaN"),
+                span,
+            ),
+            declaration(7, Type::Number, number(), later),
+        ],
+        vec![
+            TypedStatement {
+                kind: TypedStatementKind::Return(Some(identifier(7, "x", Type::Number))),
+                span,
+            },
+            declaration(7, Type::Number, number(), later),
+        ],
+        vec![declaration(
+            7,
+            Type::Bool,
+            identifier(7, "x", Type::Bool),
+            span,
+        )],
+        vec![
+            TypedStatement {
+                kind: TypedStatementKind::Expression(identifier(7, "x", Type::Bool)),
+                span,
+            },
+            declaration(7, Type::Bool, boolean(), later),
+        ],
+        vec![
+            assignment(identifier(7, "x", Type::Bool), boolean(), span),
+            declaration(7, Type::Bool, boolean(), later),
+        ],
+    ];
+
+    for body in cases {
+        for after_return in [false, true] {
+            let mut program = local_program(body.clone());
+
+            if matches!(body[0].kind, TypedStatementKind::Return(_)) {
+                program.functions[0].return_type = Type::Number;
+            }
+
+            if after_return {
+                let value = if program.functions[0].return_type == Type::Number {
+                    Some(number())
+                } else {
+                    None
+                };
+
+                program.functions[0].body.insert(
+                    0,
+                    TypedStatement {
+                        kind: TypedStatementKind::Return(value),
+                        span: Span::new(0, 7),
+                    },
+                );
+            }
+
+            assert_eq!(
+                compile(&program),
+                Err(CodegenError::UninitializedVariable {
+                    function: "bad".to_owned(),
+                    id: VariableId(7),
+                    span,
+                })
+            );
+        }
+    }
+}
+
+#[test]
+fn scalar_local_types_are_checked_before_initialization_or_rhs_emission() {
+    let span = Span::new(12, 34);
+    let cases = vec![
+        (
+            declaration(8, Type::Number, boolean(), span),
+            Type::Number,
+            Type::Bool,
+        ),
+        (
+            declaration(8, Type::Bool, number(), span),
+            Type::Bool,
+            Type::Number,
+        ),
+        (
+            TypedStatement {
+                kind: TypedStatementKind::Expression(identifier(0, "p0", Type::Bool)),
+                span,
+            },
+            Type::Number,
+            Type::Bool,
+        ),
+        (
+            TypedStatement {
+                kind: TypedStatementKind::Expression(identifier(7, "x", Type::Bool)),
+                span,
+            },
+            Type::Number,
+            Type::Bool,
+        ),
+        (
+            assignment(identifier(0, "p0", Type::Number), boolean(), span),
+            Type::Number,
+            Type::Bool,
+        ),
+        (
+            assignment(identifier(0, "p0", Type::Bool), boolean(), span),
+            Type::Number,
+            Type::Bool,
+        ),
+        (
+            assignment(identifier(7, "x", Type::Bool), number_literal("NaN"), span),
+            Type::Number,
+            Type::Bool,
+        ),
+        (
+            TypedStatement {
+                kind: TypedStatementKind::Expression(TypedExpr {
+                    kind: TypedExprKind::Bool(true),
+                    ty: Type::Number,
+                }),
+                span,
+            },
+            Type::Bool,
+            Type::Number,
+        ),
+    ];
+
+    for (statement, expected, found) in cases {
+        let mut program = local_program(vec![
+            statement,
+            declaration(7, Type::Number, number(), Span::new(40, 60)),
+        ]);
+
+        program.functions[0].params = user(0, "bad", &[Type::Number], Type::Void).params;
+
+        assert_eq!(
+            compile(&program),
+            Err(CodegenError::TypeMismatch {
+                function: "bad".to_owned(),
+                expected,
+                found,
+                span,
+            })
+        );
+    }
+}
+
+#[test]
+fn non_identifier_assignment_targets_including_array_indices_are_rejected_before_rhs() {
+    let span = Span::new(12, 34);
+    let targets = vec![
+        number(),
+        boolean(),
+        binary(number(), BinaryOp::Add, number()),
+        TypedExpr {
+            kind: TypedExprKind::Call {
+                func: FunctionRef::User(FunctionId(0)),
+                name: "bad".to_owned(),
+                args: vec![],
+            },
+            ty: Type::Number,
+        },
+        TypedExpr {
+            kind: TypedExprKind::Index {
+                expr: Box::new(TypedExpr {
+                    kind: TypedExprKind::Array(vec![number()]),
+                    ty: Type::NumberArray,
+                }),
+                index: Box::new(number_literal("0")),
+            },
+            ty: Type::Number,
+        },
+    ];
+
+    for target in targets {
+        assert_eq!(
+            compile(&local_program(vec![assignment(
+                target,
+                number_literal("NaN"),
+                span
+            )])),
+            Err(CodegenError::InvalidAssignmentTarget {
+                function: "bad".to_owned(),
+                span,
+            }),
+        );
+    }
+}
+
+#[test]
+fn unsupported_local_types_are_rejected_before_body_emission_even_in_unreachable_nested_blocks() {
+    let span = Span::new(40, 60);
+
+    for ty in [Type::String, Type::NumberArray, Type::Void] {
+        for nested in [false, true] {
+            let local = declaration(7, ty, number(), span);
+            let statement = if nested {
+                TypedStatement {
+                    kind: TypedStatementKind::If {
+                        cond: Box::new(boolean()),
+                        then: vec![],
+                        else_: Some(vec![TypedStatement {
+                            kind: TypedStatementKind::While {
+                                cond: Box::new(boolean()),
+                                body: vec![local],
+                            },
+                            span: Span::new(30, 70),
+                        }]),
+                    },
+                    span: Span::new(20, 80),
+                }
+            } else {
+                local
+            };
+            let program = local_program(vec![
+                TypedStatement {
+                    kind: TypedStatementKind::Expression(number_literal("NaN")),
+                    span: Span::new(0, 7),
+                },
+                TypedStatement {
+                    kind: TypedStatementKind::Return(None),
+                    span: Span::new(8, 15),
+                },
+                statement,
+            ]);
+
+            assert_eq!(
+                compile(&program),
+                Err(CodegenError::UnsupportedLocalType {
+                    function: "bad".to_owned(),
+                    ty,
+                    span,
+                })
+            );
+        }
+    }
+}
+
+#[test]
+fn unreachable_local_initializers_and_assignments_are_still_validated() {
+    let span = Span::new(40, 60);
+
+    for kind in [
+        declaration(8, Type::Number, number_literal("NaN"), span).kind,
+        assignment(
+            identifier(7, "x", Type::Number),
+            number_literal("NaN"),
+            span,
+        )
+        .kind,
+    ] {
+        let program = local_program(vec![
+            declaration(7, Type::Number, number(), Span::new(0, 7)),
+            TypedStatement {
+                kind: TypedStatementKind::Return(None),
+                span: Span::new(8, 15),
+            },
+            TypedStatement { kind, span },
+        ]);
+
+        assert_eq!(
+            compile(&program),
+            Err(CodegenError::InvalidNumberLiteral {
+                function: "bad".to_owned(),
+                literal: "NaN".to_owned(),
+                span,
+            })
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires Node.js"]
+fn node_executes_parameterized_arithmetic_and_numeric_mutations_at_all_optimization_levels() {
+    for level in [
+        OptimizationLevel::None,
+        OptimizationLevel::Basic,
+        OptimizationLevel::Standard,
+        OptimizationLevel::Aggressive,
+    ] {
+        let mut compiler = Compiler::with_options(CompilerOptions {
+            optimization_level: level,
+        });
+
+        compiler
+            .register_host_function("numeric", "env", "numeric", vec![], Type::Number)
+            .unwrap();
+        compiler
+            .register_host_function("ready", "provider", "ready", vec![], Type::Bool)
+            .unwrap();
+
+        let bytes = compiler
+            .compile_source(
+                "fn calculate(n: number, scale: number) -> number {
+                 let value: number = n * scale + 1;
+                 n = value - 3;
+                 value = -n / 2;
+                 value + 99;
+                 return value;
+             }
+             fn passthrough(n: number) -> number { return n; }",
+            )
+            .expect("compile parameterized numeric runtime");
+        let module = decode(&bytes);
+
+        assert_eq!(
+            module.exports[0],
+            ("calculate".to_owned(), ExternalKind::Func, 2)
+        );
+        assert_eq!(module.locals, vec![vec![ValType::F64], vec![]]);
+
+        run_node(
+            &bytes,
+            r#"
+            const assert = require('node:assert/strict');
+            const bytes = require('node:fs').readFileSync(0);
+            let calls = 0;
+            const instance = new WebAssembly.Instance(new WebAssembly.Module(bytes), {
+                env: { numeric: () => { calls += 1; return 99; } },
+                provider: { ready: () => { calls += 1; return 1; } },
+            });
+
+            assert.equal(instance.exports.calculate(4, 3), -5);
+            assert.equal(instance.exports.calculate(2, 0.5), 0.5);
+            assert.equal(instance.exports.calculate(-2, 4), 5);
+            assert.equal(instance.exports.passthrough(0.25), 0.25);
+            assert.ok(Object.is(instance.exports.passthrough(-0), -0));
+            assert.equal(calls, 0);
+        "#,
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires Node.js"]
+fn node_executes_bool_assignments_returns_and_drops_at_all_optimization_levels() {
+    for level in [
+        OptimizationLevel::None,
+        OptimizationLevel::Basic,
+        OptimizationLevel::Standard,
+        OptimizationLevel::Aggressive,
+    ] {
+        let mut compiler = Compiler::with_options(CompilerOptions {
+            optimization_level: level,
+        });
+
+        compiler
+            .register_host_function("unused", "env", "unused", vec![Type::Bool], Type::Bool)
+            .unwrap();
+
+        let bytes = compiler
+            .compile_source(
+                "fn saved(flag: bool, n: number) -> bool {
+                 let value: number = n + 1;
+                 let copy: bool = flag;
+                 let ready: bool = false;
+                 ready = copy;
+                 flag = true;
+                 value = value * 2;
+                 value;
+                 flag;
+                 false;
+                 return ready;
+             }
+             fn reset(flag: bool) -> bool { flag = false; return flag; }
+             fn yes() -> bool { return true; }
+             fn discard(n: number, flag: bool) -> void {
+                 let copy: bool = flag;
+                 copy = true;
+                 n = n + 2;
+                 n;
+                 copy;
+             }",
+            )
+            .expect("compile bool assignment runtime");
+        let module = decode(&bytes);
+
+        assert_eq!(
+            module.exports[0],
+            ("saved".to_owned(), ExternalKind::Func, 1)
+        );
+        assert_eq!(
+            module.locals,
+            vec![
+                vec![ValType::F64, ValType::I32, ValType::I32],
+                vec![],
+                vec![],
+                vec![ValType::I32],
+            ]
+        );
+
+        run_node(
+            &bytes,
+            r#"
+            const assert = require('node:assert/strict');
+            const bytes = require('node:fs').readFileSync(0);
+            let calls = 0;
+            const instance = new WebAssembly.Instance(new WebAssembly.Module(bytes), {
+                env: { unused: flag => { calls += 1; return flag; } },
+            });
+
+            assert.equal(instance.exports.saved(0, 7), 0);
+            assert.equal(instance.exports.saved(1, 7), 1);
+            assert.equal(instance.exports.reset(1), 0);
+            assert.equal(instance.exports.yes(), 1);
+            assert.equal(instance.exports.discard(3, 0), undefined);
+            assert.equal(instance.exports.discard(9, 1), undefined);
+            assert.equal(calls, 0);
+        "#,
+        );
+    }
 }
 
 #[test]

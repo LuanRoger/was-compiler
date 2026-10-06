@@ -39,7 +39,11 @@ pub(super) fn signature(
     Ok(Signature { params, result })
 }
 
-fn value_type(function: &str, position: &'static str, ty: Type) -> Result<ValType, CodegenError> {
+pub(super) fn value_type(
+    function: &str,
+    position: &'static str,
+    ty: Type,
+) -> Result<ValType, CodegenError> {
     match ty {
         Type::Number => Ok(ValType::F64),
         Type::Bool => Ok(ValType::I32),

@@ -1,4 +1,8 @@
-use crate::{ast::Type, tokens::Span, typed_ast::TypedProgram};
+use crate::{
+    ast::Type,
+    tokens::Span,
+    typed_ast::{TypedProgram, VariableId},
+};
 use thiserror::Error;
 use wasm_encoder::{
     CodeSection, EntityType, ExportKind, ExportSection, FunctionSection, ImportSection, Module,
@@ -9,6 +13,7 @@ mod abi;
 mod expression;
 mod function;
 mod layout;
+mod locals;
 mod statement;
 
 #[cfg(test)]
@@ -59,6 +64,13 @@ pub enum CodegenError {
         span: Span,
     },
 
+    #[error("unsupported operator `{operator}` in function `{function}` at {span:?}")]
+    UnsupportedOperator {
+        function: String,
+        operator: &'static str,
+        span: Span,
+    },
+
     #[error("invalid number literal `{literal}` in function `{function}` at {span:?}")]
     InvalidNumberLiteral {
         function: String,
@@ -84,6 +96,39 @@ pub enum CodegenError {
         found: Type,
         span: Span,
     },
+
+    #[error("duplicate variable ID {id:?} in function `{function}` at {span:?}")]
+    DuplicateVariableId {
+        function: String,
+        id: VariableId,
+        span: Span,
+    },
+
+    #[error("unknown variable ID {id:?} in function `{function}` at {span:?}")]
+    UnknownVariable {
+        function: String,
+        id: VariableId,
+        span: Span,
+    },
+
+    #[error(
+        "variable ID {id:?} is used before initialization in function `{function}` at {span:?}"
+    )]
+    UninitializedVariable {
+        function: String,
+        id: VariableId,
+        span: Span,
+    },
+
+    #[error("unsupported local type {ty:?} in function `{function}` at {span:?}")]
+    UnsupportedLocalType {
+        function: String,
+        ty: Type,
+        span: Span,
+    },
+
+    #[error("assignment target must be a scalar variable in function `{function}` at {span:?}")]
+    InvalidAssignmentTarget { function: String, span: Span },
 
     #[error("void function `{function}` cannot return a value at {span:?}")]
     UnexpectedReturnValue { function: String, span: Span },

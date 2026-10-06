@@ -1,18 +1,20 @@
 use crate::{
-    ast::Type,
+    ast::{BinaryOp, Type, UnaryOp},
     tokens::Span,
     typed_ast::{TypedExpr, TypedExprKind},
 };
 use wasm_encoder::{Function, Instruction};
 
-use super::{CodegenError, expect_type};
+use super::{CodegenError, expect_type, function::Context};
 
 pub(super) fn emit(
     expr: &TypedExpr,
     body: &mut Function,
-    function: &str,
+    context: &Context<'_>,
     span: Span,
 ) -> Result<(), CodegenError> {
+    let function = context.name;
+
     let kind = match &expr.kind {
         TypedExprKind::Number(literal) => {
             expect_type(function, Type::Number, expr.ty, span)?;
@@ -24,11 +26,67 @@ pub(super) fn emit(
             return Ok(());
         }
 
+        TypedExprKind::Bool(value) => {
+            expect_type(function, Type::Bool, expr.ty, span)?;
+
+            body.instruction(&Instruction::I32Const(i32::from(*value)));
+
+            return Ok(());
+        }
+
+        TypedExprKind::Identifier { id, .. } => {
+            let index = context.resolve(*id, expr.ty, span)?;
+
+            body.instruction(&Instruction::LocalGet(index));
+
+            return Ok(());
+        }
+
+        TypedExprKind::Unary { op, expr: operand } => {
+            let instruction = match op {
+                UnaryOp::Negate => Instruction::F64Neg,
+                UnaryOp::Not => {
+                    return Err(CodegenError::UnsupportedOperator {
+                        function: function.into(),
+                        operator: "!",
+                        span,
+                    });
+                }
+            };
+
+            expect_type(function, Type::Number, expr.ty, span)?;
+            expect_type(function, Type::Number, operand.ty, span)?;
+
+            emit(operand, body, context, span)?;
+
+            body.instruction(&instruction);
+
+            return Ok(());
+        }
+
+        TypedExprKind::Binary { left, op, right } => {
+            let instruction = arithmetic_instruction(op).map_err(|operator| {
+                CodegenError::UnsupportedOperator {
+                    function: function.into(),
+                    operator,
+                    span,
+                }
+            })?;
+
+            expect_type(function, Type::Number, expr.ty, span)?;
+            expect_type(function, Type::Number, left.ty, span)?;
+            expect_type(function, Type::Number, right.ty, span)?;
+
+            emit(left, body, context, span)?;
+            emit(right, body, context, span)?;
+
+            body.instruction(&instruction);
+
+            return Ok(());
+        }
+
         TypedExprKind::String(_) => "string",
-        TypedExprKind::Bool(_) => "bool",
-        TypedExprKind::Identifier { .. } => "identifier",
-        TypedExprKind::Unary { .. } => "unary",
-        TypedExprKind::Binary { .. } => "binary",
+
         TypedExprKind::Call { .. } => "call",
         TypedExprKind::Array(_) => "array",
         TypedExprKind::Index { .. } => "index",
@@ -39,6 +97,25 @@ pub(super) fn emit(
         kind,
         span,
     })
+}
+
+fn arithmetic_instruction(op: &BinaryOp) -> Result<Instruction<'static>, &'static str> {
+    match op {
+        BinaryOp::Add => Ok(Instruction::F64Add),
+        BinaryOp::Subtract => Ok(Instruction::F64Sub),
+        BinaryOp::Multiply => Ok(Instruction::F64Mul),
+        BinaryOp::Divide => Ok(Instruction::F64Div),
+
+        BinaryOp::Remainder => Err("%"),
+        BinaryOp::Equal => Err("=="),
+        BinaryOp::NotEqual => Err("!="),
+        BinaryOp::LessThan => Err("<"),
+        BinaryOp::LessThanOrEqual => Err("<="),
+        BinaryOp::GreaterThan => Err(">"),
+        BinaryOp::GreaterThanOrEqual => Err(">="),
+        BinaryOp::And => Err("&&"),
+        BinaryOp::Or => Err("||"),
+    }
 }
 
 fn number(literal: &str, function: &str, span: Span) -> Result<f64, CodegenError> {

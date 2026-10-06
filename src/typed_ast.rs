@@ -7,7 +7,7 @@ use crate::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FunctionId(pub usize);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct VariableId(pub usize);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
