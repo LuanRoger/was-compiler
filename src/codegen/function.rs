@@ -7,20 +7,22 @@ use crate::{
 };
 use wasm_encoder::{Function, Instruction};
 
-use super::{CodegenError, expect_type, locals::LocalLayout, statement};
+use super::{CodegenError, expect_type, layout::Layout, locals::LocalLayout, statement};
 
 pub(super) struct Context<'a> {
     pub name: &'a str,
     pub return_type: Type,
+    pub module: &'a Layout,
     locals: LocalLayout,
     initialized: HashSet<VariableId>,
 }
 
 impl<'a> Context<'a> {
-    fn new(function: &'a TypedFunction) -> Result<Self, CodegenError> {
+    fn new(function: &'a TypedFunction, module: &'a Layout) -> Result<Self, CodegenError> {
         Ok(Self {
             name: &function.name,
             return_type: function.return_type,
+            module,
             locals: LocalLayout::new(function)?,
             initialized: function.params.iter().map(|param| param.id).collect(),
         })
@@ -60,8 +62,8 @@ impl<'a> Context<'a> {
     }
 }
 
-pub(super) fn emit(function: &TypedFunction) -> Result<Function, CodegenError> {
-    let mut context = Context::new(function)?;
+pub(super) fn emit(function: &TypedFunction, module: &Layout) -> Result<Function, CodegenError> {
+    let mut context = Context::new(function, module)?;
     let mut body = Function::new(context.locals.types.iter().map(|ty| (1, *ty)));
     let mut always_returns = false;
 

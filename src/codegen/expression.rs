@@ -5,7 +5,7 @@ use crate::{
 };
 use wasm_encoder::{Function, Instruction};
 
-use super::{CodegenError, expect_type, function::Context};
+use super::{CodegenError, call, expect_type, function::Context};
 
 pub(super) fn emit(
     expr: &TypedExpr,
@@ -85,9 +85,11 @@ pub(super) fn emit(
             return Ok(());
         }
 
-        TypedExprKind::String(_) => "string",
+        TypedExprKind::Call { func, args, .. } => {
+            return call::emit(*func, args, expr.ty, body, context, span);
+        }
 
-        TypedExprKind::Call { .. } => "call",
+        TypedExprKind::String(_) => "string",
         TypedExprKind::Array(_) => "array",
         TypedExprKind::Index { .. } => "index",
     };

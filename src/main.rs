@@ -1,13 +1,16 @@
-use was_compiler::Compiler;
+use was_compiler::{Compiler, Type};
 
 fn main() -> anyhow::Result<()> {
     let compiler = Compiler::new();
+
     let source = "
         fn main(value: number) -> number {
-            let result: number = value * 2;
-            result = result + 1;
-            result;
+            let result: number = double(value);
             return result;
+        }
+
+        fn double(value: number) -> number {
+            return value * 2;
         }
     ";
 

@@ -1,7 +1,7 @@
 use crate::{
     ast::Type,
     tokens::Span,
-    typed_ast::{TypedProgram, VariableId},
+    typed_ast::{BuiltinFunction, FunctionRef, TypedProgram, VariableId},
 };
 use thiserror::Error;
 use wasm_encoder::{
@@ -10,6 +10,7 @@ use wasm_encoder::{
 };
 
 mod abi;
+mod call;
 mod expression;
 mod function;
 mod layout;
@@ -97,6 +98,31 @@ pub enum CodegenError {
         span: Span,
     },
 
+    #[error("unknown function reference {reference:?} in function `{function}` at {span:?}")]
+    UnknownFunctionReference {
+        function: String,
+        reference: FunctionRef,
+        span: Span,
+    },
+
+    #[error(
+        "call to {reference:?} in function `{function}` expects {expected} arguments, found {found} at {span:?}"
+    )]
+    ArgumentCountMismatch {
+        function: String,
+        reference: FunctionRef,
+        expected: usize,
+        found: usize,
+        span: Span,
+    },
+
+    #[error("unsupported built-in {builtin:?} in function `{function}` at {span:?}")]
+    UnsupportedBuiltin {
+        function: String,
+        builtin: BuiltinFunction,
+        span: Span,
+    },
+
     #[error("duplicate variable ID {id:?} in function `{function}` at {span:?}")]
     DuplicateVariableId {
         function: String,
@@ -163,7 +189,7 @@ pub fn compile(program: &TypedProgram) -> Result<Vec<u8>, CodegenError> {
     let mut code = CodeSection::new();
 
     for (user, plan) in program.functions.iter().zip(&layout.users) {
-        let body = function::emit(user)?;
+        let body = function::emit(user, &layout)?;
 
         functions.function(plan.type_index);
         exports.export(&user.name, ExportKind::Func, plan.function_index);

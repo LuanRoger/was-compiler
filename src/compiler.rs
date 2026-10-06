@@ -154,15 +154,21 @@ mod tests {
         let mut compiler = compiler();
         let source = "
             fn main(value: number) -> number {
-                let result: number = value * 2;
+                let result: number = double(value);
                 result = result + 1;
                 result;
+                print(result);
                 return result;
             }
 
             fn flag(value: bool) -> bool {
                 let copy: bool = value;
+                copy = ready();
                 return copy;
+            }
+
+            fn double(value: number) -> number {
+                return value * 2;
             }
         ";
         let program = compiler.analyze(source).unwrap();
@@ -372,10 +378,11 @@ mod tests {
             compiler.compile_source("fn main() -> number { return 1 % 2; }"),
             Err(CompileError::Codegen(_))
         ));
-        assert!(matches!(
-            compiler.compile_source("fn main() -> void { print(1); }"),
-            Err(CompileError::Codegen(_))
-        ));
+        assert!(
+            compiler
+                .compile_source("fn main() -> void { print(1); }")
+                .is_ok()
+        );
         assert!(compiler.compile_source("fn main() -> void {}").is_ok());
     }
 

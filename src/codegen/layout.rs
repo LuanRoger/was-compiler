@@ -1,6 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::typed_ast::TypedProgram;
+use crate::{
+    ast::Type,
+    typed_ast::{FunctionRef, TypedProgram},
+};
 
 use super::{
     CodegenError,
@@ -13,10 +16,18 @@ pub(super) struct UserFunctionPlan {
     pub function_index: u32,
 }
 
+pub(super) struct CallTarget {
+    pub function_index: u32,
+    pub params: Vec<Type>,
+    pub return_type: Type,
+}
+
 pub(super) struct Layout {
     pub signatures: Vec<Signature>,
     pub host_type_indices: Vec<u32>,
     pub users: Vec<UserFunctionPlan>,
+    callees: Vec<CallTarget>,
+    host_count: usize,
 }
 
 impl Layout {
@@ -34,6 +45,8 @@ impl Layout {
             signatures: Vec::new(),
             host_type_indices: Vec::new(),
             users: Vec::new(),
+            callees: Vec::new(),
+            host_count: program.host_functions.len(),
         };
 
         let mut type_indices = HashMap::new();
@@ -56,6 +69,11 @@ impl Layout {
             let type_index = layout.intern(signature, &mut type_indices)?;
 
             layout.host_type_indices.push(type_index);
+            layout.callees.push(CallTarget {
+                function_index: checked_u32(expected, "host function index")?,
+                params: host.params.clone(),
+                return_type: host.return_type,
+            });
         }
 
         for (expected, user) in program.functions.iter().enumerate() {
@@ -92,9 +110,29 @@ impl Layout {
                 type_index,
                 function_index,
             });
+
+            layout.callees.push(CallTarget {
+                function_index,
+                params: user.params.iter().map(|param| param.ty).collect(),
+                return_type: user.return_type,
+            });
         }
 
         Ok(layout)
+    }
+
+    pub fn resolve(&self, reference: FunctionRef) -> Option<&CallTarget> {
+        match reference {
+            FunctionRef::Host(id) if id.0 < self.host_count => self.callees.get(id.0),
+
+            FunctionRef::User(id) => {
+                self.users.get(id.0)?;
+
+                self.callees.get(self.host_count.checked_add(id.0)?)
+            }
+
+            FunctionRef::Host(_) | FunctionRef::Builtin(_) => None,
+        }
     }
 
     fn intern(
