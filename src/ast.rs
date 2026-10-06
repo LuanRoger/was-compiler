@@ -1,0 +1,123 @@
+use crate::tokens::Span;
+
+#[derive(Debug, PartialEq)]
+pub enum Type {
+    Number,
+    String,
+    Bool,
+    NumberArray,
+    Void,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum BinaryOp {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Remainder,
+
+    Equal,
+    NotEqual,
+
+    LessThan,
+    GreaterThan,
+    LessThanOrEqual,
+    GreaterThanOrEqual,
+
+    And,
+    Or,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum UnaryOp {
+    Not,
+    Negate,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Expr {
+    Number(String),
+    String(String),
+    Bool(bool),
+
+    Identifier(String),
+
+    Unary {
+        op: UnaryOp,
+        expr: Box<Expr>,
+    },
+    Binary {
+        left: Box<Expr>,
+        op: BinaryOp,
+        right: Box<Expr>,
+    },
+
+    Call {
+        func: String,
+        args: Vec<Expr>,
+    },
+
+    Array(Vec<Expr>),
+    Index {
+        expr: Box<Expr>,
+        index: Box<Expr>,
+    },
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Statement {
+    pub kind: StatementKind,
+    pub span: Span,
+}
+
+pub type Block = Vec<Statement>;
+
+#[derive(Debug, PartialEq)]
+pub enum StatementKind {
+    Let {
+        name: String,
+        ty: Type,
+        value: Expr,
+    },
+
+    Assignment {
+        target: Expr,
+        value: Expr,
+    },
+
+    If {
+        cond: Box<Expr>,
+        then: Block,
+        else_: Option<Block>,
+    },
+
+    While {
+        cond: Box<Expr>,
+        body: Block,
+    },
+
+    Return(Option<Expr>),
+    Expression(Expr),
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Function {
+    pub name: String,
+    pub params: Vec<Param>,
+    pub return_type: Type,
+    pub body: Block,
+    pub span: Span,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Param {
+    pub name: String,
+    pub ty: Type,
+    pub span: Span,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Program {
+    pub functions: Vec<Function>,
+}

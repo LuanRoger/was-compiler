@@ -1,12 +1,15 @@
-use crate::lexer::Lexer;
+use crate::{lexer::Lexer, parser::Parser};
 
+mod ast;
 mod lexer;
-mod span;
+mod parser;
 mod tokens;
 
-fn main() {
-    let source = "fn main() {}";
+fn main() -> anyhow::Result<()> {
+    let source = "fn main() -> void { let d: string = \"Hello World\"; }";
     let tokens = Lexer::new(source).tokenize();
+    let program = Parser::new(&tokens).parse_program()?;
 
-    dbg!(tokens);
+    dbg!(program);
+    Ok(())
 }
