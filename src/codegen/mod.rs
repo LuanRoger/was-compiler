@@ -1,5 +1,6 @@
 use crate::{
     ast::Type,
+    exports::ExportOptions,
     tokens::Span,
     typed_ast::{BuiltinFunction, FunctionRef, TypedProgram, VariableId},
 };
@@ -21,6 +22,9 @@ mod memory;
 mod statement;
 mod temporaries;
 mod values;
+
+#[cfg(test)]
+mod export_tests;
 
 #[cfg(test)]
 mod memory_tests;
@@ -48,6 +52,12 @@ pub enum CodegenError {
 
     #[error("duplicate user function export name `{name}`")]
     DuplicateExportName { name: String },
+
+    #[error("unknown user function export `{name}`")]
+    UnknownExport { name: String },
+
+    #[error("duplicate requested export `{name}`")]
+    DuplicateExportSelection { name: String },
 
     #[error("unsupported {position} ABI type {ty:?} in function `{function}`")]
     UnsupportedAbiType {
@@ -177,7 +187,17 @@ pub enum CodegenError {
 }
 
 pub fn compile(program: &TypedProgram) -> Result<Vec<u8>, CodegenError> {
-    let layout = layout::Layout::new(program)?;
+    compile_with_exports(program, &ExportOptions::All)
+}
+
+pub fn compile_with_exports(
+    program: &TypedProgram,
+    exports: &ExportOptions,
+) -> Result<Vec<u8>, CodegenError> {
+    let layout = match exports {
+        ExportOptions::All => layout::Layout::new(program),
+        _ => layout::Layout::with_exports(program, exports),
+    }?;
 
     let mut types = TypeSection::new();
 
@@ -202,7 +222,11 @@ pub fn compile(program: &TypedProgram) -> Result<Vec<u8>, CodegenError> {
         let body = function::emit(user, &layout)?;
 
         functions.function(plan.type_index);
-        exports.export(&user.name, ExportKind::Func, plan.function_index);
+
+        if plan.exported {
+            exports.export(&user.name, ExportKind::Func, plan.function_index);
+        }
+
         code.function(&body);
     }
 

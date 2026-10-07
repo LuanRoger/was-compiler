@@ -3,6 +3,7 @@ use thiserror::Error;
 use crate::{
     ast::Type,
     codegen::{self, CodegenError},
+    exports::ExportOptions,
     host::{HostFunctionId, HostFunctions, HostRegistrationError},
     lexer::Lexer,
     optimization::{self, OptimizationLevel},
@@ -31,6 +32,7 @@ pub struct CompilerOptions {
 #[derive(Debug, Default)]
 pub struct Compiler {
     options: CompilerOptions,
+    exports: ExportOptions,
     host_functions: HostFunctions,
 }
 
@@ -52,6 +54,14 @@ impl Compiler {
 
     pub fn set_optimization_level(&mut self, level: OptimizationLevel) {
         self.options.optimization_level = level;
+    }
+
+    pub fn set_exports(&mut self, exports: ExportOptions) {
+        self.exports = exports;
+    }
+
+    pub fn exports(&self) -> &ExportOptions {
+        &self.exports
     }
 
     pub fn register_host_function(
@@ -83,7 +93,7 @@ impl Compiler {
     pub fn compile(&self, program: &TypedProgram) -> Result<Vec<u8>, CodegenError> {
         let optimized = optimization::optimize(program, self.options.optimization_level);
 
-        codegen::compile(optimized.as_ref())
+        codegen::compile_with_exports(optimized.as_ref(), &self.exports)
     }
 
     pub fn compile_source(&self, source: &str) -> Result<Vec<u8>, CompileError> {

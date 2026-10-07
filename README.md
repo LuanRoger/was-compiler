@@ -6,6 +6,24 @@ See the [compilation roadmap](docs/compilation-roadmap.md) for the architecture,
 host ABI, milestones, and acceptance criteria. The [memory ABI](docs/memory-abi.md)
 documents string/array layouts, allocation, ownership, and host examples.
 
+## Build and run
+
+```text
+cargo run --offline -- examples/array-sum.was -o target/array-sum.wasm --export main
+node runtime/run.cjs target/array-sum.wasm
+```
+
+The runner prints `65`. No source argument still compiles the built-in example and
+prints plain WAT; `--help` lists file/stdin, output-format, export, and host options.
+The Node harness uses built-in modules only and requires no npm installation.
+
+- [Runtime integration](docs/runtime-integration.md): CLI usage, host providers,
+  export selection, typed calls, artifact metadata, and diagnostic stages.
+- [Limitations and alternatives](docs/limitations.md): current restrictions,
+  available workarounds, and possible future solutions with tradeoffs.
+- [Refactoring plan](docs/refactoring.md): prioritized maintainability work,
+  explicitly excluding optimization work.
+
 ## Current compilation support
 
 The compiler emits valid modules containing registered function imports,
@@ -96,7 +114,9 @@ Strings are immutable UTF-8 values; array assignments alias mutable storage.
 Allocation is an aligned, growable bump allocator with **no freeing or garbage
 collection yet**. Scalar-only modules do not include the memory runtime.
 
-All user functions are exported. `%` remains explicitly unsupported until floating
+All user functions are exported by default. `ExportOptions` or CLI `--export` /
+`--no-exports` select the public user-function surface without removing bodies or
+imports. Required memory ABI exports remain. `%` is explicitly unsupported until floating
 remainder lowering is implemented; Wasm has no `f64.rem`.
 
 ```rust
@@ -133,6 +153,19 @@ Every registered import must be provided, including unused ones.
 Use `Compiler::compile_source` for the full pipeline, or `Compiler::analyze` and
 `Compiler::compile` separately to inspect the typed AST. The typed program owns
 its host-import snapshot, so later registry changes do not alter its compilation.
+
+```rust
+use was_compiler::{Compiler, ExportOptions};
+
+let mut compiler = Compiler::new();
+compiler.set_exports(ExportOptions::Only(vec!["main".into()]));
+```
+
+Library output is raw Wasm. CLI binary output additionally contains versioned
+`was-compiler.interface` metadata for the typed Node runner. Plain WAT has no
+packaging metadata. The runner accepts native JavaScript strings/arrays by copying
+across the descriptor ABI; wrapped host-array mutations do not mutate guest data.
+Use direct embedding and the memory ABI when reference mutation is required.
 
 ## Optimization levels
 

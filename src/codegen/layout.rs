@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     ast::Type,
+    exports::ExportOptions,
     typed_ast::{FunctionRef, TypedProgram},
 };
 
@@ -15,6 +16,7 @@ use super::{
 pub(super) struct UserFunctionPlan {
     pub type_index: u32,
     pub function_index: u32,
+    pub exported: bool,
 }
 
 pub(super) struct CallTarget {
@@ -40,6 +42,13 @@ pub(super) struct Layout {
 
 impl Layout {
     pub fn new(program: &TypedProgram) -> Result<Self, CodegenError> {
+        Self::with_exports(program, &ExportOptions::All)
+    }
+
+    pub fn with_exports(
+        program: &TypedProgram,
+        exports: &ExportOptions,
+    ) -> Result<Self, CodegenError> {
         let host_count = checked_u32(program.host_functions.len(), "host function count")?;
         let user_count = checked_u32(program.functions.len(), "user function count")?;
 
@@ -60,7 +69,7 @@ impl Layout {
         };
 
         let mut type_indices = HashMap::new();
-        let mut export_names = HashSet::new();
+        let mut user_names = HashSet::new();
 
         for (expected, host) in program.host_functions.iter().enumerate() {
             if host.id.0 != expected {
@@ -95,7 +104,7 @@ impl Layout {
                 });
             }
 
-            if !export_names.insert(user.name.as_str()) {
+            if !user_names.insert(user.name.as_str()) {
                 return Err(CodegenError::DuplicateExportName {
                     name: user.name.clone(),
                 });
@@ -119,6 +128,7 @@ impl Layout {
             layout.users.push(UserFunctionPlan {
                 type_index,
                 function_index,
+                exported: false,
             });
 
             layout.callees.push(CallTarget {
@@ -126,6 +136,30 @@ impl Layout {
                 params: user.params.iter().map(|param| param.ty).collect(),
                 return_type: user.return_type,
             });
+        }
+
+        let export_names = match exports {
+            ExportOptions::All => user_names,
+            ExportOptions::None => HashSet::new(),
+            ExportOptions::Only(names) => {
+                let mut selected = HashSet::new();
+
+                for name in names {
+                    if !selected.insert(name.as_str()) {
+                        return Err(CodegenError::DuplicateExportSelection { name: name.clone() });
+                    }
+
+                    if !user_names.contains(name.as_str()) {
+                        return Err(CodegenError::UnknownExport { name: name.clone() });
+                    }
+                }
+
+                selected
+            }
+        };
+
+        for (user, plan) in program.functions.iter().zip(&mut layout.users) {
+            plan.exported = export_names.contains(user.name.as_str());
         }
 
         if let Some(plan) = MemoryPlan::new(program)? {
@@ -149,6 +183,7 @@ impl Layout {
                 plans.push(UserFunctionPlan {
                     type_index: layout.intern(signature, &mut type_indices)?,
                     function_index: first_runtime + helper.index(),
+                    exported: false,
                 });
             }
 
