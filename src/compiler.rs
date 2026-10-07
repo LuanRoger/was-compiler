@@ -155,6 +155,9 @@ mod tests {
         let source = "
             fn main(value: number) -> number {
                 let result: number = double(value);
+                let items: number[] = [result, 2, 3];
+                items[1] = items[0] + len(items);
+
                 while result < 10 {
                     result = result + 1;
                 }
@@ -176,6 +179,10 @@ mod tests {
 
             fn double(value: number) -> number {
                 return value * 2;
+            }
+
+            fn same(left: string, right: string) -> bool {
+                return left == right;
             }
         ";
         let program = compiler.analyze(source).unwrap();

@@ -46,8 +46,8 @@ pub(super) fn value_type(
 ) -> Result<ValType, CodegenError> {
     match ty {
         Type::Number => Ok(ValType::F64),
-        Type::Bool => Ok(ValType::I32),
-        Type::String | Type::NumberArray | Type::Void => Err(CodegenError::UnsupportedAbiType {
+        Type::Bool | Type::String | Type::NumberArray => Ok(ValType::I32),
+        Type::Void => Err(CodegenError::UnsupportedAbiType {
             function: function.to_owned(),
             position,
             ty,

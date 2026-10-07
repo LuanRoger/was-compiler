@@ -3,14 +3,16 @@
 A typed language compiler targeting WebAssembly with `wasm-encoder`.
 
 See the [compilation roadmap](docs/compilation-roadmap.md) for the architecture,
-host ABI, milestones, and acceptance criteria.
+host ABI, milestones, and acceptance criteria. The [memory ABI](docs/memory-abi.md)
+documents string/array layouts, allocation, ownership, and host examples.
 
 ## Current compilation support
 
-The compiler emits valid modules containing registered function imports, scalar
-parameters, scalar `let` declarations, variable reads and assignments, expression
-statements, numeric/boolean returns, user/host function calls, `if`/`else`, and
-`while`. Empty `void` functions and bare `return;` statements are supported too.
+The compiler emits valid modules containing registered function imports,
+parameters and locals of every nonvoid language type, variable reads and
+assignments, expression statements, returns, user/host function calls, `if`/`else`,
+and `while`. Strings, numeric arrays, checked array access/assignment, and built-in
+`len` are supported. Empty `void` functions and bare `return;` statements work too.
 Calls can be forward, nested, self-recursive, or mutually recursive; arguments
 are evaluated left-to-right.
 
@@ -60,9 +62,42 @@ condition. The backend still validates statements after returns and runtime-skip
 operands, and rejects forged typed ASTs that access branch/loop locals outside
 of their scopes.
 
-All user functions are exported. `%` is explicitly unsupported until floating
-remainder lowering is implemented; Wasm has no `f64.rem`. Strings, string equality,
-arrays, and built-in `len` remain unsupported until the memory-backed milestone.
+Strings support literals, parameters/locals/returns, and content-based `==`/`!=`.
+Numeric arrays support literals (including `[]`), reference assignment, parameters,
+returns, element reads/writes, and `len(array)` returning a number. Array indices
+must be finite, integral, nonnegative, and below the length; invalid indices trap
+rather than being truncated or reading unrelated memory. `len` does not accept
+strings, matching the existing language rules.
+
+```text
+fn sum(values: number[]) -> number {
+    let total: number = 0;
+    let index: number = 0;
+
+    while index < len(values) {
+        total = total + values[index];
+        index = index + 1;
+    }
+
+    return total;
+}
+
+fn main() -> number {
+    let values: number[] = [10, 20, 30];
+    values[1] = 25;
+
+    return sum(values);
+}
+```
+
+Memory-backed modules export `memory` and `__alloc`. Strings and arrays cross
+function boundaries as `i32` descriptor handles, not JavaScript strings/arrays.
+Strings are immutable UTF-8 values; array assignments alias mutable storage.
+Allocation is an aligned, growable bump allocator with **no freeing or garbage
+collection yet**. Scalar-only modules do not include the memory runtime.
+
+All user functions are exported. `%` remains explicitly unsupported until floating
+remainder lowering is implemented; Wasm has no `f64.rem`.
 
 ```rust
 use was_compiler::{Compiler, Type};
@@ -84,13 +119,16 @@ let wasm = compiler.compile(&typed)?;
 The embedding runtime must provide `env.log_number`. Registration declares its
 signature and import names; it does not register a runtime callback. Function
 references resolve through the precomputed module layout, independently of names
-or deduplicated type indices. Numeric/boolean call results used as statements are
+or deduplicated type indices. All nonvoid call results used as statements are
 `drop`ped; void calls leave no stack value and receive no `drop`.
 
 Host `number` values use `f64`, including IEEE-754 NaN and infinities. Boolean
 arguments sent to hosts and boolean results received from hosts are normalized to
 `0` or `1`, treating any nonzero `i32` as true. Hosts must obey their registered
-signatures. Every registered import must be provided, including unused ones.
+signatures. Host string/array arguments and results have their descriptor bounds
+validated; hosts construct return values using the module's allocator and memory.
+See the [memory ABI](docs/memory-abi.md) for the required host contract.
+Every registered import must be provided, including unused ones.
 
 Use `Compiler::compile_source` for the full pipeline, or `Compiler::analyze` and
 `Compiler::compile` separately to inspect the typed AST. The typed program owns
@@ -123,5 +161,5 @@ Run the sample with `cargo run --offline` to print plain WAT with `wasmprinter`.
 Run tests with `cargo test --offline`. Optional runtime tests require Node.js:
 
 ```text
-cargo test --offline codegen::tests::node_executes -- --include-ignored
+cargo test --offline -- --include-ignored
 ```

@@ -1,11 +1,11 @@
 use crate::{
     ast::Type,
     tokens::Span,
-    typed_ast::{FunctionRef, TypedExpr},
+    typed_ast::{BuiltinFunction, FunctionRef, TypedExpr},
 };
 use wasm_encoder::{Function, Instruction};
 
-use super::{CodegenError, expect_type, expression, function::Context};
+use super::{CodegenError, expect_type, expression, function::Context, memory::Helper};
 
 pub(super) fn emit(
     reference: FunctionRef,
@@ -17,12 +17,24 @@ pub(super) fn emit(
 ) -> Result<(), CodegenError> {
     let function = context.name;
 
-    if let FunctionRef::Builtin(builtin) = reference {
-        return Err(CodegenError::UnsupportedBuiltin {
-            function: function.into(),
-            builtin,
-            span,
-        });
+    if let FunctionRef::Builtin(BuiltinFunction::Len) = reference {
+        if args.len() != 1 {
+            return Err(CodegenError::ArgumentCountMismatch {
+                function: function.into(),
+                reference,
+                expected: 1,
+                found: args.len(),
+                span,
+            });
+        }
+
+        expect_type(function, Type::Number, return_type, span)?;
+        expect_type(function, Type::NumberArray, args[0].ty, span)?;
+        expression::emit(&args[0], body, context, span)?;
+
+        body.instruction(&Instruction::Call(context.helper(Helper::ArrayLen)));
+
+        return Ok(());
     }
 
     let target = context.module.resolve(reference).ok_or_else(|| {
@@ -51,21 +63,35 @@ pub(super) fn emit(
         expect_type(function, *expected, arg.ty, span)?;
         expression::emit(arg, body, context, span)?;
 
-        if is_host && *expected == Type::Bool {
-            normalize_bool(body);
+        if is_host {
+            normalize_host_value(*expected, body, context);
         }
     }
 
     body.instruction(&Instruction::Call(target.function_index));
 
-    if is_host && target.return_type == Type::Bool {
-        normalize_bool(body);
+    if is_host {
+        normalize_host_value(target.return_type, body, context);
     }
 
     Ok(())
 }
 
-fn normalize_bool(body: &mut Function) {
-    body.instruction(&Instruction::I32Eqz);
-    body.instruction(&Instruction::I32Eqz);
+fn normalize_host_value(ty: Type, body: &mut Function, context: &Context<'_>) {
+    match ty {
+        Type::Bool => {
+            body.instruction(&Instruction::I32Eqz);
+            body.instruction(&Instruction::I32Eqz);
+        }
+
+        Type::String => {
+            body.instruction(&Instruction::Call(context.helper(Helper::ValidateString)));
+        }
+
+        Type::NumberArray => {
+            body.instruction(&Instruction::Call(context.helper(Helper::ValidateArray)));
+        }
+
+        Type::Number | Type::Void => {}
+    }
 }

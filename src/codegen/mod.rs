@@ -5,8 +5,9 @@ use crate::{
 };
 use thiserror::Error;
 use wasm_encoder::{
-    CodeSection, EntityType, ExportKind, ExportSection, FunctionSection, ImportSection, Module,
-    TypeSection,
+    CodeSection, ConstExpr, DataSection, EntityType, ExportKind, ExportSection, FunctionSection,
+    GlobalSection, GlobalType, ImportSection, MemorySection, MemoryType, Module, TypeSection,
+    ValType,
 };
 
 mod abi;
@@ -16,7 +17,13 @@ mod expression;
 mod function;
 mod layout;
 mod locals;
+mod memory;
 mod statement;
+mod temporaries;
+mod values;
+
+#[cfg(test)]
+mod memory_tests;
 
 #[cfg(test)]
 mod tests;
@@ -154,7 +161,9 @@ pub enum CodegenError {
         span: Span,
     },
 
-    #[error("assignment target must be a scalar variable in function `{function}` at {span:?}")]
+    #[error(
+        "assignment target must be a variable or its array element in function `{function}` at {span:?}"
+    )]
     InvalidAssignmentTarget { function: String, span: Span },
 
     #[error("void function `{function}` cannot return a value at {span:?}")]
@@ -197,13 +206,59 @@ pub fn compile(program: &TypedProgram) -> Result<Vec<u8>, CodegenError> {
         code.function(&body);
     }
 
+    let mut memories = MemorySection::new();
+    let mut globals = GlobalSection::new();
+    let mut data = DataSection::new();
+
+    if let Some(memory) = &layout.memory {
+        for ((helper, _), plan) in memory::helpers().into_iter().zip(&memory.helpers) {
+            functions.function(plan.type_index);
+            code.function(&memory::emit(helper, memory.first_function));
+        }
+
+        memories.memory(MemoryType {
+            minimum: u64::from(memory.plan.heap_start)
+                .div_ceil(memory::PAGE_BYTES)
+                .max(1),
+            maximum: Some(memory::MAX_PAGES),
+            memory64: false,
+            shared: false,
+            page_size_log2: None,
+        });
+        globals.global(
+            GlobalType {
+                val_type: ValType::I32,
+                mutable: true,
+                shared: false,
+            },
+            &ConstExpr::i32_const(memory.plan.heap_start as i32),
+        );
+        exports.export("memory", ExportKind::Memory, 0);
+        exports.export("__alloc", ExportKind::Func, memory.first_function);
+        data.active(
+            0,
+            &ConstExpr::i32_const(0),
+            memory.plan.data.iter().copied(),
+        );
+    }
+
     let mut module = Module::new();
 
     module.section(&types);
     module.section(&imports);
     module.section(&functions);
+
+    if layout.memory.is_some() {
+        module.section(&memories);
+        module.section(&globals);
+    }
+
     module.section(&exports);
     module.section(&code);
+
+    if layout.memory.is_some() {
+        module.section(&data);
+    }
 
     Ok(module.finish())
 }

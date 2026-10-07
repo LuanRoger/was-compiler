@@ -1,10 +1,10 @@
 use crate::{
     ast::Type,
-    typed_ast::{TypedBlock, TypedExprKind, TypedStatement, TypedStatementKind},
+    typed_ast::{TypedBlock, TypedStatement, TypedStatementKind},
 };
 use wasm_encoder::{Function, Instruction};
 
-use super::{CodegenError, control_flow, expect_type, expression, function::Context};
+use super::{CodegenError, control_flow, expect_type, expression, function::Context, values};
 
 pub(super) fn emit_block(
     block: &TypedBlock,
@@ -45,19 +45,7 @@ pub(super) fn emit(
         }
 
         TypedStatementKind::Assignment { target, value } => {
-            let TypedExprKind::Identifier { id, .. } = &target.kind else {
-                return Err(CodegenError::InvalidAssignmentTarget {
-                    function: function.into(),
-                    span,
-                });
-            };
-
-            let index = context.resolve(*id, target.ty, span)?;
-
-            expect_type(function, target.ty, value.ty, span)?;
-            expression::emit(value, body, context, span)?;
-
-            body.instruction(&Instruction::LocalSet(index));
+            values::emit_assignment(target, value, body, context, span)?;
 
             Ok(false)
         }

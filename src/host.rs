@@ -100,16 +100,9 @@ impl HostFunctions {
         }
 
         for ty in &params {
-            if !matches!(ty, Type::Number | Type::Bool) {
+            if *ty == Type::Void {
                 return Err(HostRegistrationError::UnsupportedType { name, ty: *ty });
             }
-        }
-
-        if !matches!(return_type, Type::Number | Type::Bool | Type::Void) {
-            return Err(HostRegistrationError::UnsupportedType {
-                name,
-                ty: return_type,
-            });
         }
 
         let id = HostFunctionId(self.functions.len());
@@ -207,29 +200,33 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_abi_types_are_rejected_at_registration() {
+    fn void_parameters_are_rejected_at_registration() {
         let mut functions = HostFunctions::new();
 
-        for ty in [Type::String, Type::NumberArray, Type::Void] {
-            assert_eq!(
-                functions.register("run", "env", "run", vec![ty], Type::Void),
-                Err(HostRegistrationError::UnsupportedType {
-                    name: "run".into(),
-                    ty
-                })
-            );
-        }
-
-        for ty in [Type::String, Type::NumberArray] {
-            assert_eq!(
-                functions.register("run", "env", "run", vec![], ty),
-                Err(HostRegistrationError::UnsupportedType {
-                    name: "run".into(),
-                    ty
-                })
-            );
-        }
+        assert_eq!(
+            functions.register("run", "env", "run", vec![Type::Void], Type::Void),
+            Err(HostRegistrationError::UnsupportedType {
+                name: "run".into(),
+                ty: Type::Void,
+            })
+        );
 
         assert!(functions.functions().is_empty());
+    }
+
+    #[test]
+    fn memory_backed_host_signatures_preserve_language_types() {
+        let mut functions = HostFunctions::new();
+
+        for (index, ty) in [Type::String, Type::NumberArray].into_iter().enumerate() {
+            let name = format!("echo{index}");
+
+            assert_eq!(
+                functions.register(&name, "env", &name, vec![ty], ty),
+                Ok(HostFunctionId(index))
+            );
+            assert_eq!(functions.functions()[index].params, vec![ty]);
+            assert_eq!(functions.functions()[index].return_type, ty);
+        }
     }
 }

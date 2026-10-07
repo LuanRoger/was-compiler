@@ -49,6 +49,7 @@ enum DecodedInstruction {
     F64Neg,
     Return,
     End,
+    Runtime(String),
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -171,7 +172,7 @@ fn decode(bytes: &[u8]) -> DecodedModule {
                         Operator::F64Neg => DecodedInstruction::F64Neg,
                         Operator::Return => DecodedInstruction::Return,
                         Operator::End => DecodedInstruction::End,
-                        operator => panic!("unexpected instruction: {operator:?}"),
+                        operator => DecodedInstruction::Runtime(format!("{operator:?}")),
                     });
                 }
 
@@ -547,7 +548,7 @@ fn signatures_distinguish_parameter_order_and_return_types() {
 }
 
 #[test]
-fn unsupported_parameter_and_return_abis_are_rejected_for_hosts_and_users() {
+fn memory_parameter_and_return_abis_use_i32_for_hosts_and_users() {
     for ty in [Type::String, Type::NumberArray] {
         for is_host in [false, true] {
             for position in ["parameter", "return"] {
@@ -557,6 +558,20 @@ fn unsupported_parameter_and_return_abis_are_rejected_for_hosts_and_users() {
                     vec![]
                 };
                 let return_type = if position == "return" { ty } else { Type::Void };
+                let mut function = user(0, "bad", &params, return_type);
+                if position == "return" {
+                    function.body.push(TypedStatement {
+                        kind: TypedStatementKind::Return(Some(TypedExpr {
+                            kind: if ty == Type::String {
+                                TypedExprKind::String("value".to_owned())
+                            } else {
+                                TypedExprKind::Array(vec![number()])
+                            },
+                            ty,
+                        })),
+                        span: Span::new(12, 34),
+                    });
+                }
                 let program = if is_host {
                     TypedProgram {
                         functions: vec![],
@@ -564,18 +579,30 @@ fn unsupported_parameter_and_return_abis_are_rejected_for_hosts_and_users() {
                     }
                 } else {
                     TypedProgram {
-                        functions: vec![user(0, "bad", &params, return_type)],
+                        functions: vec![function],
                         host_functions: vec![],
                     }
                 };
-
+                let module = decode(&compile(&program).expect("compile memory ABI"));
+                let type_index = if is_host {
+                    module.imports[0].2
+                } else {
+                    module.functions[0]
+                };
                 assert_eq!(
-                    compile(&program),
-                    Err(CodegenError::UnsupportedAbiType {
-                        function: "bad".to_owned(),
-                        position,
-                        ty,
-                    })
+                    module.signatures[type_index as usize],
+                    (
+                        if position == "parameter" {
+                            vec![ValType::I32]
+                        } else {
+                            vec![]
+                        },
+                        if position == "return" {
+                            vec![ValType::I32]
+                        } else {
+                            vec![]
+                        },
+                    )
                 );
             }
         }
@@ -609,7 +636,7 @@ fn void_parameters_are_rejected_for_hosts_and_users() {
 
 #[test]
 fn empty_result_functions_are_rejected_without_placeholder_bodies() {
-    for return_type in [Type::Number, Type::Bool] {
+    for return_type in [Type::Number, Type::Bool, Type::String, Type::NumberArray] {
         let program = TypedProgram {
             functions: vec![user(0, "bad", &[], return_type)],
             host_functions: vec![],
@@ -626,21 +653,21 @@ fn empty_result_functions_are_rejected_without_placeholder_bodies() {
 }
 
 #[test]
-fn unsupported_expression_statements_keep_their_span_even_after_return() {
+fn malformed_memory_expression_statements_keep_their_span_even_after_return() {
     for after_return in [false, true] {
-        for (kind_name, value) in [
+        for (expected, value) in [
             (
-                "string",
+                Type::String,
                 TypedExpr {
                     kind: TypedExprKind::String("bad".to_owned()),
-                    ty: Type::String,
+                    ty: Type::Number,
                 },
             ),
             (
-                "array",
+                Type::NumberArray,
                 TypedExpr {
                     kind: TypedExprKind::Array(vec![number()]),
-                    ty: Type::NumberArray,
+                    ty: Type::Number,
                 },
             ),
         ] {
@@ -666,9 +693,10 @@ fn unsupported_expression_statements_keep_their_span_even_after_return() {
 
             assert_eq!(
                 compile(&program),
-                Err(CodegenError::UnsupportedExpression {
+                Err(CodegenError::TypeMismatch {
                     function: "bad".to_owned(),
-                    kind: kind_name,
+                    expected,
+                    found: Type::Number,
                     span: Span::new(12, 34),
                 })
             );
@@ -1164,9 +1192,10 @@ fn nested_unsupported_expressions_and_operators_propagate_in_left_to_right_order
                 kind: TypedExprKind::String("bad".to_owned()),
                 ty: Type::Number,
             },
-            CodegenError::UnsupportedExpression {
+            CodegenError::TypeMismatch {
                 function: "bad".to_owned(),
-                kind: "string",
+                expected: Type::String,
+                found: Type::Number,
                 span,
             },
         ),
@@ -1457,24 +1486,22 @@ fn overflowing_numeric_literals_are_rejected_in_source_and_typed_ast() {
 }
 
 #[test]
-fn unsupported_expression_kinds_are_rejected_with_the_statement_span() {
+fn malformed_memory_expression_kinds_are_rejected_with_the_statement_span() {
     let expressions = vec![
-        ("string", TypedExprKind::String("text".to_owned())),
-        ("array", TypedExprKind::Array(vec![number()])),
+        (Type::String, TypedExprKind::String("text".to_owned())),
+        (Type::NumberArray, TypedExprKind::Array(vec![number()])),
         (
-            "index",
+            Type::NumberArray,
             TypedExprKind::Index {
-                expr: Box::new(TypedExpr {
-                    kind: TypedExprKind::Array(vec![number()]),
-                    ty: Type::NumberArray,
-                }),
+                expr: Box::new(boolean()),
                 index: Box::new(number_literal("0")),
             },
         ),
     ];
     let span = Span::new(12, 34);
 
-    for (kind_name, kind) in expressions {
+    for (expected, kind) in expressions {
+        let is_index = matches!(&kind, TypedExprKind::Index { .. });
         let value = TypedExpr {
             kind,
             ty: Type::Number,
@@ -1482,31 +1509,23 @@ fn unsupported_expression_kinds_are_rejected_with_the_statement_span() {
 
         for is_statement in [false, true] {
             let mut program = if is_statement {
-                let mut value = value.clone();
-
-                value.ty = match kind_name {
-                    "string" => Type::String,
-                    "array" => Type::NumberArray,
-                    _ => Type::Number,
-                };
-
                 local_program(vec![TypedStatement {
-                    kind: TypedStatementKind::Expression(value),
+                    kind: TypedStatementKind::Expression(value.clone()),
                     span,
                 }])
             } else {
                 return_program(Some(value.clone()), Type::Number, span)
             };
-
             program
                 .host_functions
                 .push(host(0, "numeric", &[], Type::Number));
 
             assert_eq!(
                 compile(&program),
-                Err(CodegenError::UnsupportedExpression {
+                Err(CodegenError::TypeMismatch {
                     function: "bad".to_owned(),
-                    kind: kind_name,
+                    expected,
+                    found: if is_index { Type::Bool } else { Type::Number },
                     span,
                 }),
             );
@@ -1515,17 +1534,17 @@ fn unsupported_expression_kinds_are_rejected_with_the_statement_span() {
 }
 
 #[test]
-fn source_returns_reject_builtin_len_before_its_array_argument() {
+fn source_builtin_len_propagates_unsupported_array_element_operators() {
     let compiler = Compiler::new();
     let program = compiler
-        .analyze("fn bad() -> number { return len([1]); }")
+        .analyze("fn bad() -> number { return len([1 % 2]); }")
         .expect("analyze builtin return expression");
 
     assert_eq!(
         compiler.compile(&program),
-        Err(CodegenError::UnsupportedBuiltin {
+        Err(CodegenError::UnsupportedOperator {
             function: "bad".to_owned(),
-            builtin: BuiltinFunction::Len,
+            operator: "%",
             span: program.functions[0].body[0].span,
         }),
     );
@@ -2555,7 +2574,7 @@ fn scalar_local_types_are_checked_before_initialization_or_rhs_emission() {
 }
 
 #[test]
-fn non_identifier_assignment_targets_including_array_indices_are_rejected_before_rhs() {
+fn non_identifier_assignment_targets_and_index_bases_are_rejected_before_rhs() {
     let span = Span::new(12, 34);
     let targets = vec![
         number(),
@@ -2600,7 +2619,7 @@ fn non_identifier_assignment_targets_including_array_indices_are_rejected_before
 fn unsupported_local_types_are_rejected_before_body_emission_even_in_unreachable_nested_blocks() {
     let span = Span::new(40, 60);
 
-    for ty in [Type::String, Type::NumberArray, Type::Void] {
+    for ty in [Type::Void] {
         for nested in [false, true] {
             let local = declaration(7, ty, number(), span);
             let statement = if nested {
@@ -3352,7 +3371,7 @@ fn unknown_call_references_do_not_spill_between_host_and_user_tables_or_use_name
 }
 
 #[test]
-fn nested_builtin_calls_are_rejected_before_argument_emission_in_all_statement_contexts() {
+fn nested_builtin_argument_types_are_checked_before_emission_in_all_statement_contexts() {
     let span = Span::new(40, 60);
     let builtin = call(
         FunctionRef::Builtin(BuiltinFunction::Len),
@@ -3389,9 +3408,10 @@ fn nested_builtin_calls_are_rejected_before_argument_emission_in_all_statement_c
                 functions: vec![function],
                 host_functions: vec![host(0, "callee", &[Type::Number], Type::Number)],
             }),
-            Err(CodegenError::UnsupportedBuiltin {
+            Err(CodegenError::TypeMismatch {
                 function: "bad".to_owned(),
-                builtin: BuiltinFunction::Len,
+                expected: Type::NumberArray,
+                found: Type::Number,
                 span,
             }),
         );
@@ -3564,9 +3584,11 @@ fn invalid_unreachable_calls_abort_without_partial_output_and_keep_statement_spa
                 vec![],
                 Type::Number,
             ),
-            CodegenError::UnsupportedBuiltin {
+            CodegenError::ArgumentCountMismatch {
                 function: "bad".to_owned(),
-                builtin: BuiltinFunction::Len,
+                reference: FunctionRef::Builtin(BuiltinFunction::Len),
+                expected: 1,
+                found: 0,
                 span,
             },
         ),
@@ -4381,19 +4403,14 @@ fn logical_rhs_is_validated_even_when_runtime_short_circuit_would_skip_it() {
         ),
         (BinaryOp::Or, boolean()),
     ] {
-        let right = call(
-            FunctionRef::Builtin(BuiltinFunction::Len),
-            "len",
-            vec![],
-            Type::Bool,
-        );
+        let right = bool_binary(number(), BinaryOp::Remainder, number());
         let value = bool_binary(left.clone(), op, right);
 
         assert_eq!(
             compile(&return_program(Some(value), Type::Bool, span)),
-            Err(CodegenError::UnsupportedBuiltin {
+            Err(CodegenError::UnsupportedOperator {
                 function: "bad".to_owned(),
-                builtin: BuiltinFunction::Len,
+                operator: "%",
                 span,
             })
         );

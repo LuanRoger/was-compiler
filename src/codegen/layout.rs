@@ -9,6 +9,7 @@ use super::{
     CodegenError,
     abi::{self, Signature},
     checked_u32,
+    memory::{self, MemoryPlan},
 };
 
 pub(super) struct UserFunctionPlan {
@@ -22,10 +23,17 @@ pub(super) struct CallTarget {
     pub return_type: Type,
 }
 
+pub(super) struct MemoryLayout {
+    pub plan: MemoryPlan,
+    pub helpers: Vec<UserFunctionPlan>,
+    pub first_function: u32,
+}
+
 pub(super) struct Layout {
     pub signatures: Vec<Signature>,
     pub host_type_indices: Vec<u32>,
     pub users: Vec<UserFunctionPlan>,
+    pub memory: Option<MemoryLayout>,
     callees: Vec<CallTarget>,
     host_count: usize,
 }
@@ -35,16 +43,18 @@ impl Layout {
         let host_count = checked_u32(program.host_functions.len(), "host function count")?;
         let user_count = checked_u32(program.functions.len(), "user function count")?;
 
-        host_count
-            .checked_add(user_count)
-            .ok_or(CodegenError::LimitExceeded {
-                what: "total function count",
-            })?;
+        let first_runtime =
+            host_count
+                .checked_add(user_count)
+                .ok_or(CodegenError::LimitExceeded {
+                    what: "total function count",
+                })?;
 
         let mut layout = Self {
             signatures: Vec::new(),
             host_type_indices: Vec::new(),
             users: Vec::new(),
+            memory: None,
             callees: Vec::new(),
             host_count: program.host_functions.len(),
         };
@@ -115,6 +125,37 @@ impl Layout {
                 function_index,
                 params: user.params.iter().map(|param| param.ty).collect(),
                 return_type: user.return_type,
+            });
+        }
+
+        if let Some(plan) = MemoryPlan::new(program)? {
+            for name in ["memory", "__alloc"] {
+                if export_names.contains(name) {
+                    return Err(CodegenError::DuplicateExportName { name: name.into() });
+                }
+            }
+
+            let helpers = memory::helpers();
+
+            first_runtime
+                .checked_add(checked_u32(helpers.len(), "runtime function count")?)
+                .ok_or(CodegenError::LimitExceeded {
+                    what: "total function count",
+                })?;
+
+            let mut plans = Vec::with_capacity(helpers.len());
+
+            for (helper, signature) in helpers {
+                plans.push(UserFunctionPlan {
+                    type_index: layout.intern(signature, &mut type_indices)?,
+                    function_index: first_runtime + helper.index(),
+                });
+            }
+
+            layout.memory = Some(MemoryLayout {
+                plan,
+                helpers: plans,
+                first_function: first_runtime,
             });
         }
 

@@ -3,9 +3,9 @@ use crate::{
     tokens::Span,
     typed_ast::{TypedExpr, TypedExprKind},
 };
-use wasm_encoder::{BlockType, Function, Instruction, ValType};
+use wasm_encoder::{BlockType, Function, Instruction, MemArg, ValType};
 
-use super::{CodegenError, call, expect_type, function::Context};
+use super::{CodegenError, call, expect_type, function::Context, memory::Helper, values};
 
 pub(super) fn emit(
     expr: &TypedExpr,
@@ -15,7 +15,7 @@ pub(super) fn emit(
 ) -> Result<(), CodegenError> {
     let function = context.name;
 
-    let kind = match &expr.kind {
+    match &expr.kind {
         TypedExprKind::Number(literal) => {
             expect_type(function, Type::Number, expr.ty, span)?;
 
@@ -23,7 +23,7 @@ pub(super) fn emit(
 
             body.instruction(&Instruction::F64Const(value.into()));
 
-            return Ok(());
+            Ok(())
         }
 
         TypedExprKind::Bool(value) => {
@@ -31,7 +31,7 @@ pub(super) fn emit(
 
             body.instruction(&Instruction::I32Const(i32::from(*value)));
 
-            return Ok(());
+            Ok(())
         }
 
         TypedExprKind::Identifier { id, .. } => {
@@ -39,7 +39,7 @@ pub(super) fn emit(
 
             body.instruction(&Instruction::LocalGet(index));
 
-            return Ok(());
+            Ok(())
         }
 
         TypedExprKind::Unary { op, expr: operand } => {
@@ -55,7 +55,7 @@ pub(super) fn emit(
 
             body.instruction(&instruction);
 
-            return Ok(());
+            Ok(())
         }
 
         TypedExprKind::Binary { left, op, right } => {
@@ -120,6 +120,19 @@ pub(super) fn emit(
                 return Ok(());
             }
 
+            if operand_type == Type::String {
+                emit(left, body, context, span)?;
+                emit(right, body, context, span)?;
+
+                body.instruction(&Instruction::Call(context.helper(Helper::StringEqual)));
+
+                if *op == BinaryOp::NotEqual {
+                    body.instruction(&Instruction::I32Eqz);
+                }
+
+                return Ok(());
+            }
+
             let instruction = binary_instruction(op, operand_type).map_err(|operator| {
                 CodegenError::UnsupportedOperator {
                     function: function.into(),
@@ -145,23 +158,40 @@ pub(super) fn emit(
 
             body.instruction(&instruction);
 
-            return Ok(());
+            Ok(())
         }
 
         TypedExprKind::Call { func, args, .. } => {
-            return call::emit(*func, args, expr.ty, body, context, span);
+            call::emit(*func, args, expr.ty, body, context, span)
         }
 
-        TypedExprKind::String(_) => "string",
-        TypedExprKind::Array(_) => "array",
-        TypedExprKind::Index { .. } => "index",
-    };
+        TypedExprKind::String(value) => {
+            expect_type(function, Type::String, expr.ty, span)?;
 
-    Err(CodegenError::UnsupportedExpression {
-        function: function.into(),
-        kind,
-        span,
-    })
+            body.instruction(&Instruction::I32Const(context.string(value) as i32));
+
+            Ok(())
+        }
+
+        TypedExprKind::Array(elements) => {
+            expect_type(function, Type::NumberArray, expr.ty, span)?;
+
+            values::emit_array(elements, body, context, span)
+        }
+
+        TypedExprKind::Index { expr: base, index } => {
+            values::expect_index_types(base, index, expr.ty, context, span)?;
+            values::emit_address(base, index, body, context, span)?;
+
+            body.instruction(&Instruction::F64Load(MemArg {
+                offset: 0,
+                align: 3,
+                memory_index: 0,
+            }));
+
+            Ok(())
+        }
+    }
 }
 
 fn binary_instruction(
