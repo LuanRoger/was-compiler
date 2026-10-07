@@ -14,7 +14,7 @@ use crate::{
         TypedParam, TypedProgram, TypedStatement, TypedStatementKind, VariableId,
     },
 };
-use wasmparser::{ExternalKind, Operator, Parser, Payload, TypeRef, ValType, Validator};
+use wasmparser::{BlockType, ExternalKind, Operator, Parser, Payload, TypeRef, ValType, Validator};
 
 use super::{CodegenError, checked_u32, compile, locals::LocalLayout};
 
@@ -26,6 +26,21 @@ enum DecodedInstruction {
     LocalSet(u32),
     Call(u32),
     I32Eqz,
+    I32Eq,
+    I32Ne,
+    F64Eq,
+    F64Ne,
+    F64Lt,
+    F64Le,
+    F64Gt,
+    F64Ge,
+    Block(BlockType),
+    Loop(BlockType),
+    If(BlockType),
+    Else,
+    Br(u32),
+    BrIf(u32),
+    Unreachable,
     Drop,
     F64Add,
     F64Sub,
@@ -131,6 +146,23 @@ fn decode(bytes: &[u8]) -> DecodedModule {
                             DecodedInstruction::Call(function_index)
                         }
                         Operator::I32Eqz => DecodedInstruction::I32Eqz,
+                        Operator::I32Eq => DecodedInstruction::I32Eq,
+                        Operator::I32Ne => DecodedInstruction::I32Ne,
+                        Operator::F64Eq => DecodedInstruction::F64Eq,
+                        Operator::F64Ne => DecodedInstruction::F64Ne,
+                        Operator::F64Lt => DecodedInstruction::F64Lt,
+                        Operator::F64Le => DecodedInstruction::F64Le,
+                        Operator::F64Gt => DecodedInstruction::F64Gt,
+                        Operator::F64Ge => DecodedInstruction::F64Ge,
+                        Operator::Block { blockty } => DecodedInstruction::Block(blockty),
+                        Operator::Loop { blockty } => DecodedInstruction::Loop(blockty),
+                        Operator::If { blockty } => DecodedInstruction::If(blockty),
+                        Operator::Else => DecodedInstruction::Else,
+                        Operator::Br { relative_depth } => DecodedInstruction::Br(relative_depth),
+                        Operator::BrIf { relative_depth } => {
+                            DecodedInstruction::BrIf(relative_depth)
+                        }
+                        Operator::Unreachable => DecodedInstruction::Unreachable,
                         Operator::Drop => DecodedInstruction::Drop,
                         Operator::F64Add => DecodedInstruction::F64Add,
                         Operator::F64Sub => DecodedInstruction::F64Sub,
@@ -594,27 +626,25 @@ fn empty_result_functions_are_rejected_without_placeholder_bodies() {
 }
 
 #[test]
-fn every_unsupported_statement_kind_is_rejected_with_its_span_even_after_return() {
+fn unsupported_expression_statements_keep_their_span_even_after_return() {
     for after_return in [false, true] {
-        let kinds = vec![
+        for (kind_name, value) in [
             (
-                "if",
-                TypedStatementKind::If {
-                    cond: Box::new(boolean()),
-                    then: vec![],
-                    else_: None,
+                "string",
+                TypedExpr {
+                    kind: TypedExprKind::String("bad".to_owned()),
+                    ty: Type::String,
                 },
             ),
             (
-                "while",
-                TypedStatementKind::While {
-                    cond: Box::new(boolean()),
-                    body: vec![],
+                "array",
+                TypedExpr {
+                    kind: TypedExprKind::Array(vec![number()]),
+                    ty: Type::NumberArray,
                 },
             ),
-        ];
-
-        for (kind_name, kind) in kinds {
+        ] {
+            let kind = TypedStatementKind::Expression(value);
             let mut function = user(0, "bad", &[], Type::Void);
 
             if after_return {
@@ -636,7 +666,7 @@ fn every_unsupported_statement_kind_is_rejected_with_its_span_even_after_return(
 
             assert_eq!(
                 compile(&program),
-                Err(CodegenError::UnsupportedStatement {
+                Err(CodegenError::UnsupportedExpression {
                     function: "bad".to_owned(),
                     kind: kind_name,
                     span: Span::new(12, 34),
@@ -1080,21 +1110,7 @@ fn nested_numeric_literal_errors_preserve_the_enclosing_statement_span() {
 #[test]
 fn unsupported_operators_are_rejected_before_their_root_or_operand_type_checks() {
     let span = Span::new(12, 34);
-    let mut expressions = vec![("!", unary(UnaryOp::Not, boolean()))];
-
-    for (op, label) in [
-        (BinaryOp::Remainder, "%"),
-        (BinaryOp::Equal, "=="),
-        (BinaryOp::NotEqual, "!="),
-        (BinaryOp::LessThan, "<"),
-        (BinaryOp::LessThanOrEqual, "<="),
-        (BinaryOp::GreaterThan, ">"),
-        (BinaryOp::GreaterThanOrEqual, ">="),
-        (BinaryOp::And, "&&"),
-        (BinaryOp::Or, "||"),
-    ] {
-        expressions.push((label, binary(boolean(), op, boolean())));
-    }
+    let expressions = vec![("%", binary(boolean(), BinaryOp::Remainder, boolean()))];
 
     for (operator, expression) in expressions {
         for ty in [Type::Number, Type::Bool] {
@@ -1116,24 +1132,12 @@ fn unsupported_operators_are_rejected_before_their_root_or_operand_type_checks()
 }
 
 #[test]
-fn source_returns_reject_every_nonarithmetic_operator_with_its_label() {
-    for (expression, return_type, operator) in [
-        ("1 % 2", "number", "%"),
-        ("1 == 2", "bool", "=="),
-        ("1 != 2", "bool", "!="),
-        ("1 < 2", "bool", "<"),
-        ("1 <= 2", "bool", "<="),
-        ("1 > 2", "bool", ">"),
-        ("1 >= 2", "bool", ">="),
-        ("true && false", "bool", "&&"),
-        ("true || false", "bool", "||"),
-        ("!true", "bool", "!"),
-        ("flag && true", "bool", "&&"),
-        ("flag || false", "bool", "||"),
-        ("flag == true", "bool", "=="),
-        ("!flag", "bool", "!"),
-    ] {
-        let source = format!("fn bad(flag: bool) -> {return_type} {{ return {expression}; }}");
+fn source_returns_reject_remainder_with_its_label() {
+    for (expression, return_type, operator) in
+        [("1 % 2", "number", "%"), ("flag_number % 2", "number", "%")]
+    {
+        let source =
+            format!("fn bad(flag_number: number) -> {return_type} {{ return {expression}; }}");
         let compiler = Compiler::new();
         let program = compiler
             .analyze(&source)
@@ -1156,10 +1160,13 @@ fn nested_unsupported_expressions_and_operators_propagate_in_left_to_right_order
     let span = Span::new(12, 34);
     let cases = vec![
         (
-            unary(UnaryOp::Not, number()),
-            CodegenError::UnsupportedOperator {
+            TypedExpr {
+                kind: TypedExprKind::String("bad".to_owned()),
+                ty: Type::Number,
+            },
+            CodegenError::UnsupportedExpression {
                 function: "bad".to_owned(),
-                operator: "!",
+                kind: "string",
                 span,
             },
         ),
@@ -1555,16 +1562,10 @@ fn invalid_unreachable_returns_are_not_skipped() {
             },
         ),
         (
-            Some(TypedExpr {
-                kind: TypedExprKind::Unary {
-                    op: UnaryOp::Not,
-                    expr: Box::new(number()),
-                },
-                ty: Type::Number,
-            }),
+            Some(binary(number(), BinaryOp::Remainder, number())),
             CodegenError::UnsupportedOperator {
                 function: "bad".to_owned(),
-                operator: "!",
+                operator: "%",
                 span,
             },
         ),
@@ -2128,7 +2129,7 @@ fn sparse_variable_ids_and_diagnostic_names_do_not_determine_wasm_indices() {
 }
 
 #[test]
-fn local_layout_collects_nested_shadow_bindings_in_preorder_without_emitting_control_flow() {
+fn local_layout_collects_and_emits_nested_shadow_bindings_in_preorder() {
     fn check_binding(layout: &LocalLayout, expr: &TypedExpr, index: u32, ty: Type) {
         let TypedExprKind::Identifier { id, .. } = &expr.kind else {
             panic!("expected resolved identifier");
@@ -2260,6 +2261,23 @@ fn local_layout_collects_nested_shadow_bindings_in_preorder_without_emitting_con
     };
 
     check_binding(&layout, value, 0, Type::Number);
+
+    let module = decode(&compile(&program).expect("compile nested shadow bindings"));
+
+    assert_eq!(
+        module.locals[0],
+        vec![
+            ValType::F64,
+            ValType::I32,
+            ValType::F64,
+            ValType::I32,
+            ValType::F64,
+            ValType::I32,
+            ValType::F64
+        ]
+    );
+    assert!(module.bodies[0].contains(&DecodedInstruction::If(BlockType::Empty)));
+    assert!(module.bodies[0].contains(&DecodedInstruction::Loop(BlockType::Empty)));
 }
 
 #[test]
@@ -4022,6 +4040,1276 @@ fn errors_from_later_functions_propagate_without_partial_module_output() {
     );
     assert!(error.to_string().contains("bad"));
     assert!(error.to_string().contains("Number"));
+}
+
+fn bool_binary(left: TypedExpr, op: BinaryOp, right: TypedExpr) -> TypedExpr {
+    let mut expr = binary(left, op, right);
+
+    expr.ty = Type::Bool;
+    expr
+}
+
+fn bool_not(value: TypedExpr) -> TypedExpr {
+    let mut expr = unary(UnaryOp::Not, value);
+
+    expr.ty = Type::Bool;
+    expr
+}
+
+fn returned(value: Option<TypedExpr>, span: Span) -> TypedStatement {
+    TypedStatement {
+        kind: TypedStatementKind::Return(value),
+        span,
+    }
+}
+
+fn conditional(
+    cond: TypedExpr,
+    then: Vec<TypedStatement>,
+    else_: Option<Vec<TypedStatement>>,
+    span: Span,
+) -> TypedStatement {
+    TypedStatement {
+        kind: TypedStatementKind::If {
+            cond: Box::new(cond),
+            then,
+            else_,
+        },
+        span,
+    }
+}
+
+fn while_loop(cond: TypedExpr, body: Vec<TypedStatement>, span: Span) -> TypedStatement {
+    TypedStatement {
+        kind: TypedStatementKind::While {
+            cond: Box::new(cond),
+            body,
+        },
+        span,
+    }
+}
+
+#[test]
+fn numeric_comparisons_emit_f64_operands_and_bool_results_at_all_optimization_levels() {
+    for level in [
+        OptimizationLevel::None,
+        OptimizationLevel::Basic,
+        OptimizationLevel::Standard,
+        OptimizationLevel::Aggressive,
+    ] {
+        let compiler = Compiler::with_options(CompilerOptions {
+            optimization_level: level,
+        });
+
+        for (operator, instruction) in [
+            ("==", DecodedInstruction::F64Eq),
+            ("!=", DecodedInstruction::F64Ne),
+            ("<", DecodedInstruction::F64Lt),
+            ("<=", DecodedInstruction::F64Le),
+            (">", DecodedInstruction::F64Gt),
+            (">=", DecodedInstruction::F64Ge),
+        ] {
+            let source = format!(
+                "fn compare(a: number, b: number) -> bool {{ return a + 1 {operator} b * 2; }}"
+            );
+            let module = decode(
+                &compiler
+                    .compile_source(&source)
+                    .expect("compile comparison"),
+            );
+
+            assert_eq!(
+                module.signatures,
+                vec![(vec![ValType::F64, ValType::F64], vec![ValType::I32])]
+            );
+            assert_eq!(
+                module.bodies[0],
+                vec![
+                    DecodedInstruction::LocalGet(0),
+                    DecodedInstruction::F64Const(1.0),
+                    DecodedInstruction::F64Add,
+                    DecodedInstruction::LocalGet(1),
+                    DecodedInstruction::F64Const(2.0),
+                    DecodedInstruction::F64Mul,
+                    instruction,
+                    DecodedInstruction::Return,
+                    DecodedInstruction::End,
+                ],
+                "operator {operator}, level {level:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn bool_equality_normalizes_both_operands_and_not_emits_eqz() {
+    let bytes = Compiler::new()
+        .compile_source(
+            "fn equal(a: bool, b: bool) -> bool { return a == b; }
+         fn unequal(a: bool, b: bool) -> bool { return a != b; }
+         fn invert(a: bool) -> bool { return !a; }",
+        )
+        .expect("compile bool operators");
+    let module = decode(&bytes);
+
+    for (index, instruction) in [DecodedInstruction::I32Eq, DecodedInstruction::I32Ne]
+        .into_iter()
+        .enumerate()
+    {
+        assert_eq!(
+            module.bodies[index],
+            vec![
+                DecodedInstruction::LocalGet(0),
+                DecodedInstruction::I32Eqz,
+                DecodedInstruction::I32Eqz,
+                DecodedInstruction::LocalGet(1),
+                DecodedInstruction::I32Eqz,
+                DecodedInstruction::I32Eqz,
+                instruction,
+                DecodedInstruction::Return,
+                DecodedInstruction::End,
+            ]
+        );
+    }
+
+    assert_eq!(
+        module.bodies[2],
+        vec![
+            DecodedInstruction::LocalGet(0),
+            DecodedInstruction::I32Eqz,
+            DecodedInstruction::Return,
+            DecodedInstruction::End,
+        ]
+    );
+}
+
+#[test]
+fn logical_operators_guard_rhs_calls_inside_i32_result_ifs() {
+    let mut compiler = Compiler::new();
+
+    compiler
+        .register_host_function("rhs", "env", "rhs", vec![], Type::Bool)
+        .unwrap();
+
+    let bytes = compiler
+        .compile_source(
+            "fn both(a: bool) -> bool { return a && rhs(); }
+         fn either(a: bool) -> bool { return a || rhs(); }
+         fn nested(a: bool, b: bool) -> bool { return a && (b || rhs()); }",
+        )
+        .expect("compile short circuit");
+    let module = decode(&bytes);
+
+    for (index, rhs_in_then, constant) in [(0, true, 0), (1, false, 1)] {
+        let body = &module.bodies[index];
+        let if_index = body
+            .iter()
+            .position(|op| *op == DecodedInstruction::If(BlockType::Type(ValType::I32)))
+            .unwrap();
+        let else_index = body
+            .iter()
+            .position(|op| *op == DecodedInstruction::Else)
+            .unwrap();
+        let call_index = body
+            .iter()
+            .position(|op| *op == DecodedInstruction::Call(0))
+            .unwrap();
+
+        assert!(if_index < call_index);
+        assert_eq!(call_index < else_index, rhs_in_then);
+        assert!(body.contains(&DecodedInstruction::I32Const(constant)));
+        assert_eq!(
+            body.iter()
+                .filter(|op| **op == DecodedInstruction::Call(0))
+                .count(),
+            1
+        );
+        assert_eq!(
+            &body[call_index + 1..call_index + 3],
+            &[DecodedInstruction::I32Eqz, DecodedInstruction::I32Eqz]
+        );
+        assert_eq!(
+            &body[body.len() - 3..],
+            &[
+                DecodedInstruction::End,
+                DecodedInstruction::Return,
+                DecodedInstruction::End
+            ]
+        );
+    }
+
+    assert_eq!(
+        module.bodies[2]
+            .iter()
+            .filter(|op| **op == DecodedInstruction::If(BlockType::Type(ValType::I32)))
+            .count(),
+        2
+    );
+    assert_eq!(
+        module.bodies[2]
+            .iter()
+            .filter(|op| **op == DecodedInstruction::Call(0))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn logical_branches_preserve_live_equality_operands_and_call_arguments() {
+    use DecodedInstruction::*;
+
+    let bytes = Compiler::new()
+        .compile_source(
+            "fn compare(a: bool, b: bool, c: bool) -> bool { return a == (b && c); }
+             fn invoke(a: bool, b: bool) -> number { return take(7, a || b); }
+             fn take(value: number, flag: bool) -> number {
+                 if flag { return value; } else { return -value; }
+             }",
+        )
+        .expect("compile logical branches with live stack prefixes");
+    let module = decode(&bytes);
+
+    assert_eq!(
+        &module.bodies[0][..5],
+        &[
+            LocalGet(0),
+            I32Eqz,
+            I32Eqz,
+            LocalGet(1),
+            If(BlockType::Type(ValType::I32))
+        ]
+    );
+    assert_eq!(
+        &module.bodies[1][..3],
+        &[
+            F64Const(7.0),
+            LocalGet(0),
+            If(BlockType::Type(ValType::I32))
+        ]
+    );
+    assert_eq!(
+        &module.bodies[1][module.bodies[1].len() - 3..],
+        &[Call(2), Return, End]
+    );
+}
+
+#[test]
+fn forged_bool_operator_roots_and_operands_are_type_checked() {
+    let span = Span::new(12, 34);
+    let mut cases = vec![(bool_not(number()), Type::Bool, Type::Number)];
+    let mut wrong_not_root = bool_not(boolean());
+
+    wrong_not_root.ty = Type::Number;
+    cases.push((wrong_not_root, Type::Bool, Type::Number));
+
+    for op in [
+        BinaryOp::Equal,
+        BinaryOp::NotEqual,
+        BinaryOp::LessThan,
+        BinaryOp::LessThanOrEqual,
+        BinaryOp::GreaterThan,
+        BinaryOp::GreaterThanOrEqual,
+        BinaryOp::And,
+        BinaryOp::Or,
+    ] {
+        let logical = matches!(op, BinaryOp::And | BinaryOp::Or);
+        let operand = if logical { boolean() } else { number() };
+        let mut wrong_root = bool_binary(operand.clone(), op, operand);
+
+        wrong_root.ty = Type::Number;
+        cases.push((wrong_root, Type::Bool, Type::Number));
+
+        if logical {
+            cases.push((
+                bool_binary(number(), op, boolean()),
+                Type::Bool,
+                Type::Number,
+            ));
+            cases.push((
+                bool_binary(boolean(), op, number()),
+                Type::Bool,
+                Type::Number,
+            ));
+        } else {
+            cases.push((
+                bool_binary(number(), op, boolean()),
+                Type::Number,
+                Type::Bool,
+            ));
+
+            if matches!(op, BinaryOp::Equal | BinaryOp::NotEqual) {
+                cases.push((
+                    bool_binary(boolean(), op, number()),
+                    Type::Bool,
+                    Type::Number,
+                ));
+            } else {
+                cases.push((
+                    bool_binary(boolean(), op, number()),
+                    Type::Number,
+                    Type::Bool,
+                ));
+            }
+        }
+    }
+
+    for (value, expected, found) in cases {
+        assert_eq!(
+            compile(&return_program(Some(value.clone()), value.ty, span)),
+            Err(CodegenError::TypeMismatch {
+                function: "bad".to_owned(),
+                expected,
+                found,
+                span,
+            }),
+            "expression {value:?}"
+        );
+    }
+}
+
+#[test]
+fn logical_rhs_is_validated_even_when_runtime_short_circuit_would_skip_it() {
+    let span = Span::new(12, 34);
+
+    for (op, left) in [
+        (
+            BinaryOp::And,
+            TypedExpr {
+                kind: TypedExprKind::Bool(false),
+                ty: Type::Bool,
+            },
+        ),
+        (BinaryOp::Or, boolean()),
+    ] {
+        let right = call(
+            FunctionRef::Builtin(BuiltinFunction::Len),
+            "len",
+            vec![],
+            Type::Bool,
+        );
+        let value = bool_binary(left.clone(), op, right);
+
+        assert_eq!(
+            compile(&return_program(Some(value), Type::Bool, span)),
+            Err(CodegenError::UnsupportedBuiltin {
+                function: "bad".to_owned(),
+                builtin: BuiltinFunction::Len,
+                span,
+            })
+        );
+        assert_eq!(
+            compile(&return_program(
+                Some(bool_binary(left, op, number())),
+                Type::Bool,
+                span
+            )),
+            Err(CodegenError::TypeMismatch {
+                function: "bad".to_owned(),
+                expected: Type::Bool,
+                found: Type::Number,
+                span,
+            })
+        );
+    }
+}
+
+#[test]
+fn if_else_complete_returns_emit_unreachable_after_end_and_validate() {
+    let bytes = Compiler::new()
+        .compile_source(
+            "fn choose(flag: bool) -> number { if flag { return 1; } else { return 2; } }
+         fn partial(flag: bool) -> number { if flag { return 1; } return 2; }
+         fn noop(flag: bool) -> void { if flag { return; } else { return; } }",
+        )
+        .expect("compile conditional returns");
+    let module = decode(&bytes);
+
+    assert_eq!(
+        module.bodies[0],
+        vec![
+            DecodedInstruction::LocalGet(0),
+            DecodedInstruction::If(BlockType::Empty),
+            DecodedInstruction::F64Const(1.0),
+            DecodedInstruction::Return,
+            DecodedInstruction::Else,
+            DecodedInstruction::F64Const(2.0),
+            DecodedInstruction::Return,
+            DecodedInstruction::End,
+            DecodedInstruction::Unreachable,
+            DecodedInstruction::End,
+        ]
+    );
+    assert_eq!(
+        module.bodies[1],
+        vec![
+            DecodedInstruction::LocalGet(0),
+            DecodedInstruction::If(BlockType::Empty),
+            DecodedInstruction::F64Const(1.0),
+            DecodedInstruction::Return,
+            DecodedInstruction::End,
+            DecodedInstruction::F64Const(2.0),
+            DecodedInstruction::Return,
+            DecodedInstruction::End,
+        ]
+    );
+    assert_eq!(
+        module.bodies[2],
+        vec![
+            DecodedInstruction::LocalGet(0),
+            DecodedInstruction::If(BlockType::Empty),
+            DecodedInstruction::Return,
+            DecodedInstruction::Else,
+            DecodedInstruction::Return,
+            DecodedInstruction::End,
+            DecodedInstruction::Unreachable,
+            DecodedInstruction::End,
+        ]
+    );
+}
+
+#[test]
+fn while_emits_empty_block_loop_exit_and_back_edge_with_body_locals() {
+    let bytes = Compiler::new()
+        .compile_source(
+            "fn countdown(n: number) -> number {
+             while n > 0 { let step: number = 1; n = n - step; }
+             return n;
+         }",
+        )
+        .expect("compile loop with declaration");
+    let module = decode(&bytes);
+
+    assert_eq!(module.locals[0], vec![ValType::F64]);
+    assert_eq!(
+        module.bodies[0],
+        vec![
+            DecodedInstruction::Block(BlockType::Empty),
+            DecodedInstruction::Loop(BlockType::Empty),
+            DecodedInstruction::LocalGet(0),
+            DecodedInstruction::F64Const(0.0),
+            DecodedInstruction::F64Gt,
+            DecodedInstruction::I32Eqz,
+            DecodedInstruction::BrIf(1),
+            DecodedInstruction::F64Const(1.0),
+            DecodedInstruction::LocalSet(1),
+            DecodedInstruction::LocalGet(0),
+            DecodedInstruction::LocalGet(1),
+            DecodedInstruction::F64Sub,
+            DecodedInstruction::LocalSet(0),
+            DecodedInstruction::Br(0),
+            DecodedInstruction::End,
+            DecodedInstruction::End,
+            DecodedInstruction::LocalGet(0),
+            DecodedInstruction::Return,
+            DecodedInstruction::End,
+        ]
+    );
+}
+
+#[test]
+fn nested_loops_keep_relative_exit_and_back_edge_depths() {
+    let bytes = Compiler::new()
+        .compile_source(
+            "fn nested(a: bool, b: bool) -> void { while a { while b { b = false; } a = false; } }",
+        )
+        .expect("compile nested loops");
+    let module = decode(&bytes);
+    let body = &module.bodies[0];
+
+    assert_eq!(
+        body.iter()
+            .filter(|op| **op == DecodedInstruction::Block(BlockType::Empty))
+            .count(),
+        2
+    );
+    assert_eq!(
+        body.iter()
+            .filter(|op| **op == DecodedInstruction::Loop(BlockType::Empty))
+            .count(),
+        2
+    );
+    assert_eq!(
+        body.iter()
+            .filter_map(|op| if let DecodedInstruction::BrIf(depth) = op {
+                Some(*depth)
+            } else {
+                None
+            })
+            .collect::<Vec<_>>(),
+        vec![1, 1]
+    );
+    assert_eq!(
+        body.iter()
+            .filter_map(|op| if let DecodedInstruction::Br(depth) = op {
+                Some(*depth)
+            } else {
+                None
+            })
+            .collect::<Vec<_>>(),
+        vec![0, 0]
+    );
+}
+
+#[test]
+fn forged_if_and_while_conditions_require_bool_and_preserve_statement_spans() {
+    let span = Span::new(12, 34);
+
+    for cond in [
+        number(),
+        call(
+            FunctionRef::User(FunctionId(99)),
+            "missing",
+            vec![],
+            Type::Void,
+        ),
+    ] {
+        for statement in [
+            conditional(cond.clone(), vec![], None, span),
+            while_loop(cond.clone(), vec![], span),
+        ] {
+            assert_eq!(
+                compile(&local_program(vec![statement])),
+                Err(CodegenError::TypeMismatch {
+                    function: "bad".to_owned(),
+                    expected: Type::Bool,
+                    found: cond.ty,
+                    span,
+                })
+            );
+        }
+    }
+
+    let forged = TypedExpr {
+        kind: TypedExprKind::Number("1".to_owned()),
+        ty: Type::Bool,
+    };
+
+    for statement in [
+        conditional(forged.clone(), vec![], None, span),
+        while_loop(forged, vec![], span),
+    ] {
+        assert_eq!(
+            compile(&local_program(vec![statement])),
+            Err(CodegenError::TypeMismatch {
+                function: "bad".to_owned(),
+                expected: Type::Number,
+                found: Type::Bool,
+                span,
+            })
+        );
+    }
+}
+
+#[test]
+fn nested_complete_and_partial_returns_validate_with_fallbacks() {
+    for source in [
+        "fn complete(a: bool, b: bool) -> number { if a { if b { return 1; } else { return 2; } } else { return 3; } }",
+        "fn complete(a: bool, b: bool) -> bool { if a { return b; } else { if b { return true; } else { return false; } } }",
+        "fn partial(a: bool, b: bool) -> number { if a { if b { return 1; } return 2; } else { return 3; } }",
+        "fn partial(a: bool, b: bool) -> number { if a { if b { return 1; } } else { return 2; } return 3; }",
+        "fn loop_fallback(a: bool) -> number { while a { if a { return 1; } else { return 2; } } return 3; }",
+        "fn already_returned(a: bool) -> number { return 1; while a { return 2; } if a { return 3; } }",
+    ] {
+        let bytes = Compiler::new()
+            .compile_source(source)
+            .expect("compile complete return paths");
+
+        decode(&bytes);
+    }
+}
+
+#[test]
+fn missing_return_paths_include_partial_nested_conditionals_and_all_loops() {
+    let span = Span::new(12, 34);
+
+    for return_type in [Type::Number, Type::Bool] {
+        let value = if return_type == Type::Number {
+            number()
+        } else {
+            boolean()
+        };
+        let ret = returned(Some(value), span);
+        let full_if = conditional(boolean(), vec![ret.clone()], Some(vec![ret.clone()]), span);
+        let cases = vec![
+            vec![conditional(boolean(), vec![ret.clone()], None, span)],
+            vec![conditional(
+                boolean(),
+                vec![ret.clone()],
+                Some(vec![]),
+                span,
+            )],
+            vec![conditional(
+                boolean(),
+                vec![],
+                Some(vec![ret.clone()]),
+                span,
+            )],
+            vec![conditional(
+                boolean(),
+                vec![conditional(boolean(), vec![ret.clone()], None, span)],
+                Some(vec![ret.clone()]),
+                span,
+            )],
+            vec![conditional(
+                boolean(),
+                vec![ret.clone()],
+                Some(vec![conditional(boolean(), vec![ret.clone()], None, span)]),
+                span,
+            )],
+            vec![while_loop(boolean(), vec![ret.clone()], span)],
+            vec![while_loop(
+                TypedExpr {
+                    kind: TypedExprKind::Bool(false),
+                    ty: Type::Bool,
+                },
+                vec![ret.clone()],
+                span,
+            )],
+            vec![while_loop(boolean(), vec![full_if], span)],
+            vec![conditional(
+                boolean(),
+                vec![ret.clone()],
+                Some(vec![while_loop(boolean(), vec![ret], span)]),
+                span,
+            )],
+        ];
+
+        for body in cases {
+            let mut program = local_program(body);
+
+            program.functions[0].return_type = return_type;
+
+            assert_eq!(
+                compile(&program),
+                Err(CodegenError::MissingReturnValue {
+                    function: "bad".to_owned(),
+                    return_type,
+                }),
+                "body {:?}",
+                program.functions[0].body
+            );
+        }
+    }
+}
+
+#[test]
+fn forged_branch_and_loop_local_reads_do_not_escape_their_scope() {
+    let outer = Span::new(0, 100);
+    let span = Span::new(40, 60);
+    let local = declaration(7, Type::Bool, boolean(), Span::new(12, 34));
+    let read = TypedStatement {
+        kind: TypedStatementKind::Expression(identifier(7, "x", Type::Bool)),
+        span,
+    };
+    let cases = vec![
+        vec![conditional(
+            boolean(),
+            vec![local.clone()],
+            Some(vec![read.clone()]),
+            outer,
+        )],
+        vec![
+            conditional(boolean(), vec![local.clone()], None, outer),
+            read.clone(),
+        ],
+        vec![
+            conditional(boolean(), vec![], Some(vec![local.clone()]), outer),
+            read.clone(),
+        ],
+        vec![conditional(
+            boolean(),
+            vec![read.clone()],
+            Some(vec![local.clone()]),
+            outer,
+        )],
+        vec![
+            while_loop(boolean(), vec![local.clone()], outer),
+            read.clone(),
+        ],
+        vec![while_loop(
+            identifier(7, "x", Type::Bool),
+            vec![local.clone()],
+            span,
+        )],
+        vec![
+            conditional(boolean(), vec![local.clone()], None, outer),
+            while_loop(identifier(7, "x", Type::Bool), vec![], span),
+        ],
+        vec![
+            while_loop(boolean(), vec![local.clone()], outer),
+            while_loop(identifier(7, "x", Type::Bool), vec![], span),
+        ],
+        vec![conditional(
+            boolean(),
+            vec![
+                conditional(boolean(), vec![local.clone()], None, outer),
+                read.clone(),
+            ],
+            None,
+            outer,
+        )],
+        vec![
+            conditional(boolean(), vec![local], None, outer),
+            assignment(identifier(7, "x", Type::Bool), boolean(), span),
+        ],
+    ];
+
+    for body in cases {
+        assert_eq!(
+            compile(&local_program(body)),
+            Err(CodegenError::UninitializedVariable {
+                function: "bad".to_owned(),
+                id: VariableId(7),
+                span,
+            })
+        );
+    }
+}
+
+#[test]
+fn scoped_branch_and_loop_declarations_preserve_initialized_outer_bindings() {
+    let span = Span::new(12, 34);
+    let outer = identifier(7, "same_name", Type::Number);
+    let branch = vec![
+        declaration(8, Type::Bool, boolean(), span),
+        assignment(outer.clone(), number_literal("2"), span),
+    ];
+    let loop_body = vec![
+        declaration(9, Type::Number, number_literal("3"), span),
+        assignment(
+            outer.clone(),
+            identifier(9, "same_name", Type::Number),
+            span,
+        ),
+    ];
+    let program = local_program(vec![
+        declaration(7, Type::Number, number(), span),
+        conditional(
+            boolean(),
+            branch,
+            Some(vec![assignment(outer.clone(), number_literal("4"), span)]),
+            span,
+        ),
+        while_loop(
+            TypedExpr {
+                kind: TypedExprKind::Bool(false),
+                ty: Type::Bool,
+            },
+            loop_body,
+            span,
+        ),
+        TypedStatement {
+            kind: TypedStatementKind::Expression(outer),
+            span,
+        },
+    ]);
+    let module = decode(&compile(&program).expect("outer initialization survives scopes"));
+
+    assert_eq!(
+        module.locals[0],
+        vec![ValType::F64, ValType::I32, ValType::F64]
+    );
+}
+
+#[test]
+fn invalid_statements_in_unreachable_branches_loops_and_continuations_are_diagnosed() {
+    let span = Span::new(40, 60);
+    let outer = Span::new(0, 100);
+    let invalid = TypedStatement {
+        kind: TypedStatementKind::Expression(binary(number(), BinaryOp::Remainder, number())),
+        span,
+    };
+    let ret = returned(None, Span::new(0, 7));
+    let complete = conditional(boolean(), vec![ret.clone()], Some(vec![ret.clone()]), outer);
+    let cases = vec![
+        vec![
+            ret.clone(),
+            conditional(boolean(), vec![invalid.clone()], None, outer),
+        ],
+        vec![conditional(
+            boolean(),
+            vec![ret.clone()],
+            Some(vec![invalid.clone()]),
+            outer,
+        )],
+        vec![
+            ret.clone(),
+            while_loop(boolean(), vec![invalid.clone()], outer),
+        ],
+        vec![while_loop(
+            TypedExpr {
+                kind: TypedExprKind::Bool(false),
+                ty: Type::Bool,
+            },
+            vec![invalid.clone()],
+            outer,
+        )],
+        vec![conditional(
+            boolean(),
+            vec![ret.clone(), invalid.clone()],
+            Some(vec![ret.clone()]),
+            outer,
+        )],
+        vec![while_loop(boolean(), vec![ret, invalid.clone()], outer)],
+        vec![complete, invalid],
+    ];
+
+    for body in cases {
+        assert_eq!(
+            compile(&local_program(body)),
+            Err(CodegenError::UnsupportedOperator {
+                function: "bad".to_owned(),
+                operator: "%",
+                span,
+            })
+        );
+    }
+}
+
+#[test]
+fn nested_return_type_errors_keep_inner_statement_spans() {
+    let span = Span::new(40, 60);
+    let outer = Span::new(0, 100);
+
+    for value in [None, Some(boolean())] {
+        let ret = returned(value.clone(), span);
+
+        for statement in [
+            conditional(
+                boolean(),
+                vec![ret.clone()],
+                Some(vec![returned(Some(number()), outer)]),
+                outer,
+            ),
+            while_loop(boolean(), vec![ret], outer),
+        ] {
+            let mut program = return_program(Some(number()), Type::Number, outer);
+
+            program.functions[0].body.push(statement);
+
+            assert_eq!(
+                compile(&program),
+                Err(CodegenError::TypeMismatch {
+                    function: "bad".to_owned(),
+                    expected: Type::Number,
+                    found: value.as_ref().map_or(Type::Void, |expr| expr.ty),
+                    span,
+                })
+            );
+        }
+    }
+}
+
+fn run_guest_at_all_optimization_levels(source: &str, script: &str) {
+    let mut snapshot = None;
+
+    for level in [
+        OptimizationLevel::None,
+        OptimizationLevel::Basic,
+        OptimizationLevel::Standard,
+        OptimizationLevel::Aggressive,
+    ] {
+        let compiler = Compiler::with_options(CompilerOptions {
+            optimization_level: level,
+        });
+        let bytes = compiler
+            .compile_source(source)
+            .expect("compile guest runtime");
+
+        decode(&bytes);
+
+        if let Some(expected) = &snapshot {
+            assert_eq!(&bytes, expected, "optimization level {level:?}");
+        } else {
+            snapshot = Some(bytes.clone());
+        }
+
+        run_node(&bytes, script);
+    }
+}
+
+#[test]
+#[ignore = "requires Node.js"]
+fn node_executes_comparisons_ieee754_and_noncanonical_bool_operators_at_all_levels() {
+    run_guest_at_all_optimization_levels(
+        "fn eq(a: number, b: number) -> bool { return a == b; }
+         fn ne(a: number, b: number) -> bool { return a != b; }
+         fn lt(a: number, b: number) -> bool { return a < b; }
+         fn le(a: number, b: number) -> bool { return a <= b; }
+         fn gt(a: number, b: number) -> bool { return a > b; }
+         fn ge(a: number, b: number) -> bool { return a >= b; }
+         fn bool_eq(a: bool, b: bool) -> bool { return a == b; }
+         fn bool_ne(a: bool, b: bool) -> bool { return a != b; }
+         fn invert(a: bool) -> bool { return !a; }
+         fn both(a: bool, b: bool) -> bool { return a && b; }
+         fn either(a: bool, b: bool) -> bool { return a || b; }
+         fn nested(a: bool, b: bool) -> bool { return (a && !b) || (a != b); }
+         fn precedence(a: bool, b: bool, c: bool) -> bool { return a || b && !c; }
+         fn compare_and(a: bool, b: bool, c: bool) -> bool { return a == (b && c); }
+         fn invoke_or(a: bool, b: bool) -> number { return take(7, a || b); }
+         fn take(value: number, flag: bool) -> number {
+             if flag { return value; } else { return -value; }
+         }",
+        r#"
+        const assert = require('node:assert/strict');
+        const bytes = require('node:fs').readFileSync(0);
+        const { exports: guest } = new WebAssembly.Instance(new WebAssembly.Module(bytes));
+        const comparisons = {
+            eq: (a, b) => a === b,
+            ne: (a, b) => a !== b,
+            lt: (a, b) => a < b,
+            le: (a, b) => a <= b,
+            gt: (a, b) => a > b,
+            ge: (a, b) => a >= b,
+        };
+        const numbers = [NaN, Infinity, -Infinity, -0, 0, -1, 0.25, 1, Number.MIN_VALUE, Number.MAX_VALUE];
+
+        for (const a of numbers) {
+            for (const b of numbers) {
+                for (const [name, compare] of Object.entries(comparisons)) {
+                    assert.equal(guest[name](a, b), Number(compare(a, b)), `${name}(${a}, ${b})`);
+                }
+            }
+        }
+
+        const booleans = [0, 1, 2, -2, 2147483647, -2147483648];
+
+        for (const a of booleans) {
+            assert.equal(guest.invert(a), Number(!a));
+
+            for (const b of booleans) {
+                assert.equal(guest.bool_eq(a, b), Number(Boolean(a) === Boolean(b)));
+                assert.equal(guest.bool_ne(a, b), Number(Boolean(a) !== Boolean(b)));
+                assert.equal(guest.both(a, b), Number(Boolean(a) && Boolean(b)));
+                assert.equal(guest.either(a, b), Number(Boolean(a) || Boolean(b)));
+                assert.equal(guest.invoke_or(a, b), a || b ? 7 : -7);
+                assert.equal(guest.nested(a, b), Number((Boolean(a) && !b) || (Boolean(a) !== Boolean(b))));
+
+                for (const c of booleans) {
+                    assert.equal(guest.precedence(a, b, c), Number(Boolean(a) || (Boolean(b) && !c)));
+                    assert.equal(guest.compare_and(a, b, c), Number(Boolean(a) === (Boolean(b) && Boolean(c))));
+                }
+            }
+        }
+        "#,
+    );
+}
+
+#[test]
+#[ignore = "requires Node.js"]
+fn node_executes_short_circuit_host_effects_in_order_at_all_levels() {
+    let mut snapshot = None;
+
+    for level in [
+        OptimizationLevel::None,
+        OptimizationLevel::Basic,
+        OptimizationLevel::Standard,
+        OptimizationLevel::Aggressive,
+    ] {
+        let mut compiler = Compiler::with_options(CompilerOptions {
+            optimization_level: level,
+        });
+
+        compiler
+            .register_host_function("probe", "env", "probe", vec![Type::Number], Type::Bool)
+            .unwrap();
+        compiler
+            .register_host_function(
+                "numeric",
+                "env",
+                "numeric",
+                vec![Type::Number],
+                Type::Number,
+            )
+            .unwrap();
+
+        let bytes = compiler
+            .compile_source(
+                "fn both() -> bool { return probe(1) && probe(2); }
+             fn either() -> bool { return probe(1) || probe(2); }
+             fn nested_or() -> bool { return (probe(1) && probe(2)) || (probe(3) && probe(4)); }
+             fn nested_and() -> bool { return probe(1) && (probe(2) || probe(3)); }
+             fn negated() -> bool { return !probe(1) || probe(2); }
+             fn equal() -> bool { return probe(1) == probe(2); }
+             fn unequal() -> bool { return probe(1) != probe(2); }
+             fn numeric_compare() -> bool { return numeric(1) < numeric(2); }
+             fn guarded_compare() -> bool { return probe(1) && numeric(2) >= numeric(3); }",
+            )
+            .expect("compile host effects runtime");
+
+        decode(&bytes);
+
+        if let Some(expected) = &snapshot {
+            assert_eq!(&bytes, expected, "optimization level {level:?}");
+        } else {
+            snapshot = Some(bytes.clone());
+        }
+
+        run_node(
+            &bytes,
+            r#"
+            const assert = require('node:assert/strict');
+            const bytes = require('node:fs').readFileSync(0);
+            const seen = [];
+            const sentinel = new Error('evaluated host call');
+            let values = [];
+            const { exports: guest } = new WebAssembly.Instance(new WebAssembly.Module(bytes), {
+                env: {
+                    probe: id => {
+                        seen.push(`p${id}`);
+                        const value = values[id - 1];
+                        if (value === sentinel) throw sentinel;
+                        return value;
+                    },
+                    numeric: id => { seen.push(`n${id}`); return id; },
+                },
+            });
+            const expressions = {
+                both: p => p(1) && p(2),
+                either: p => p(1) || p(2),
+                nested_or: p => (p(1) && p(2)) || (p(3) && p(4)),
+                nested_and: p => p(1) && (p(2) || p(3)),
+                negated: p => !p(1) || p(2),
+                equal: p => p(1) === p(2),
+                unequal: p => p(1) !== p(2),
+            };
+
+            for (const a of [0, 2, -2]) {
+                for (const b of [0, 2, -2]) {
+                    for (const c of [0, 2, -2]) {
+                        for (const d of [0, 2, -2]) {
+                            values = [a, b, c, d];
+
+                            for (const [name, expression] of Object.entries(expressions)) {
+                                const expectedSeen = [];
+                                const result = expression(id => { expectedSeen.push(`p${id}`); return Boolean(values[id - 1]); });
+                                seen.length = 0;
+                                assert.equal(guest[name](), Number(result), name);
+                                assert.deepEqual(seen, expectedSeen, name);
+                            }
+                        }
+                    }
+                }
+            }
+
+            for (const [name, skip] of [['both', 0], ['either', -2], ['negated', 0]]) {
+                values = [skip, sentinel];
+                seen.length = 0;
+                assert.equal(guest[name](), name === 'both' ? 0 : 1);
+                assert.deepEqual(seen, ['p1']);
+                values[0] = skip === 0 ? -2 : 0;
+                seen.length = 0;
+                assert.throws(() => guest[name](), error => error === sentinel);
+                assert.deepEqual(seen, ['p1', 'p2']);
+            }
+
+            seen.length = 0;
+            assert.equal(guest.numeric_compare(), 1);
+            assert.deepEqual(seen, ['n1', 'n2']);
+
+            for (const raw of [0, 2, -2]) {
+                values = [raw];
+                seen.length = 0;
+                assert.equal(guest.guarded_compare(), 0);
+                assert.deepEqual(seen, raw === 0 ? ['p1'] : ['p1', 'n2', 'n3']);
+            }
+        "#,
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires Node.js"]
+fn node_executes_host_if_and_repeated_loop_conditions_at_all_levels() {
+    for level in [
+        OptimizationLevel::None,
+        OptimizationLevel::Basic,
+        OptimizationLevel::Standard,
+        OptimizationLevel::Aggressive,
+    ] {
+        let mut compiler = Compiler::with_options(CompilerOptions {
+            optimization_level: level,
+        });
+
+        compiler
+            .register_host_function("probe", "env", "probe", vec![], Type::Bool)
+            .unwrap();
+        compiler
+            .register_host_function(
+                "numeric",
+                "env",
+                "numeric",
+                vec![Type::Number],
+                Type::Number,
+            )
+            .unwrap();
+
+        let bytes = compiler.compile_source(
+            "fn choose() -> number { if probe() { return numeric(2); } else { return numeric(3); } }
+             fn repeat() -> number { let n: number = 0; while probe() { n = n + 1; } return n; }",
+        ).expect("compile host control flow runtime");
+
+        decode(&bytes);
+        run_node(
+            &bytes,
+            r#"
+            const assert = require('node:assert/strict');
+            const bytes = require('node:fs').readFileSync(0);
+            const seen = [];
+            let queue = [];
+            const { exports: guest } = new WebAssembly.Instance(new WebAssembly.Module(bytes), {
+                env: {
+                    probe: () => {
+                        assert.ok(queue.length > 0, 'condition evaluated too many times');
+                        seen.push('probe');
+                        return queue.shift();
+                    },
+                    numeric: n => { seen.push(n); return n; },
+                },
+            });
+
+            for (const raw of [0, 2, -2]) {
+                queue = [raw];
+                seen.length = 0;
+                assert.equal(guest.choose(), raw === 0 ? 3 : 2);
+                assert.deepEqual(seen, ['probe', raw === 0 ? 3 : 2]);
+                assert.deepEqual(queue, []);
+            }
+
+            for (const conditions of [[0], [2, 0], [2, -2, 0]]) {
+                queue = [...conditions];
+                seen.length = 0;
+                assert.equal(guest.repeat(), conditions.length - 1);
+                assert.deepEqual(seen, conditions.map(() => 'probe'));
+                assert.deepEqual(queue, []);
+            }
+        "#,
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires Node.js"]
+fn node_executes_if_loops_early_returns_and_nested_shadowing_at_all_levels() {
+    run_guest_at_all_optimization_levels(
+        "fn choose(flag: bool) -> number { if flag { return 1; } else { return 2; } }
+         fn partial(a: bool, b: bool) -> number { if a { if b { return 1; } } else { return 2; } return 3; }
+         fn sum(n: number) -> number {
+             let total: number = 0;
+             while n > 0 { let current: number = n; total = total + current; n = n - 1; }
+             return total;
+         }
+         fn nested(n: number, m: number) -> number {
+             let total: number = 0;
+             let i: number = 0;
+             while i < n {
+                 let j: number = 0;
+                 while j < m { let term: number = i * 10 + j; total = total + term; j = j + 1; }
+                 i = i + 1;
+             }
+             return total;
+         }
+         fn find(n: number, m: number, target: number) -> number {
+             let i: number = 0;
+             while i < n {
+                 let j: number = 0;
+                 while j < m {
+                     let term: number = i * 10 + j;
+                     if term == target { return term; }
+                     j = j + 1;
+                 }
+                 i = i + 1;
+             }
+             return -1;
+         }
+         fn early(n: number) -> number { while n > 0 { if n == 3 { return n; } n = n - 1; } return 0; }
+         fn loop_flag(flag: bool) -> number { let n: number = 0; while flag { n = n + 1; flag = false; } return n; }
+         fn shadow(flag: bool, n: number) -> number {
+             let result: number = n;
+             if flag {
+                 let n: bool = true;
+                 if n { let result: number = 99; result; }
+                 result = result + 1;
+             } else { let n: number = 10; result = result + n; }
+             let remaining: number = n;
+             while remaining > 0 {
+                 let n: bool = false;
+                 let result: number = 5;
+                 if !n { result = result + 1; }
+                 remaining = remaining - 1;
+             }
+             return result + n;
+         }",
+        r#"
+        const assert = require('node:assert/strict');
+        const bytes = require('node:fs').readFileSync(0);
+        const { exports: guest } = new WebAssembly.Instance(new WebAssembly.Module(bytes));
+
+        for (const a of [0, 1, 2, -2]) {
+            assert.equal(guest.choose(a), a === 0 ? 2 : 1);
+            assert.equal(guest.loop_flag(a), a === 0 ? 0 : 1);
+
+            for (const b of [0, 1, 2, -2]) {
+                assert.equal(guest.partial(a, b), a === 0 ? 2 : b === 0 ? 3 : 1);
+            }
+
+            for (const n of [0, 1, 2, 5]) {
+                assert.equal(guest.shadow(a, n), 2 * n + (a === 0 ? 10 : 1));
+            }
+        }
+
+        for (const n of [0, 1, 2, 5, 10]) {
+            assert.equal(guest.sum(n), n * (n + 1) / 2);
+            assert.equal(guest.early(n), n >= 3 ? 3 : 0);
+
+            for (const m of [0, 1, 3, 5]) {
+                const terms = [];
+
+                for (let i = 0; i < n; i += 1) {
+                    for (let j = 0; j < m; j += 1) terms.push(i * 10 + j);
+                }
+
+                assert.equal(guest.nested(n, m), terms.reduce((total, term) => total + term, 0));
+
+                for (const target of [-1, 0, 2, 10, 21, 44, 99]) {
+                    assert.equal(guest.find(n, m, target), terms.includes(target) ? target : -1);
+                }
+            }
+        }
+        "#,
+    );
+}
+
+#[test]
+#[ignore = "requires Node.js"]
+fn node_executes_guest_only_factorial_and_mutual_recursion_base_cases_at_all_levels() {
+    run_guest_at_all_optimization_levels(
+        "fn factorial(n: number) -> number {
+             if n <= 1 { return 1; } else { return n * factorial(n - 1); }
+         }
+         fn even(n: number) -> bool { if n <= 0 { return true; } else { return odd(n - 1); } }
+         fn odd(n: number) -> bool { if n <= 0 { return false; } else { return even(n - 1); } }",
+        r#"
+        const assert = require('node:assert/strict');
+        const bytes = require('node:fs').readFileSync(0);
+        const { exports: guest } = new WebAssembly.Instance(new WebAssembly.Module(bytes));
+        let factorial = 1;
+
+        for (let n = 0; n <= 12; n += 1) {
+            if (n > 0) factorial *= n;
+            assert.equal(guest.factorial(n), factorial);
+        }
+
+        for (let n = 0; n <= 30; n += 1) {
+            assert.equal(guest.even(n), Number(n % 2 === 0));
+            assert.equal(guest.odd(n), Number(n % 2 !== 0));
+        }
+
+        assert.equal(guest.factorial(-1), 1);
+        assert.equal(guest.even(-1), 1);
+        assert.equal(guest.odd(-1), 0);
+        "#,
+    );
 }
 
 #[test]

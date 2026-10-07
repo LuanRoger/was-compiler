@@ -1,10 +1,26 @@
 use crate::{
     ast::Type,
-    typed_ast::{TypedExprKind, TypedStatement, TypedStatementKind},
+    typed_ast::{TypedBlock, TypedExprKind, TypedStatement, TypedStatementKind},
 };
 use wasm_encoder::{Function, Instruction};
 
-use super::{CodegenError, expect_type, expression, function::Context};
+use super::{CodegenError, control_flow, expect_type, expression, function::Context};
+
+pub(super) fn emit_block(
+    block: &TypedBlock,
+    body: &mut Function,
+    context: &mut Context<'_>,
+) -> Result<bool, CodegenError> {
+    let mut always_returns = false;
+
+    for statement in block {
+        let returns = emit(statement, body, context)?;
+
+        always_returns |= returns;
+    }
+
+    Ok(always_returns)
+}
 
 pub(super) fn emit(
     statement: &TypedStatement,
@@ -14,7 +30,7 @@ pub(super) fn emit(
     let function = context.name;
     let span = statement.span;
 
-    let kind = match &statement.kind {
+    match &statement.kind {
         TypedStatementKind::Let { id, ty, value, .. } => {
             let index = context.declaration(*id, *ty, span)?;
 
@@ -25,7 +41,7 @@ pub(super) fn emit(
 
             context.initialize(*id);
 
-            return Ok(false);
+            Ok(false)
         }
 
         TypedStatementKind::Assignment { target, value } => {
@@ -43,7 +59,7 @@ pub(super) fn emit(
 
             body.instruction(&Instruction::LocalSet(index));
 
-            return Ok(false);
+            Ok(false)
         }
 
         TypedStatementKind::Expression(expr) => {
@@ -53,7 +69,7 @@ pub(super) fn emit(
                 body.instruction(&Instruction::Drop);
             }
 
-            return Ok(false);
+            Ok(false)
         }
 
         TypedStatementKind::Return(value) => {
@@ -77,16 +93,15 @@ pub(super) fn emit(
 
             body.instruction(&Instruction::Return);
 
-            return Ok(true);
+            Ok(true)
         }
 
-        TypedStatementKind::If { .. } => "if",
-        TypedStatementKind::While { .. } => "while",
-    };
+        TypedStatementKind::If { cond, then, else_ } => {
+            control_flow::emit_if(cond, then, else_.as_ref(), body, context, span)
+        }
 
-    Err(CodegenError::UnsupportedStatement {
-        function: function.into(),
-        kind,
-        span,
-    })
+        TypedStatementKind::While { cond, body: block } => {
+            control_flow::emit_while(cond, block, body, context, span)
+        }
+    }
 }

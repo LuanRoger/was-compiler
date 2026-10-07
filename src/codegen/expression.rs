@@ -3,7 +3,7 @@ use crate::{
     tokens::Span,
     typed_ast::{TypedExpr, TypedExprKind},
 };
-use wasm_encoder::{Function, Instruction};
+use wasm_encoder::{BlockType, Function, Instruction, ValType};
 
 use super::{CodegenError, call, expect_type, function::Context};
 
@@ -43,19 +43,13 @@ pub(super) fn emit(
         }
 
         TypedExprKind::Unary { op, expr: operand } => {
-            let instruction = match op {
-                UnaryOp::Negate => Instruction::F64Neg,
-                UnaryOp::Not => {
-                    return Err(CodegenError::UnsupportedOperator {
-                        function: function.into(),
-                        operator: "!",
-                        span,
-                    });
-                }
+            let (ty, instruction) = match op {
+                UnaryOp::Negate => (Type::Number, Instruction::F64Neg),
+                UnaryOp::Not => (Type::Bool, Instruction::I32Eqz),
             };
 
-            expect_type(function, Type::Number, expr.ty, span)?;
-            expect_type(function, Type::Number, operand.ty, span)?;
+            expect_type(function, ty, expr.ty, span)?;
+            expect_type(function, ty, operand.ty, span)?;
 
             emit(operand, body, context, span)?;
 
@@ -65,7 +59,68 @@ pub(super) fn emit(
         }
 
         TypedExprKind::Binary { left, op, right } => {
-            let instruction = arithmetic_instruction(op).map_err(|operator| {
+            let (operand_type, result_type) = match op {
+                BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply | BinaryOp::Divide => {
+                    (Type::Number, Type::Number)
+                }
+
+                BinaryOp::Remainder => {
+                    return Err(CodegenError::UnsupportedOperator {
+                        function: function.into(),
+                        operator: "%",
+                        span,
+                    });
+                }
+
+                BinaryOp::LessThan
+                | BinaryOp::LessThanOrEqual
+                | BinaryOp::GreaterThan
+                | BinaryOp::GreaterThanOrEqual => (Type::Number, Type::Bool),
+
+                BinaryOp::And | BinaryOp::Or => (Type::Bool, Type::Bool),
+
+                BinaryOp::Equal | BinaryOp::NotEqual => {
+                    expect_type(function, Type::Bool, expr.ty, span)?;
+
+                    if !matches!(left.ty, Type::Number | Type::Bool | Type::String) {
+                        expect_type(function, Type::Number, left.ty, span)?;
+                    }
+
+                    (left.ty, Type::Bool)
+                }
+            };
+
+            expect_type(function, result_type, expr.ty, span)?;
+            expect_type(function, operand_type, left.ty, span)?;
+            expect_type(function, operand_type, right.ty, span)?;
+
+            if matches!(op, BinaryOp::And | BinaryOp::Or) {
+                emit(left, body, context, span)?;
+
+                body.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+
+                if *op == BinaryOp::And {
+                    emit(right, body, context, span)?;
+                    normalize_bool(body);
+                } else {
+                    body.instruction(&Instruction::I32Const(1));
+                }
+
+                body.instruction(&Instruction::Else);
+
+                if *op == BinaryOp::Or {
+                    emit(right, body, context, span)?;
+                    normalize_bool(body);
+                } else {
+                    body.instruction(&Instruction::I32Const(0));
+                }
+
+                body.instruction(&Instruction::End);
+
+                return Ok(());
+            }
+
+            let instruction = binary_instruction(op, operand_type).map_err(|operator| {
                 CodegenError::UnsupportedOperator {
                     function: function.into(),
                     operator,
@@ -73,12 +128,20 @@ pub(super) fn emit(
                 }
             })?;
 
-            expect_type(function, Type::Number, expr.ty, span)?;
-            expect_type(function, Type::Number, left.ty, span)?;
-            expect_type(function, Type::Number, right.ty, span)?;
+            let normalize_operands =
+                matches!(op, BinaryOp::Equal | BinaryOp::NotEqual) && operand_type == Type::Bool;
 
             emit(left, body, context, span)?;
+
+            if normalize_operands {
+                normalize_bool(body);
+            }
+
             emit(right, body, context, span)?;
+
+            if normalize_operands {
+                normalize_bool(body);
+            }
 
             body.instruction(&instruction);
 
@@ -101,23 +164,42 @@ pub(super) fn emit(
     })
 }
 
-fn arithmetic_instruction(op: &BinaryOp) -> Result<Instruction<'static>, &'static str> {
+fn binary_instruction(
+    op: &BinaryOp,
+    operand_type: Type,
+) -> Result<Instruction<'static>, &'static str> {
     match op {
         BinaryOp::Add => Ok(Instruction::F64Add),
         BinaryOp::Subtract => Ok(Instruction::F64Sub),
         BinaryOp::Multiply => Ok(Instruction::F64Mul),
         BinaryOp::Divide => Ok(Instruction::F64Div),
 
+        BinaryOp::Equal => match operand_type {
+            Type::Number => Ok(Instruction::F64Eq),
+            Type::Bool => Ok(Instruction::I32Eq),
+            _ => Err("=="),
+        },
+
+        BinaryOp::NotEqual => match operand_type {
+            Type::Number => Ok(Instruction::F64Ne),
+            Type::Bool => Ok(Instruction::I32Ne),
+            _ => Err("!="),
+        },
+
+        BinaryOp::LessThan => Ok(Instruction::F64Lt),
+        BinaryOp::LessThanOrEqual => Ok(Instruction::F64Le),
+        BinaryOp::GreaterThan => Ok(Instruction::F64Gt),
+        BinaryOp::GreaterThanOrEqual => Ok(Instruction::F64Ge),
+
         BinaryOp::Remainder => Err("%"),
-        BinaryOp::Equal => Err("=="),
-        BinaryOp::NotEqual => Err("!="),
-        BinaryOp::LessThan => Err("<"),
-        BinaryOp::LessThanOrEqual => Err("<="),
-        BinaryOp::GreaterThan => Err(">"),
-        BinaryOp::GreaterThanOrEqual => Err(">="),
         BinaryOp::And => Err("&&"),
         BinaryOp::Or => Err("||"),
     }
+}
+
+fn normalize_bool(body: &mut Function) {
+    body.instruction(&Instruction::I32Eqz);
+    body.instruction(&Instruction::I32Eqz);
 }
 
 fn number(literal: &str, function: &str, span: Span) -> Result<f64, CodegenError> {

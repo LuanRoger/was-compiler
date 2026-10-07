@@ -11,6 +11,7 @@ use wasm_encoder::{
 
 mod abi;
 mod call;
+mod control_flow;
 mod expression;
 mod function;
 mod layout;

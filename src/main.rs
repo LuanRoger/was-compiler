@@ -1,4 +1,4 @@
-use was_compiler::{Compiler, Type};
+use was_compiler::Compiler;
 
 fn main() -> anyhow::Result<()> {
     let compiler = Compiler::new();

@@ -9,18 +9,30 @@ host ABI, milestones, and acceptance criteria.
 
 The compiler emits valid modules containing registered function imports, scalar
 parameters, scalar `let` declarations, variable reads and assignments, expression
-statements, numeric/boolean returns, and user/host function calls. Empty `void`
-functions and bare `return;` statements are supported too. Calls can be forward,
-nested, self-recursive, or mutually recursive; arguments are evaluated left-to-right.
+statements, numeric/boolean returns, user/host function calls, `if`/`else`, and
+`while`. Empty `void` functions and bare `return;` statements are supported too.
+Calls can be forward, nested, self-recursive, or mutually recursive; arguments
+are evaluated left-to-right.
 
 ```text
-fn main(value: number) -> number {
-    let result: number = double(value);
-    return result;
+fn factorial(value: number) -> number {
+    if value <= 1 {
+        return 1;
+    }
+
+    return value * factorial(value - 1);
 }
 
-fn double(value: number) -> number {
-    return value * 2;
+fn sum(limit: number) -> number {
+    let total: number = 0;
+    let current: number = 1;
+
+    while current <= limit {
+        total = total + current;
+        current = current + 1;
+    }
+
+    return total;
 }
 ```
 
@@ -35,12 +47,22 @@ Numeric literals become `f64.const`; arithmetic uses `f64.add`, `f64.sub`,
 representation. Invalid and overflowing literals return explicit errors;
 arithmetic follows IEEE-754 behavior, including infinity, NaN, and signed zero.
 
+Numeric comparisons support `==`, `!=`, `<`, `<=`, `>`, and `>=`; booleans support
+`==`, `!=`, `!`, `&&`, and `||`. Logical operators short-circuit, so skipped operands
+never execute host calls or other side effects. Boolean operations treat any
+nonzero `i32` as true and produce canonical `0`/`1` results; numeric comparisons
+follow IEEE-754 behavior, including NaN and signed zero.
+
+Branches and loops use structured Wasm control flow, support nested returns, and
+preserve shadowed local bindings. Nonvoid functions must return on every path;
+a loop alone is not considered a guaranteed return, even with a literal `true`
+condition. The backend still validates statements after returns and runtime-skipped
+operands, and rejects forged typed ASTs that access branch/loop locals outside
+of their scopes.
+
 All user functions are exported. `%` is explicitly unsupported until floating
-remainder lowering is implemented; Wasm has no `f64.rem`. Boolean operators,
-control flow, strings, arrays, and built-in `len` remain unsupported until their
-milestones. Guest-only recursive base cases require the control-flow milestone.
-The local layout accounts for distinct shadowed IDs in nested blocks, but executing
-those blocks still requires the control-flow milestone.
+remainder lowering is implemented; Wasm has no `f64.rem`. Strings, string equality,
+arrays, and built-in `len` remain unsupported until the memory-backed milestone.
 
 ```rust
 use was_compiler::{Compiler, Type};

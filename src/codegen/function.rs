@@ -60,18 +60,24 @@ impl<'a> Context<'a> {
     pub fn initialize(&mut self, id: VariableId) {
         self.initialized.insert(id);
     }
+
+    pub fn scoped<T>(
+        &mut self,
+        emit: impl FnOnce(&mut Self) -> Result<T, CodegenError>,
+    ) -> Result<T, CodegenError> {
+        let initialized = self.initialized.clone();
+        let result = emit(self);
+
+        self.initialized = initialized;
+
+        result
+    }
 }
 
 pub(super) fn emit(function: &TypedFunction, module: &Layout) -> Result<Function, CodegenError> {
     let mut context = Context::new(function, module)?;
     let mut body = Function::new(context.locals.types.iter().map(|ty| (1, *ty)));
-    let mut always_returns = false;
-
-    for statement in &function.body {
-        let returns = statement::emit(statement, &mut body, &mut context)?;
-
-        always_returns |= returns;
-    }
+    let always_returns = statement::emit_block(&function.body, &mut body, &mut context)?;
 
     if function.return_type != Type::Void && !always_returns {
         return Err(CodegenError::MissingReturnValue {

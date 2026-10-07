@@ -155,15 +155,22 @@ mod tests {
         let source = "
             fn main(value: number) -> number {
                 let result: number = double(value);
-                result = result + 1;
-                result;
-                print(result);
+                while result < 10 {
+                    result = result + 1;
+                }
+
+                if result >= 10 && ready() {
+                    print(result);
+                } else {
+                    result = -result;
+                }
+
                 return result;
             }
 
             fn flag(value: bool) -> bool {
                 let copy: bool = value;
-                copy = ready();
+                copy = !copy || ready();
                 return copy;
             }
 
