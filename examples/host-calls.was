@@ -1,0 +1,8 @@
+fn main() -> number {
+    let message: string = echo("Hello");
+    print(message);
+
+    let values: number[] = adjust([1, 2, 3]);
+
+    return len(values) + values[0] + values[1] + values[2];
+}
