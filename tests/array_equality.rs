@@ -1,11 +1,12 @@
+#[path = "support/process.rs"]
+mod test_process;
+
 use std::{
     fs,
-    io::Read,
     path::PathBuf,
-    process::{Child, Command, Stdio},
+    process::Command,
     sync::atomic::{AtomicU64, Ordering},
-    thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use was_compiler::{
@@ -457,15 +458,6 @@ impl Drop for Scratch {
     }
 }
 
-struct ChildGuard(Child);
-
-impl Drop for ChildGuard {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
 fn run_node_at_all_levels(source: &str, hosts: &[(&str, Vec<Type>, Type)], body: &str) {
     let scratch = Scratch::new();
     let mut command = Command::new("node");
@@ -481,46 +473,11 @@ fn run_node_at_all_levels(source: &str, hosts: &[(&str, Vec<Type>, Type)], body:
         fs::write(&path, compile(&compiler, source)).unwrap();
         command.arg(path);
     }
-    let mut child = ChildGuard(
-        command
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("start Node.js; ignored array equality tests require node on PATH"),
-    );
-    let mut stdout = child.0.stdout.take().unwrap();
-    let mut stderr = child.0.stderr.take().unwrap();
-    let stdout = thread::spawn(move || {
-        let mut bytes = Vec::new();
-        stdout.read_to_end(&mut bytes).unwrap();
-        bytes
-    });
-    let stderr = thread::spawn(move || {
-        let mut bytes = Vec::new();
-        stderr.read_to_end(&mut bytes).unwrap();
-        bytes
-    });
-    let deadline = Instant::now() + NODE_TIMEOUT;
-    let mut timed_out = false;
-    let status = loop {
-        if let Some(status) = child.0.try_wait().expect("poll Node.js") {
-            break status;
-        }
-        if Instant::now() >= deadline {
-            child.0.kill().expect("kill timed out Node.js");
-            timed_out = true;
-            break child.0.wait().expect("wait for timed out Node.js");
-        }
-        thread::sleep(Duration::from_millis(10));
-    };
-    let stdout = stdout.join().unwrap();
-    let stderr = stderr.join().unwrap();
-    assert!(
-        !timed_out,
-        "Node.js exceeded {NODE_TIMEOUT:?}: {}",
-        String::from_utf8_lossy(&stderr)
-    );
+    let std::process::Output {
+        status,
+        stdout,
+        stderr,
+    } = test_process::output(&mut command, None, NODE_TIMEOUT);
     assert!(
         status.success(),
         "Node.js failed:\n{}\n{}",

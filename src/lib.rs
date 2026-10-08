@@ -12,6 +12,10 @@ pub mod semantic;
 pub mod tokens;
 pub mod typed_ast;
 
+#[cfg(test)]
+#[path = "../tests/support/process.rs"]
+mod test_process;
+
 pub use ast::Type;
 pub use codegen::CodegenError;
 pub use compiler::{CompileError, Compiler, CompilerOptions};

@@ -11,6 +11,7 @@ use super::{
     abi::{self, Signature},
     checked_u32,
     memory::{self, MemoryPlan},
+    numeric,
 };
 
 pub(super) struct UserFunctionPlan {
@@ -36,6 +37,7 @@ pub(super) struct Layout {
     pub host_type_indices: Vec<u32>,
     pub users: Vec<UserFunctionPlan>,
     pub memory: Option<MemoryLayout>,
+    pub remainder: Option<UserFunctionPlan>,
     callees: Vec<CallTarget>,
     host_count: usize,
 }
@@ -64,6 +66,7 @@ impl Layout {
             host_type_indices: Vec::new(),
             users: Vec::new(),
             memory: None,
+            remainder: None,
             callees: Vec::new(),
             host_count: program.host_functions.len(),
         };
@@ -191,6 +194,35 @@ impl Layout {
                 plan,
                 helpers: plans,
                 first_function: first_runtime,
+            });
+        }
+
+        if numeric::needs_remainder(program) {
+            let memory_helpers = layout
+                .memory
+                .as_ref()
+                .map_or(0, |memory| memory.helpers.len());
+            let function_index = first_runtime
+                .checked_add(checked_u32(memory_helpers, "runtime function count")?)
+                .ok_or(CodegenError::LimitExceeded {
+                    what: "total function count",
+                })?;
+
+            function_index
+                .checked_add(1)
+                .ok_or(CodegenError::LimitExceeded {
+                    what: "total function count",
+                })?;
+
+            let signature = Signature {
+                params: vec![wasm_encoder::ValType::F64, wasm_encoder::ValType::F64],
+                result: Some(wasm_encoder::ValType::F64),
+            };
+
+            layout.remainder = Some(UserFunctionPlan {
+                type_index: layout.intern(signature, &mut type_indices)?,
+                function_index,
+                exported: false,
             });
         }
 

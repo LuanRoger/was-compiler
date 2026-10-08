@@ -83,7 +83,7 @@ fn sum(limit: number) -> number {
 }
 ```
 
-It supports `+`, `-`, `*`, `/`, unary negation, and nested/parenthesized expressions.
+It supports `+`, `-`, `*`, `/`, `%`, unary negation, and nested/parenthesized expressions.
 Resolved variable IDs map to per-function Wasm slots, with parameters first and
 locals in declaration order. Reads use `local.get`; initialization and assignment
 use `local.set`. Scalar expression statements end in `drop` to keep the stack
@@ -93,6 +93,21 @@ Numeric literals become `f64.const`; arithmetic uses `f64.add`, `f64.sub`,
 `f64.mul`, `f64.div`, and `f64.neg`. Integers and decimals use the same `f64`
 representation. Invalid and overflowing literals return explicit errors;
 arithmetic follows IEEE-754 behavior, including infinity, NaN, and signed zero.
+
+`number % number` produces truncating floating remainder, matching JavaScript
+`%`/`fmod`, not mathematical modulo or nearest-quotient IEEE remainder. Operands
+are evaluated exactly once, left-to-right. A NaN operand, infinite dividend, or
+zero divisor produces NaN; a finite dividend with an infinite divisor is returned
+unchanged. Otherwise the result has the dividend's sign, including signed zero,
+and its magnitude is less than the finite nonzero divisor's magnitude.
+
+Wasm has no `f64.rem`, so `%` calls an optional guest `(f64, f64) -> f64` helper.
+It uses exact binary scaled subtraction rather than `a - trunc(a / b) * b`,
+requires no implicit host import or Memory/Global/Data sections, and is appended
+after all user functions and any seven memory helpers. It is included only when
+`%` occurs anywhere in the typed AST, including unexported functions, unreachable
+statements, and runtime-skipped operands. Programs without `%` retain the same
+output. The browser compiler uses the same pipeline and remainder semantics.
 
 Numeric comparisons support `==`, `!=`, `<`, `<=`, `>`, and `>=`; booleans support
 `==`, `!=`, `!`, `&&`, and `||`. Logical operators short-circuit, so skipped operands
@@ -146,8 +161,8 @@ collection yet**. Scalar-only modules do not include the memory runtime.
 
 All user functions are exported by default. `ExportOptions` or CLI `--export` /
 `--no-exports` select the public user-function surface without removing bodies or
-imports. Required memory ABI exports remain. `%` is explicitly unsupported until floating
-remainder lowering is implemented; Wasm has no `f64.rem`.
+imports. Required memory ABI exports remain. M0–M9 are implemented; no optimization
+passes were added.
 
 ```rust
 use was_compiler::{Compiler, Type};

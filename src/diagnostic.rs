@@ -111,13 +111,15 @@ mod tests {
 
     #[test]
     fn compiler_stages_have_locations_and_source_excerpts() {
+        let overflow_source = format!(
+            "fn main() -> number {{\n    return {};\n}}",
+            "9".repeat(400)
+        );
+
         for (source, stage) in [
             ("fn main() -> void {\n    let n: number = ;\n}", "parse"),
             ("fn main() -> void {\n    missing();\n}", "semantic"),
-            (
-                "fn main() -> number {\n    return 1 % 2;\n}",
-                "code generation",
-            ),
+            (overflow_source.as_str(), "code generation"),
         ] {
             let error = Compiler::new().compile_source(source).unwrap_err();
             let diagnostic = render("program.was", source, &error);

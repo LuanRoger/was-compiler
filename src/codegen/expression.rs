@@ -60,17 +60,11 @@ pub(super) fn emit(
 
         TypedExprKind::Binary { left, op, right } => {
             let (operand_type, result_type) = match op {
-                BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply | BinaryOp::Divide => {
-                    (Type::Number, Type::Number)
-                }
-
-                BinaryOp::Remainder => {
-                    return Err(CodegenError::UnsupportedOperator {
-                        function: function.into(),
-                        operator: "%",
-                        span,
-                    });
-                }
+                BinaryOp::Add
+                | BinaryOp::Subtract
+                | BinaryOp::Multiply
+                | BinaryOp::Divide
+                | BinaryOp::Remainder => (Type::Number, Type::Number),
 
                 BinaryOp::LessThan
                 | BinaryOp::LessThanOrEqual
@@ -142,13 +136,14 @@ pub(super) fn emit(
                 return Ok(());
             }
 
-            let instruction = binary_instruction(op, operand_type).map_err(|operator| {
-                CodegenError::UnsupportedOperator {
-                    function: function.into(),
-                    operator,
-                    span,
-                }
-            })?;
+            let instruction =
+                binary_instruction(op, operand_type, context).map_err(|operator| {
+                    CodegenError::UnsupportedOperator {
+                        function: function.into(),
+                        operator,
+                        span,
+                    }
+                })?;
 
             let normalize_operands =
                 matches!(op, BinaryOp::Equal | BinaryOp::NotEqual) && operand_type == Type::Bool;
@@ -206,12 +201,14 @@ pub(super) fn emit(
 fn binary_instruction(
     op: &BinaryOp,
     operand_type: Type,
+    context: &Context<'_>,
 ) -> Result<Instruction<'static>, &'static str> {
     match op {
         BinaryOp::Add => Ok(Instruction::F64Add),
         BinaryOp::Subtract => Ok(Instruction::F64Sub),
         BinaryOp::Multiply => Ok(Instruction::F64Mul),
         BinaryOp::Divide => Ok(Instruction::F64Div),
+        BinaryOp::Remainder => Ok(Instruction::Call(context.remainder())),
 
         BinaryOp::Equal => match operand_type {
             Type::Number => Ok(Instruction::F64Eq),
@@ -230,7 +227,6 @@ fn binary_instruction(
         BinaryOp::GreaterThan => Ok(Instruction::F64Gt),
         BinaryOp::GreaterThanOrEqual => Ok(Instruction::F64Ge),
 
-        BinaryOp::Remainder => Err("%"),
         BinaryOp::And => Err("&&"),
         BinaryOp::Or => Err("||"),
     }

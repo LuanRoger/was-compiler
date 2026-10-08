@@ -19,6 +19,7 @@ mod function;
 mod layout;
 mod locals;
 mod memory;
+mod numeric;
 mod statement;
 mod temporaries;
 mod values;
@@ -264,6 +265,11 @@ pub fn compile_with_exports(
             &ConstExpr::i32_const(0),
             memory.plan.data.iter().copied(),
         );
+    }
+
+    if let Some(remainder) = &layout.remainder {
+        functions.function(remainder.type_index);
+        code.function(&numeric::emit_remainder());
     }
 
     let mut module = Module::new();

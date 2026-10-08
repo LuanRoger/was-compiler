@@ -1,9 +1,4 @@
-use std::{
-    io::Write,
-    process::{Command, Stdio},
-    thread,
-    time::{Duration, Instant},
-};
+use std::{process::Command, time::Duration};
 
 use crate::{
     CompileError, Compiler, CompilerOptions, ExportOptions, HostFunctionId, OptimizationLevel,
@@ -648,13 +643,20 @@ fn selection_never_skips_user_or_host_layout_validation() {
 
 #[test]
 fn unexported_bodies_still_report_errors_at_every_optimization_level() {
-    let source = "fn main() -> void {} fn hidden() -> number { return 1 % 2; }";
+    let literal = "9".repeat(400);
+    let source = format!("fn main() -> void {{}} fn hidden() -> number {{ return {literal}; }}");
 
     for level in LEVELS {
         let mut compiler = compiler(level);
-        let program = compiler.analyze(source).unwrap();
+        let program = compiler.analyze(&source).unwrap();
         let original = program.clone();
-        let expected = compile(&program).unwrap_err();
+        let expected = CodegenError::NumberLiteralOutOfRange {
+            function: "hidden".into(),
+            literal: literal.clone(),
+            span: program.functions[1].body[0].span,
+        };
+
+        assert_eq!(compile(&program).unwrap_err(), expected);
 
         for selection in [
             ExportOptions::All,
@@ -666,7 +668,7 @@ fn unexported_bodies_still_report_errors_at_every_optimization_level() {
 
             assert_eq!(compiler.compile(&program).unwrap_err(), expected);
             assert_eq!(
-                compiler.compile_source(source).unwrap_err(),
+                compiler.compile_source(&source).unwrap_err(),
                 CompileError::Codegen(compile(&program).unwrap_err())
             );
             assert_eq!(program, original);
@@ -727,39 +729,11 @@ fn run_node(bytes: &[u8], script: &str) {
          const bytes = require('node:fs').readFileSync(0);\n\
          const module_ = new WebAssembly.Module(bytes);\n{script}"
     );
-    let mut child = Command::new("node")
-        .args(["-e", &script])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("start Node.js");
-
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(bytes)
-        .expect("write Wasm");
-
-    let deadline = Instant::now() + Duration::from_secs(15);
-
-    while child.try_wait().expect("poll Node.js").is_none() {
-        if Instant::now() >= deadline {
-            child.kill().expect("kill timed out Node.js");
-
-            let output = child.wait_with_output().unwrap();
-
-            panic!(
-                "Node.js exceeded 15 seconds: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
-
-        thread::sleep(Duration::from_millis(10));
-    }
-
-    let output = child.wait_with_output().expect("Node.js output");
+    let output = crate::test_process::output(
+        Command::new("node").args(["-e", &script]),
+        Some(bytes),
+        Duration::from_secs(15),
+    );
 
     assert!(
         output.status.success(),

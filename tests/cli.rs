@@ -1,11 +1,12 @@
+#[path = "support/process.rs"]
+mod test_process;
+
 use std::{
     fs,
-    io::{self, Read, Write},
     path::{Path, PathBuf},
-    process::{Child, Command, Output, Stdio},
+    process::{Command, Output},
     sync::atomic::{AtomicU64, Ordering},
-    thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use was_compiler::{Compiler, ExportOptions, Type};
@@ -118,17 +119,8 @@ impl Drop for Scratch {
     }
 }
 
-struct ChildGuard(Child);
-
-impl Drop for ChildGuard {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
 fn process_output(command: &mut Command, input: Option<&[u8]>) -> Output {
-    process_output_with_stdin(command, input, false)
+    test_process::output(command, input, PROCESS_TIMEOUT)
 }
 
 fn process_output_with_stdin(
@@ -136,75 +128,7 @@ fn process_output_with_stdin(
     input: Option<&[u8]>,
     keep_open: bool,
 ) -> Output {
-    let description = format!("{command:?}");
-    let mut child = ChildGuard(
-        command
-            .stdin(if input.is_some() || keep_open {
-                Stdio::piped()
-            } else {
-                Stdio::null()
-            })
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap_or_else(|error| panic!("start {description}: {error}")),
-    );
-    let open_stdin = if keep_open {
-        child.0.stdin.take()
-    } else {
-        None
-    };
-    let mut stdout = child.0.stdout.take().unwrap();
-    let mut stderr = child.0.stderr.take().unwrap();
-    let stdout = thread::spawn(move || {
-        let mut bytes = Vec::new();
-        stdout.read_to_end(&mut bytes).unwrap();
-        bytes
-    });
-    let stderr = thread::spawn(move || {
-        let mut bytes = Vec::new();
-        stderr.read_to_end(&mut bytes).unwrap();
-        bytes
-    });
-    let stdin = input.map(|bytes| {
-        let bytes = bytes.to_vec();
-        let mut stdin = child.0.stdin.take().unwrap();
-        thread::spawn(move || stdin.write_all(&bytes))
-    });
-    let deadline = Instant::now() + PROCESS_TIMEOUT;
-    let mut timed_out = false;
-    let status = loop {
-        if let Some(status) = child.0.try_wait().expect("poll subprocess") {
-            break status;
-        }
-        if Instant::now() >= deadline {
-            child.0.kill().expect("kill timed out subprocess");
-            timed_out = true;
-            break child.0.wait().expect("reap timed out subprocess");
-        }
-        thread::sleep(Duration::from_millis(10));
-    };
-    drop(open_stdin);
-    let output = Output {
-        status,
-        stdout: stdout.join().unwrap(),
-        stderr: stderr.join().unwrap(),
-    };
-    if let Some(stdin) = stdin
-        && let Err(error) = stdin.join().unwrap()
-    {
-        assert_eq!(
-            error.kind(),
-            io::ErrorKind::BrokenPipe,
-            "write subprocess stdin: {error}"
-        );
-    }
-    assert!(
-        !timed_out,
-        "{description} exceeded {PROCESS_TIMEOUT:?}: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    output
+    test_process::output_with_stdin(command, input, keep_open, PROCESS_TIMEOUT)
 }
 
 fn success(output: Output) -> Vec<u8> {
@@ -803,7 +727,10 @@ fn export_selection_still_compiles_invalid_unexported_bodies() {
     let scratch = Scratch::new("invalid_hidden_body");
     scratch.write(
         "program.was",
-        "fn main() -> number { return 7; }\nfn hidden() -> number { return 1 % 2; }",
+        format!(
+            "fn main() -> number {{ return 7; }}\nfn hidden() -> number {{ return {}; }}",
+            "9".repeat(400)
+        ),
     );
     for flags in [vec!["--export", "main"], vec!["--no-exports"]] {
         let mut args = vec!["program.was", "-o", "program.wasm"];
@@ -813,7 +740,7 @@ fn export_selection_still_compiles_invalid_unexported_bodies() {
             1,
             &[
                 "code generation error:",
-                "unsupported operator `%`",
+                "outside the finite f64 range",
                 "fn hidden()",
                 "^",
             ],
@@ -898,6 +825,9 @@ fn every_optimization_preset_is_currently_a_noop() {
 #[test]
 fn located_diagnostics_show_absolute_file_paths_phases_and_source_carets() {
     let scratch = Scratch::new("diagnostics");
+    let snippet = format!("    return {};", "9".repeat(400));
+    let overflow_source = format!("fn main() -> number {{\n{snippet}\n}}");
+
     for (source, stage, snippet, column) in [
         (
             "fn main() -> void {\n    let n: number = ;\n}",
@@ -912,9 +842,9 @@ fn located_diagnostics_show_absolute_file_paths_phases_and_source_carets() {
             5,
         ),
         (
-            "fn main() -> number {\n    return 1 % 2;\n}",
+            overflow_source.as_str(),
             "code generation",
-            "    return 1 % 2;",
+            snippet.as_str(),
             5,
         ),
     ] {
@@ -997,6 +927,7 @@ fn failed_compilation_never_replaces_or_creates_outputs() {
     let scratch = Scratch::new("preserve_outputs");
     let output = scratch.0.join("program.wasm");
     let sentinel = b"existing artifact must remain byte-for-byte intact";
+    let overflow_source = format!("fn main() -> number {{ return {}; }}", "9".repeat(400));
     let cases: &[(&str, &[&str], &str)] = &[
         (SIMPLE_SOURCE, &["--host", "bad"], "host registration error"),
         (
@@ -1005,11 +936,7 @@ fn failed_compilation_never_replaces_or_creates_outputs() {
             "parse error:",
         ),
         ("fn main() -> void { missing(); }", &[], "semantic error:"),
-        (
-            "fn main() -> number { return 1 % 2; }",
-            &[],
-            "code generation error:",
-        ),
+        (overflow_source.as_str(), &[], "code generation error:"),
         (
             SIMPLE_SOURCE,
             &["--export", "missing"],

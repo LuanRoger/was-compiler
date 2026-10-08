@@ -1,11 +1,12 @@
+#[path = "support/process.rs"]
+mod test_process;
+
 use std::{
     fs,
-    io::Read,
     path::{Path, PathBuf},
-    process::{Command, Output, Stdio},
+    process::{Command, Output},
     sync::atomic::{AtomicU64, Ordering},
-    thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use was_compiler::{Compiler, ExportOptions, Type};
@@ -60,48 +61,7 @@ impl Drop for Scratch {
 }
 
 fn node_output(command: &mut Command) -> Output {
-    let mut child = command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("start Node.js; ignored runtime tests require node on PATH");
-    let mut stdout = child.stdout.take().unwrap();
-    let mut stderr = child.stderr.take().unwrap();
-    let stdout = thread::spawn(move || {
-        let mut bytes = Vec::new();
-        stdout.read_to_end(&mut bytes).unwrap();
-        bytes
-    });
-    let stderr = thread::spawn(move || {
-        let mut bytes = Vec::new();
-        stderr.read_to_end(&mut bytes).unwrap();
-        bytes
-    });
-    let deadline = Instant::now() + NODE_TIMEOUT;
-    let mut timed_out = false;
-    let status = loop {
-        if let Some(status) = child.try_wait().expect("poll Node.js") {
-            break status;
-        }
-        if Instant::now() >= deadline {
-            child.kill().expect("kill timed out Node.js");
-            timed_out = true;
-            break child.wait().expect("wait for timed out Node.js");
-        }
-        thread::sleep(Duration::from_millis(10));
-    };
-    let output = Output {
-        status,
-        stdout: stdout.join().unwrap(),
-        stderr: stderr.join().unwrap(),
-    };
-    assert!(
-        !timed_out,
-        "Node.js exceeded {NODE_TIMEOUT:?}: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    output
+    test_process::output(command, None, NODE_TIMEOUT)
 }
 
 fn success(output: Output) -> String {

@@ -61,6 +61,14 @@ impl<'a> Context<'a> {
         memory.first_function + helper.index()
     }
 
+    pub fn remainder(&self) -> u32 {
+        self.module
+            .remainder
+            .as_ref()
+            .expect("remainder usage planned before emission")
+            .function_index
+    }
+
     pub fn string(&self, value: &str) -> u32 {
         self.module
             .memory

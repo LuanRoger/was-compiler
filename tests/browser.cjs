@@ -6,6 +6,7 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
 const SIMPLE_SOURCE = 'fn main() -> number { return 42; }';
+const OVERFLOW_SOURCE = `fn main() -> number {\n    return ${'9'.repeat(400)};\n}`;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 
@@ -128,6 +129,88 @@ async function main() {
         assert.doesNotMatch(wat, /was-compiler\.interface/);
     });
 
+    test('remainder arithmetic, IEEE-754 inputs, host order, and guest-only memory', compiler => {
+        const source = `
+            fn remainder(left: number, right: number) -> number { return left % right; }
+            fn arithmetic() -> number { return 2 + 17 % 5 * 3; }
+            fn nested(value: number) -> number { return -(value % 5) % 3; }
+        `;
+        const { bytes, module } = compile(compiler, source);
+        assert.deepEqual(WebAssembly.Module.imports(module), []);
+        assert.deepEqual(userExports(module), ['remainder', 'arithmetic', 'nested']);
+        const scalar = new WebAssembly.Instance(module).exports;
+        assert.equal(scalar.memory, undefined);
+        assert.equal(scalar.__alloc, undefined);
+        assert.equal(scalar.arithmetic(), 8);
+        assert.equal(scalar.nested(17), -2);
+        const pairs = [
+            [5.5, 2], [-5.5, 2], [5.5, -2], [-5.5, -2],
+            [6, 3], [-6, 3], [0, 3], [-0, 3], [0, -3], [-0, -3],
+            [1, 0], [1, -0], [0, 0], [-0, 0],
+            [Infinity, 3], [-Infinity, 3], [Infinity, Infinity],
+            [3, Infinity], [-3, -Infinity], [-0, Infinity],
+            [NaN, 3], [3, NaN],
+            [Number.MAX_VALUE, 3], [-Number.MAX_VALUE, 3],
+            [Number.MAX_VALUE, Number.MIN_VALUE],
+            [Number.MAX_VALUE, 2.2250738585072014e-308],
+            [Number.MIN_VALUE, Number.MAX_VALUE],
+            [-Number.MIN_VALUE, Number.MAX_VALUE],
+            [Number.MIN_VALUE * 3, Number.MIN_VALUE * 2],
+            [-Number.MIN_VALUE * 3, Number.MIN_VALUE * 2],
+            [1, Number.MIN_VALUE], [-1, Number.MIN_VALUE],
+            [1e300, 1e-300], [-1e300, 1e-300],
+            [1e-300, 1e300], [-1e-300, 1e300],
+        ];
+        for (const [left, right] of pairs) {
+            assert.ok(Object.is(scalar.remainder(left, right), left % right), `${left} % ${right}`);
+        }
+        for (const level of [0, 1, 2, 3]) {
+            compiler.setOptimizationLevel(level);
+            assert.deepEqual(compile(compiler, source).bytes, bytes);
+        }
+        const memorySource = `
+            fn remainder(left: number, right: number) -> number { return left % right; }
+            fn items(left: number, right: number) -> number[] { return [left % right, -left % right]; }
+            fn edit(values: number[], divisor: number) -> number[] {
+                values[0] = values[0] % divisor;
+                return values;
+            }
+        `;
+        const memoryModule = compile(compiler, memorySource).module;
+        assert.deepEqual(WebAssembly.Module.imports(memoryModule), []);
+        const memory = new WebAssembly.Instance(memoryModule);
+        assert.ok(memory.exports.memory instanceof WebAssembly.Memory);
+        assert.equal(typeof memory.exports.__alloc, 'function');
+        for (const [left, right] of pairs) {
+            assert.ok(Object.is(memory.exports.remainder(left, right), left % right));
+        }
+        assert.deepEqual(readDescriptor(memory, 'number[]', memory.exports.items(5.5, 2)), [1.5, -1.5]);
+        const values = writeDescriptor(memory, 'number[]', [-6, 7]);
+        assert.equal(memory.exports.edit(values, 3), values);
+        assert.deepEqual(readDescriptor(memory, 'number[]', values), [-0, 7]);
+        compiler.registerHostFunction('left', 'env', 'left', [], 'number');
+        compiler.registerHostFunction('right', 'env', 'right', [], 'number');
+        const hostSource = `
+            fn main() -> number { return left() % right(); }
+            fn memoryMain() -> number[] { return [left() % right()]; }
+        `;
+        const hostModule = compile(compiler, hostSource).module;
+        assert.deepEqual(WebAssembly.Module.imports(hostModule), [
+            { module: 'env', name: 'left', kind: 'function' },
+            { module: 'env', name: 'right', kind: 'function' },
+        ]);
+        const events = [];
+        const host = new WebAssembly.Instance(hostModule, { env: {
+            left() { events.push('left'); return -5.5; },
+            right() { events.push('right'); return 2; },
+        } });
+        assert.equal(host.exports.main(), -1.5);
+        assert.deepEqual(events, ['left', 'right']);
+        events.length = 0;
+        assert.deepEqual(readDescriptor(host, 'number[]', host.exports.memoryMain()), [-1.5]);
+        assert.deepEqual(events, ['left', 'right']);
+    });
+
     test('string and array execution with explicit raw memory descriptors', compiler => {
         const source = `
             fn literal() -> string { return "héllo 🦀"; }
@@ -243,7 +326,7 @@ async function main() {
         const cases = [
             ['fn main() -> void {\n    let n: number = ;\n}', 'parse'],
             ['fn main() -> void {\n    missing();\n}', 'semantic'],
-            ['fn main() -> number {\n    return 1 % 2;\n}', 'code generation'],
+            [OVERFLOW_SOURCE, 'code generation'],
         ];
         for (const [source, stage] of cases) {
             for (const method of ['compile', 'compileWat']) {
@@ -371,7 +454,7 @@ async function main() {
         assert.deepEqual(WebAssembly.Module.exports(compile(compiler, SIMPLE_SOURCE).module), []);
         compiler.setExports([]);
         assert.deepEqual(userExports(compile(compiler, source).module), []);
-        fails(() => compiler.compile('fn main() -> number { return 1 % 2; }'), /code generation error:/);
+        fails(() => compiler.compile(OVERFLOW_SOURCE), /code generation error:.*outside the finite f64 range/);
         compiler.exportAll();
         assert.deepEqual(userExports(compile(compiler, source).module), ['hidden', 'main', 'helper', 'text']);
     });
@@ -387,7 +470,7 @@ async function main() {
             assert.deepEqual(compile(compiler, source).bytes, expected);
             assert.equal(compiler.compileWat(source), wat);
             assert.equal(instantiate(compiler, source, { env: { now: () => 4 } }).exports.main(), 10);
-            fails(() => compiler.compile('fn main() -> number { return 1 % 2; }'), /code generation error:/);
+            fails(() => compiler.compile(OVERFLOW_SOURCE), /code generation error:.*outside the finite f64 range/);
         }
         for (const level of [-1, 4, 0.5, 1.5, 2.999, NaN, Infinity, -Infinity, 2 ** 32]) {
             fails(() => compiler.setOptimizationLevel(level));

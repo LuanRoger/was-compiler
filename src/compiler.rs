@@ -218,10 +218,12 @@ mod tests {
     fn optimization_levels_preserve_errors() {
         let mut compiler = Compiler::new();
 
+        let overflow_source = format!("fn main() -> number {{ return {}; }}", "9".repeat(400));
+
         for source in [
             "fn",
             "fn main() -> void { missing(); }",
-            "fn main() -> number { return 1 % 2; }",
+            overflow_source.as_str(),
         ] {
             compiler.set_optimization_level(OptimizationLevel::None);
 
@@ -398,10 +400,20 @@ mod tests {
                 SemanticError::UndefinedFunction { .. }
             ))
         ));
-        assert!(matches!(
-            compiler.compile_source("fn main() -> number { return 1 % 2; }"),
-            Err(CompileError::Codegen(_))
-        ));
+        let literal = "9".repeat(400);
+        let source = format!("fn main() -> number {{ return {literal}; }}");
+        let program = compiler.analyze(&source).unwrap();
+
+        assert_eq!(
+            compiler.compile_source(&source),
+            Err(CompileError::Codegen(
+                CodegenError::NumberLiteralOutOfRange {
+                    function: "main".into(),
+                    literal,
+                    span: program.functions[0].body[0].span,
+                }
+            ))
+        );
         assert!(
             compiler
                 .compile_source("fn main() -> void { print(1); }")
