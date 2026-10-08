@@ -169,6 +169,76 @@ async function main() {
         assert.equal(instance.exports.sum(values), 18);
     });
 
+    test('numeric array content equality, mutation, IEEE-754, and descriptor traps', compiler => {
+        const source = `
+            fn same(left: number[], right: number[]) -> bool { return left == right; }
+            fn different(left: number[], right: number[]) -> bool { return left != right; }
+            fn literals() -> bool { return [1, 2, 3] == [1, 2, 3]; }
+            fn shorter() -> bool { return [1, 2, 3] == [1, 2]; }
+            fn items() -> number[] { return [1, 2, 3]; }
+            fn edit(values: number[]) -> number[] { values[1] = 9; return values; }
+            fn callbacks() -> bool { return arrayLeft() == arrayRight(); }
+        `;
+        compiler.registerHostFunction('arrayLeft', 'env', 'left', [], 'number[]');
+        compiler.registerHostFunction('arrayRight', 'env', 'right', [], 'number[]');
+        const { bytes, module } = compile(compiler, source);
+        assert.deepEqual(compiler.compile(source), bytes);
+        assert.match(compiler.compileWat(source), /f64\.(eq|ne)/);
+        let instance;
+        let left, right, corrupt = false;
+        const events = [];
+        instance = new WebAssembly.Instance(module, { env: {
+            left() { events.push('left'); return left; },
+            right() {
+                events.push('right');
+                if (corrupt) new DataView(instance.exports.memory.buffer).setUint32(left + 4, 0xffffffff, true);
+                return right;
+            },
+        } });
+        const { exports } = instance;
+        assert.equal(exports.literals(), 1);
+        assert.equal(exports.shorter(), 0);
+        for (const [a, b, same] of [
+            [[], [], true], [[], [1], false], [[1, 2, 3], [1, 2, 3], true],
+            [[1, 2, 3], [3, 2, 1], false], [[0, -0], [-0, 0], true],
+            [[NaN], [NaN], false], [[Infinity, -Infinity], [Infinity, -Infinity], true],
+        ]) {
+            left = writeDescriptor(instance, 'number[]', a);
+            right = writeDescriptor(instance, 'number[]', b);
+            const before = new Uint8Array(exports.memory.buffer).slice();
+            assert.equal(exports.same(left, right), Number(same));
+            assert.equal(exports.different(left, right), Number(!same));
+            assert.deepEqual(new Uint8Array(exports.memory.buffer), before);
+            assert.equal(exports.same(left, left), Number(!a.some(Number.isNaN)));
+            assert.equal(exports.different(left, left), Number(a.some(Number.isNaN)));
+            events.length = 0;
+            assert.equal(exports.callbacks(), Number(same));
+            assert.deepEqual(events, ['left', 'right']);
+        }
+        left = exports.items(); right = exports.items();
+        assert.notEqual(left, right);
+        assert.equal(exports.same(left, right), 1);
+        assert.equal(exports.edit(left), left);
+        assert.equal(exports.same(left, right), 0);
+        assert.equal(exports.different(left, right), 1);
+        assert.deepEqual(readDescriptor(instance, 'number[]', left), [1, 9, 3]);
+        assert.deepEqual(readDescriptor(instance, 'number[]', right), [1, 2, 3]);
+        assert.throws(() => exports.same(0, right), WebAssembly.RuntimeError);
+        assert.throws(() => exports.different(left, 0), WebAssembly.RuntimeError);
+        left = writeDescriptor(instance, 'number[]', []);
+        right = writeDescriptor(instance, 'number[]', [1]);
+        corrupt = true;
+        events.length = 0;
+        assert.throws(() => exports.callbacks(), WebAssembly.RuntimeError);
+        assert.deepEqual(events, ['left', 'right']);
+        for (const expression of ['[] == 1', 'true != []', '[] == "text"', '[] < []', '[] + []', '[] && []']) {
+            for (const method of ['compile', 'compileWat']) {
+                fails(() => compiler[method](`fn invalid() -> void { ${expression}; }`), /semantic error:/);
+            }
+        }
+        assert.equal(instantiate(compiler, SIMPLE_SOURCE, { env: { left: () => 0, right: () => 0 } }).exports.main(), 42);
+    });
+
     test('compile and compileWat report each stage and recover', compiler => {
         const cases = [
             ['fn main() -> void {\n    let n: number = ;\n}', 'parse'],

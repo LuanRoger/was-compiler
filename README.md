@@ -109,7 +109,10 @@ of their scopes.
 
 Strings support literals, parameters/locals/returns, and content-based `==`/`!=`.
 Numeric arrays support literals (including `[]`), reference assignment, parameters,
-returns, element reads/writes, and `len(array)` returning a number. Array indices
+returns, element reads/writes, content-based `==`/`!=`, and `len(array)` returning
+a number. Equality requires matching lengths and exact elementwise `f64` equality:
+signed zeros compare equal, while NaN makes equality false even for an array
+compared to itself. Array assignment still aliases storage. Array indices
 must be finite, integral, nonnegative, and below the length; invalid indices trap
 rather than being truncated or reading unrelated memory. `len` does not accept
 strings, matching the existing language rules.

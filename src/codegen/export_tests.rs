@@ -225,7 +225,7 @@ fn assert_selection_only_changes_exports(source: &str, memory: bool) {
 
         assert_eq!(baseline.exports, all_exports);
         assert_eq!(baseline.imports.len(), 2);
-        assert_eq!(baseline.functions.len(), if memory { 10 } else { 4 });
+        assert_eq!(baseline.functions.len(), if memory { 11 } else { 4 });
         assert_eq!(baseline.calls.len(), baseline.functions.len());
         assert!(baseline.calls[0].contains(&4));
         assert!(baseline.calls[0].contains(&0));
@@ -332,7 +332,7 @@ fn import_only_memory_modules_keep_runtime_exports_with_no_user_exports() {
         let module = decode(&expected);
 
         assert_eq!(module.imports.len(), 1);
-        assert_eq!(module.functions.len(), 6);
+        assert_eq!(module.functions.len(), 7);
         assert_eq!(module.exports, runtime_exports(1));
 
         for selection in [ExportOptions::None, only(&[])] {
@@ -373,7 +373,7 @@ fn unexported_unused_reference_functions_still_require_memory() {
 
             assert_eq!(module.exports, expected);
             assert_eq!(module.sections, baseline.sections);
-            assert_eq!(module.functions.len(), 8);
+            assert_eq!(module.functions.len(), 9);
         }
     }
 }
@@ -431,7 +431,7 @@ fn memory_reserved_names_collide_only_when_the_user_function_is_exported() {
                     expected.extend(runtime_exports(runtime_index));
 
                     assert_eq!(module.exports, expected);
-                    assert_eq!(module.functions.len(), program.functions.len() + 6);
+                    assert_eq!(module.functions.len(), program.functions.len() + 7);
                     assert_eq!(program, original);
                 }
             }

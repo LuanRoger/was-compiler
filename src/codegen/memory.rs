@@ -23,6 +23,7 @@ pub(super) enum Helper {
     ArrayAddress,
     ArrayLen,
     StringEqual,
+    ArrayEqual,
 }
 
 impl Helper {
@@ -34,6 +35,7 @@ impl Helper {
             Self::ArrayAddress => 3,
             Self::ArrayLen => 4,
             Self::StringEqual => 5,
+            Self::ArrayEqual => 6,
         }
     }
 }
@@ -48,6 +50,7 @@ pub(super) fn helpers() -> Vec<(Helper, Signature)> {
         (Helper::ArrayAddress, vec![I32, F64], I32),
         (Helper::ArrayLen, vec![I32], F64),
         (Helper::StringEqual, vec![I32, I32], I32),
+        (Helper::ArrayEqual, vec![I32, I32], I32),
     ]
     .into_iter()
     .map(|(helper, params, result)| {
@@ -246,6 +249,7 @@ pub(super) fn emit(helper: Helper, first_function: u32) -> Function {
         Helper::ArrayAddress => emit_array_address(first_function),
         Helper::ArrayLen => emit_array_len(first_function),
         Helper::StringEqual => emit_string_equal(first_function),
+        Helper::ArrayEqual => emit_array_equal(first_function),
     }
 }
 
@@ -592,6 +596,79 @@ fn emit_string_equal(first_function: u32) -> Function {
     body
 }
 
+fn emit_array_equal(first_function: u32) -> Function {
+    use Instruction::*;
+
+    let element = MemArg {
+        offset: 0,
+        align: 3,
+        memory_index: 0,
+    };
+    let mut body = Function::new([(4, ValType::I32)]);
+
+    instructions(
+        &mut body,
+        &[
+            LocalGet(0),
+            Call(first_function + Helper::ValidateArray.index()),
+            LocalSet(0),
+            LocalGet(1),
+            Call(first_function + Helper::ValidateArray.index()),
+            LocalSet(1),
+            LocalGet(0),
+            I32Load(header(4)),
+            LocalTee(4),
+            LocalGet(1),
+            I32Load(header(4)),
+            I32Ne,
+            If(BlockType::Empty),
+            I32Const(0),
+            Return,
+            End,
+            LocalGet(0),
+            I32Load(header(0)),
+            LocalSet(2),
+            LocalGet(1),
+            I32Load(header(0)),
+            LocalSet(3),
+            Block(BlockType::Empty),
+            Loop(BlockType::Empty),
+            LocalGet(5),
+            LocalGet(4),
+            I32GeU,
+            BrIf(1),
+            LocalGet(2),
+            LocalGet(5),
+            I32Const(8),
+            I32Mul,
+            I32Add,
+            F64Load(element),
+            LocalGet(3),
+            LocalGet(5),
+            I32Const(8),
+            I32Mul,
+            I32Add,
+            F64Load(element),
+            F64Ne,
+            If(BlockType::Empty),
+            I32Const(0),
+            Return,
+            End,
+            LocalGet(5),
+            I32Const(1),
+            I32Add,
+            LocalSet(5),
+            Br(0),
+            End,
+            End,
+            I32Const(1),
+            End,
+        ],
+    );
+
+    body
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -753,7 +830,10 @@ mod tests {
             (vec![ValType::I32, ValType::F64], ValType::I32),
             (vec![ValType::I32], ValType::F64),
             (vec![ValType::I32, ValType::I32], ValType::I32),
+            (vec![ValType::I32, ValType::I32], ValType::I32),
         ];
+
+        assert_eq!(helpers.len(), expected.len());
 
         for (index, ((helper, signature), (params, result))) in
             helpers.iter().zip(expected).enumerate()

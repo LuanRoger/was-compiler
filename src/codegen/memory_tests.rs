@@ -355,7 +355,7 @@ fn scalar_only_modules_allow_user_exports_named_memory_and_allocator() {
 }
 
 #[test]
-fn memory_abi_import_offsets_six_unique_helpers_and_bytes_are_stable_at_all_levels() {
+fn memory_abi_import_offsets_seven_unique_helpers_and_bytes_are_stable_at_all_levels() {
     let hosts = [
         host(0, "echo_string", &[Type::String], Type::String),
         host(1, "echo_array", &[Type::NumberArray], Type::NumberArray),
@@ -388,8 +388,8 @@ fn memory_abi_import_offsets_six_unique_helpers_and_bytes_are_stable_at_all_leve
             ]
         );
         assert_eq!(module.imports[0].2, module.imports[1].2);
-        assert_eq!(module.functions.len(), 12);
-        assert_eq!(module.bodies.len(), 12);
+        assert_eq!(module.functions.len(), 13);
+        assert_eq!(module.bodies.len(), 13);
         for (i, name) in ["text", "values", "size", "at", "same", "literal"]
             .iter()
             .enumerate()
@@ -418,7 +418,9 @@ fn memory_abi_import_offsets_six_unique_helpers_and_bytes_are_stable_at_all_leve
             (vec![ValType::I32, ValType::F64], vec![ValType::I32]),
             (vec![ValType::I32], vec![ValType::F64]),
             (vec![ValType::I32, ValType::I32], vec![ValType::I32]),
+            (vec![ValType::I32, ValType::I32], vec![ValType::I32]),
         ];
+        assert_eq!(module.functions[6..].len(), expected.len());
         for (type_index, signature) in module.functions[6..].iter().zip(expected) {
             assert_eq!(module.signatures[*type_index as usize], signature);
         }
@@ -431,8 +433,9 @@ fn memory_abi_import_offsets_six_unique_helpers_and_bytes_are_stable_at_all_leve
         assert!(module.calls[4].contains(&14));
         assert!(module.calls[5].contains(&2));
         assert!(module.calls[5].contains(&9));
-        for left in 6..12 {
-            for right in left + 1..12 {
+        assert_eq!(module.calls[12], vec![11, 11]);
+        for left in 6..13 {
+            for right in left + 1..13 {
                 assert_ne!(module.bodies[left], module.bodies[right]);
             }
         }
@@ -456,7 +459,7 @@ fn memory_is_needed_by_signatures_locals_and_unreachable_literals() {
     ] {
         let module = decode(&compile_source(source));
         assert_eq!(module.memories.len(), 1, "{source}");
-        assert_eq!(module.functions.len(), 7, "{source}");
+        assert_eq!(module.functions.len(), 8, "{source}");
         assert!(
             module
                 .exports
@@ -472,7 +475,7 @@ fn memory_is_needed_by_signatures_locals_and_unreachable_literals() {
             })
             .unwrap(),
         );
-        assert_eq!(module.functions.len(), 6);
+        assert_eq!(module.functions.len(), 7);
         assert_eq!(module.exports.len(), 2);
         assert!(
             module

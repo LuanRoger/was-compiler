@@ -523,7 +523,12 @@ impl SemanticAnalyzer {
             BinaryOp::Equal | BinaryOp::NotEqual => {
                 let operator = if *op == BinaryOp::Equal { "==" } else { "!=" };
 
-                if left == right && matches!(left, Type::Number | Type::Bool | Type::String) {
+                if left == right
+                    && matches!(
+                        left,
+                        Type::Number | Type::Bool | Type::String | Type::NumberArray
+                    )
+                {
                     return Ok(Type::Bool);
                 }
 

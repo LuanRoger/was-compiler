@@ -278,6 +278,81 @@ fn nested_string_comparisons_and_boolean_operators_preserve_operand_types() {
 }
 
 #[test]
+fn array_equality_preserves_array_operands_and_bool_results_at_every_node() {
+    let source = "fn identity(values: number[]) -> number[] { return values; }
+        fn test(left: number[], right: number[]) -> bool {
+            let same: bool = [1, 2, 3] == [1, 2, 3];
+            let shorter: bool = [1, 2, 3] != [1, 2];
+            return same && !(identity(left) != right) || ([] == []);
+        }";
+    let ast = parse(source);
+    let typed = analyze(source);
+    let body = &typed.functions[1].body;
+    let array = |values: &[&str]| {
+        expr(
+            ExprKind::Array(values.iter().map(|value| number(value)).collect()),
+            Type::NumberArray,
+        )
+    };
+
+    assert_let(
+        &body[0],
+        2,
+        "same",
+        Type::Bool,
+        binary(
+            array(&["1", "2", "3"]),
+            BinaryOp::Equal,
+            array(&["1", "2", "3"]),
+            Type::Bool,
+        ),
+    );
+    assert_let(
+        &body[1],
+        3,
+        "shorter",
+        Type::Bool,
+        binary(
+            array(&["1", "2", "3"]),
+            BinaryOp::NotEqual,
+            array(&["1", "2"]),
+            Type::Bool,
+        ),
+    );
+    assert_eq!(
+        returned(&body[2]),
+        &binary(
+            binary(
+                identifier(2, "same", Type::Bool),
+                BinaryOp::And,
+                unary(
+                    UnaryOp::Not,
+                    binary(
+                        call(
+                            FunctionRef::User(FunctionId(0)),
+                            "identity",
+                            vec![identifier(0, "left", Type::NumberArray)],
+                            Type::NumberArray,
+                        ),
+                        BinaryOp::NotEqual,
+                        identifier(1, "right", Type::NumberArray),
+                        Type::Bool,
+                    ),
+                    Type::Bool,
+                ),
+                Type::Bool,
+            ),
+            BinaryOp::Or,
+            binary(array(&[]), BinaryOp::Equal, array(&[]), Type::Bool),
+            Type::Bool,
+        )
+    );
+    for (original, lowered) in ast.functions.iter().zip(&typed.functions) {
+        assert_block_spans(&original.body, &lowered.body);
+    }
+}
+
+#[test]
 fn builtin_len_is_resolved_separately_and_empty_arrays_are_typed() {
     let typed = analyze(
         "fn arrays(values: number[]) -> number[] { len([]); return values; }

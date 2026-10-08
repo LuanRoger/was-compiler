@@ -662,7 +662,11 @@ fn binary_operators_accept_only_their_supported_operand_pairs() {
                 let valid = match operator {
                     "&&" | "||" => *left == Type::Bool && *right == Type::Bool,
                     "==" | "!=" => {
-                        left == right && matches!(left, Type::Number | Type::Bool | Type::String)
+                        left == right
+                            && matches!(
+                                left,
+                                Type::Number | Type::Bool | Type::String | Type::NumberArray
+                            )
                     }
                     _ => *left == Type::Number && *right == Type::Number,
                 };
@@ -708,8 +712,58 @@ fn binary_results_have_the_expected_types() {
         "true != false",
         "\"a\" == \"b\"",
         "\"a\" != \"b\"",
+        "[1, 2, 3] == [1, 2, 3]",
+        "[1, 2, 3] != [1, 2]",
+        "[] == []",
+        "[] != [1]",
     ] {
         assert_valid(&format!("fn test() -> bool {{ return {expression}; }}"));
+    }
+}
+
+#[test]
+fn array_equality_accepts_parameters_returns_and_boolean_contexts() {
+    assert_valid(
+        "fn identity(values: number[]) -> number[] { return values; }
+        fn test(left: number[], right: number[]) -> bool {
+            let same: bool = identity(left) == right;
+            let different: bool = left != identity(right);
+            if [1, 2, 3] == [1, 2, 3] && !different { return same; }
+            while [] != [] { return false; }
+            return same || different;
+        }",
+    );
+
+    for operator in ["==", "!="] {
+        let statement = format!("let result: number = [1] {operator} [1];");
+        assert_body_mismatch(&statement, &statement, Type::Number, Type::Bool);
+    }
+}
+
+#[test]
+fn array_equality_errors_are_checked_in_unreachable_and_skipped_expressions() {
+    for expression in ["[] == 1", "true != []", "[] < []"] {
+        for statement in [
+            format!("{expression};"),
+            format!("false && ({expression});"),
+            format!("true || ({expression});"),
+        ] {
+            let source = format!("fn test() -> void {{ return; {statement} }}");
+            let (operator, left, right) = match expression {
+                "[] == 1" => ("==", Type::NumberArray, Type::Number),
+                "true != []" => ("!=", Type::Bool, Type::NumberArray),
+                _ => ("<", Type::NumberArray, Type::NumberArray),
+            };
+            assert_error(
+                &source,
+                SemanticError::InvalidBinaryOperands {
+                    operator,
+                    left,
+                    right,
+                    span: span(&source, &statement),
+                },
+            );
+        }
     }
 }
 

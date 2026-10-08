@@ -82,7 +82,10 @@ pub(super) fn emit(
                 BinaryOp::Equal | BinaryOp::NotEqual => {
                     expect_type(function, Type::Bool, expr.ty, span)?;
 
-                    if !matches!(left.ty, Type::Number | Type::Bool | Type::String) {
+                    if !matches!(
+                        left.ty,
+                        Type::Number | Type::Bool | Type::String | Type::NumberArray
+                    ) {
                         expect_type(function, Type::Number, left.ty, span)?;
                     }
 
@@ -120,11 +123,17 @@ pub(super) fn emit(
                 return Ok(());
             }
 
-            if operand_type == Type::String {
+            if matches!(operand_type, Type::String | Type::NumberArray) {
+                let helper = if operand_type == Type::String {
+                    Helper::StringEqual
+                } else {
+                    Helper::ArrayEqual
+                };
+
                 emit(left, body, context, span)?;
                 emit(right, body, context, span)?;
 
-                body.instruction(&Instruction::Call(context.helper(Helper::StringEqual)));
+                body.instruction(&Instruction::Call(context.helper(helper)));
 
                 if *op == BinaryOp::NotEqual {
                     body.instruction(&Instruction::I32Eqz);
