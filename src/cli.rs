@@ -16,7 +16,7 @@ use was_compiler::{
     CompileError, Compiler, CompilerOptions, ExportOptions, OptimizationLevel, Type,
 };
 
-use crate::diagnostic;
+use was_compiler::diagnostic;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum Format {

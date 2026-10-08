@@ -1,4 +1,4 @@
-use was_compiler::{
+use crate::{
     CodegenError, CompileError, parser::ParseError, semantic::SemanticError, tokens::Span,
 };
 
@@ -107,7 +107,7 @@ fn codegen_span(error: &CodegenError) -> Option<Span> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use was_compiler::Compiler;
+    use crate::Compiler;
 
     #[test]
     fn compiler_stages_have_locations_and_source_excerpts() {

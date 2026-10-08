@@ -36,11 +36,14 @@ The compiler emits bytes. The embedding application decides whether to write a
 
 | File | Responsibility |
 | --- | --- |
-| `src/lib.rs` | Public Rust library entry point; the binary uses the same pipeline. |
+| `src/lib.rs` | Public Rust library entry point; native CLI and browser adapter use the same pipeline. |
+| `browser/src/lib.rs` | Dedicated compiler-in-Wasm adapter exposing source compilation and configuration through `wasm-bindgen`. |
+| `examples/browser/` | Browser editor, Worker-based compilation/execution, WAT display, and raw Wasm downloads. |
+| `tests/browser.rs`, `tests/browser.cjs` | Execute the built browser compiler package and instantiate its emitted modules. |
 | `src/compiler.rs` | Compiler options, host/export configuration, and pipeline orchestration; stage-specific errors. |
 | `src/exports.rs` | User-export policy (`All`, `None`, or explicit source names), separate from optimization presets. |
 | `src/cli.rs` | Parse arguments, load a required source file, register hosts, and publish plain WAT/raw binary Wasm. |
-| `src/diagnostic.rs` | Render source locations/excerpts and stage errors without changing core error types. |
+| `src/diagnostic.rs` | Shared library renderer for CLI/browser source locations/excerpts and stage errors without changing core error types. |
 | `runtime/index.cjs`, `runtime/abi.cjs`, `runtime/run.cjs` | Instantiate raw binaries, offer explicit ABI conversions, and expose a raw-call Node runner. |
 | `tests/cli.rs`, `tests/runtime.rs` | Exercise source-file/raw-binary/provider integration separately from backend tests. |
 | `src/optimization.rs` | O0–O3 level configuration and a typed-AST optimization boundary; no passes implemented yet. |

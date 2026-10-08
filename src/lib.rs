@@ -1,6 +1,8 @@
 pub mod ast;
+
 pub mod codegen;
 pub mod compiler;
+pub mod diagnostic;
 pub mod exports;
 pub mod host;
 pub mod lexer;

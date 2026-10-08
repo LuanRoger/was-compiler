@@ -25,6 +25,32 @@ The Node harness uses built-in modules only and requires no npm installation.
 - [Refactoring plan](docs/refactoring.md): prioritized maintainability work,
   explicitly excluding optimization work.
 
+## Compile in the browser
+
+The dedicated `browser/` workspace crate (`was-compiler-browser`) builds the
+compiler library as WebAssembly. Compile and execute source locally in the
+dependency-free [browser playground](examples/browser/index.html):
+
+```text
+rustup target add wasm32-unknown-unknown
+wasm-pack build browser --target web --out-dir ../pkg --out-name was_compiler --offline --no-opt
+```
+
+Run the command from the project root; `../pkg` is relative to the `browser/`
+crate, and `--out-name was_compiler` preserves the demo's generated module paths.
+There is no root `browser` feature; the native root crate remains the default
+workspace member. Install `wasm-pack` if needed (`cargo install wasm-pack --locked`).
+The build uses release mode by default; offline builds require cached dependencies
+and available tooling. Serve the project root over HTTP (for example,
+`python -m http.server 8000`) and open
+`http://localhost:8000/examples/browser/` rather than a `file:` URL.
+
+The demo compiles and runs in a terminable worker, displays diagnostics and plain
+WAT, and downloads raw Wasm. See the [browser guide](docs/browser.md) for the
+JavaScript `Compiler` API, host imports, configuration, memory boundaries, and
+MIME/CSP requirements. Browser use does not depend on `runtime/*.cjs` and does not
+support `cwasm` artifacts.
+
 ## Current compilation support
 
 The compiler emits valid modules containing registered function imports,
@@ -195,7 +221,9 @@ future transformations can return an owned typed AST. Calling the lower-level
 
 Run `cargo run --offline -- examples/array-sum.was` to print plain WAT with
 `wasmprinter`.
-Run tests with `cargo test --offline`. Optional runtime tests require Node.js:
+Run tests with `cargo test --offline`. The full suite includes optional Node.js
+runtime tests and compiler-in-Wasm tests; build `pkg/` with the browser command
+above and use Node.js 24+ before including ignored tests:
 
 ```text
 cargo test --offline -- --include-ignored

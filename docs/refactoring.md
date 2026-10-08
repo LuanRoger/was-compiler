@@ -220,8 +220,8 @@ emission. A discovered crash fix should be isolated from the API restructuring.
 
 `Span` in [tokens.rs](../src/tokens.rs) stores byte offsets. Parser, semantic, and
 code-generation errors carry locations in different variants; `CompileError`
-wraps stage errors. [diagnostic.rs](../src/diagnostic.rs) already separates CLI
-presentation and implements source excerpts, UTF-8-safe clamping, CRLF/tab
+wraps stage errors. The shared library module [diagnostic.rs](../src/diagnostic.rs)
+serves CLI and browser presentation with source excerpts, UTF-8-safe clamping, CRLF/tab
 handling, and safe EOF/malformed-span rendering. It currently extracts locations
 through its own `parse_span`, `semantic_span`, and `codegen_span` matches; the
 code-generation fallback maps other variants to `None`.
@@ -250,8 +250,10 @@ errors/recovery and Wasm debug/source-map sections are also separate features.
 The split is already implemented: [main.rs](../src/main.rs) is a thin entrypoint;
 [cli.rs](../src/cli.rs) owns parsing, host declarations, source loading, compiler
 orchestration, format selection, and output writes;
-[diagnostic.rs](../src/diagnostic.rs) owns error
-presentation. [compiler.rs](../src/compiler.rs) remains the library pipeline,
+[diagnostic.rs](../src/diagnostic.rs) owns shared CLI/browser error presentation.
+[browser/src/lib.rs](../browser/src/lib.rs) exposes the pipeline through
+`wasm-bindgen` without filesystem or CLI dependencies.
+[compiler.rs](../src/compiler.rs) remains the library pipeline,
 and [codegen/mod.rs](../src/codegen/mod.rs) emits raw bytes. Preserve this split
 rather than recommending another extraction of these modules.
 
