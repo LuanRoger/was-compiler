@@ -51,7 +51,7 @@ form.addEventListener("submit", (event) => {
     stop.disabled = false;
 
     try {
-        const current = new Worker(new URL("./worker.js", import.meta.url), { type: "module" });
+      const current = new Worker(new URL("./worker.js", import.meta.url), { type: "module" });
         worker = current;
 
         current.addEventListener("message", ({ data }) => {

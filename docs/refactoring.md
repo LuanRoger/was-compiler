@@ -54,7 +54,7 @@ new acceptance criteria instead of calling it a refactor.
 
 | Order | Opportunity | Evidence / starting point | Incremental acceptance gate |
 | --- | --- | --- | --- |
-| 1 — high | Split large backend tests; align subprocess support with the existing bounded harness | [tests.rs](../src/codegen/tests.rs), [memory_tests.rs](../src/codegen/memory_tests.rs), [tests/cli.rs](../tests/cli.rs), [tests/runtime.rs](../tests/runtime.rs) | Same coverage and ignored-runtime policy; bounded child cleanup and useful stdout/stderr. |
+| 1 — high, implemented | Split large backend tests; share bounded subprocess support | [scalar tests](../src/codegen/tests/), [memory tests](../src/codegen/memory_tests/), [process harness](../tests/support/process.rs), [harness tests](../tests/process.rs) | Existing assertions and ignored-runtime policy preserved; bounded child cleanup and useful stdout/stderr. |
 | 2 — high | Name ABI constants and strengthen cross-language layout fixtures | [abi.rs](../src/codegen/abi.rs), [memory.rs](../src/codegen/memory.rs), [values.rs](../src/codegen/values.rs), [runtime/abi.cjs](../runtime/abi.cjs) | Binary/layout fixtures unchanged; independent raw-ABI and explicit-conversion roundtrips agree. |
 | 3 — medium | Add a small function-body emission facade and index/label types | [function.rs](../src/codegen/function.rs), [expression.rs](../src/codegen/expression.rs), [control_flow.rs](../src/codegen/control_flow.rs), [layout.rs](../src/codegen/layout.rs) | Exact instruction/index output plus nested control-flow/live-stack tests unchanged. |
 | 4 — medium | Share structural typed-AST walking for planning | [memory.rs](../src/codegen/memory.rs), [locals.rs](../src/codegen/locals.rs), [temporaries.rs](../src/codegen/temporaries.rs) | Same preorder, static handles, declaration order, temporary count, and planning error order. |
@@ -64,37 +64,42 @@ new acceptance criteria instead of calling it a refactor.
 All starting points are present. Prefer small reviewable changes that preserve
 existing characterization tests and add focused coverage before each move.
 
-## 1. Smaller test modules and one subprocess harness
+## 1. Smaller test modules and one subprocess harness: implemented
 
-[tests.rs](../src/codegen/tests.rs) combines section decoding, typed-tree builders,
-layout/lowering diagnostics, scalar operations, calls, control flow, and Node
-execution in one large module. [memory_tests.rs](../src/codegen/memory_tests.rs)
-contains another decoder, typed-tree helpers, and a JavaScript ABI prelude.
-Both spawn Node and stream Wasm through stdin; the memory harness has a 15-second
-poll/kill deadline, while the scalar harness waits without a deadline.
+[tests.rs](../src/codegen/tests.rs) now owns shared private scalar decoding and
+typed-tree helpers, with 93 existing tests split into responsibility modules in
+[tests/](../src/codegen/tests/): layout, expressions, locals, calls, control flow,
+malformed trees, and runtime execution. [memory_tests.rs](../src/codegen/memory_tests.rs)
+keeps its specialized decoder and builders; its 21 tests live in
+[memory_tests/](../src/codegen/memory_tests/) layout, validation, and runtime modules.
+The memory runtime module owns its JavaScript ABI prelude. Existing test function
+names, assertions, scripts, and ignore attributes are preserved; fully qualified
+Rust test paths now include the responsibility module.
 
-Move tests by responsibility without rewriting assertions: module layout/ABI,
-numeric/boolean expressions, locals/calls, control flow, memory, and runtime
-behavior. Keep forged typed-AST cases clearly separated from valid-source cases.
-Extract only genuinely common builders/section-reading helpers into private test
-support; do not force specialized instruction decoders into a generic framework.
+[tests/support/process.rs](../tests/support/process.rs) extracts the existing CLI
+subprocess lifecycle into one private test-only implementation, included by the
+library test build and integration test targets. Scalar, memory, export, numeric
+helper, CLI, runtime, browser, array-equality, and remainder tests all use it.
+Specialized builders, decoders, JavaScript scripts, and success/error assertions
+remain local rather than becoming a generic test framework.
 
-[tests/cli.rs](../tests/cli.rs) already has a bounded `process_output` helper with
-concurrent stdout/stderr draining, stdin writing, and guarded child cleanup.
-[tests/runtime.rs](../tests/runtime.rs) has a separate Node subprocess helper.
-Use the existing integration harness as the reference for consistent lifecycle
-policy instead of inventing another harness. Adopt bounded cleanup in scalar
-backend tests and share only genuinely reusable mechanics where Rust test-target
-boundaries permit it. Keep specialized scripts and assertions independent.
-A deadline protects the test process, not generated guest semantics. Preserve
-`#[ignore = "requires Node.js"]` and inclusion of every existing runtime case.
+The harness drains stdout and stderr concurrently while writing optional stdin,
+closes ordinary stdin after writing, and retains the CLI's explicit held-open
+stdin mode. It polls a deadline, kills and reaps a timed-out direct child, and
+uses a guard for cleanup on unwinding. Early child exits tolerate broken pipes
+without hiding exit status; timeout diagnostics include the command, deadline,
+and both captured output streams. CLI/runtime/export/memory/scalar/numeric-helper
+cases use 15-second deadlines; browser/array-equality/remainder cases retain their
+30-second deadlines. These are test-process deadlines, not guest execution fuel
+or compiler resource limits; the harness does not manage descendant process trees.
 
-[export_tests.rs](../src/codegen/export_tests.rs) adds selection-focused section
-decoding and runtime cases; include it when identifying common test support.
-Keep end-to-end CLI/provider tests separate from raw backend tests: the former
-exercise argument/file/provider integration; the latter independently instantiate
-raw library output. Split large modules by topic
-only when their helpers remain easy to locate, not into a general test framework.
+[tests/process.rs](../tests/process.rs) exercises pipe-pressure handling, stdin EOF,
+held-open stdin, nonzero exits, early exits during a large write, timeout output,
+blocked-writer cleanup, and spawn diagnostics using the Rust test executable as
+its own child fixture. These tests require no Node installation. Existing Node
+ignore attributes and every end-to-end CLI/provider and raw-backend case remain.
+No compiler semantics, public APIs, generated bytes, or optimization behavior
+change as part of this refactor.
 
 ## 2. ABI constants and layout ownership
 

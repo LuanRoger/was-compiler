@@ -7,7 +7,8 @@ promises**. Maintainability work is covered separately in
 
 ## Status and scope
 
-M7 CLI/runtime integration is implemented. Current behavior below is grounded in
+M0–M9, including CLI/runtime integration, numeric-array equality, and floating-point
+remainder, are implemented. Current behavior below is grounded in
 the frontend/backend, [CLI](../src/cli.rs), [diagnostics](../src/diagnostic.rs),
 [export policy](../src/exports.rs), [Node runtime](../runtime/index.cjs), and their
 unit/integration tests. See
@@ -37,15 +38,17 @@ Evidence: [lexer.rs](../src/lexer.rs), [parser.rs](../src/parser.rs),
 ## Numbers, strings, arrays, and failures
 
 Evidence: [expression.rs](../src/codegen/expression.rs),
-[values.rs](../src/codegen/values.rs), [memory.rs](../src/codegen/memory.rs), and
-[memory tests](../src/codegen/memory_tests.rs).
+[values.rs](../src/codegen/values.rs), [memory.rs](../src/codegen/memory.rs),
+[numeric.rs](../src/codegen/numeric.rs), [remainder tests](../tests/remainder.rs),
+and [memory tests](../src/codegen/memory_tests.rs).
 
 | Restriction now | Practical effect | Current alternative | Possible future choice and tradeoff |
 | --- | --- | --- | --- |
 | All numbers and numeric-array elements use IEEE-754 `f64`. | Decimal fractions can round; integers outside the safe range `-(2^53 - 1)` through `2^53 - 1` are not reliably distinguishable. Finite literals can underflow to zero; overflowing literals are rejected. Arithmetic/host values can still produce NaN, infinities, and signed zero. Division by zero is floating-point behavior, not an integer-style exception. | Use tolerance-based comparisons where appropriate and validate application ranges at boundaries. Keep exact large integers/decimals in the host, e.g. as strings with host operations; merely using a JavaScript number does not add precision. | Separate integer/decimal types or a host-backed exact-number representation would require overflow, conversion, representation, and ABI policies. |
-| `%` is parsed and typed, but code generation returns an unsupported-operator error. WebAssembly has no `f64.rem`. | A type-correct expression containing `%` still cannot compile, including after a return or in a runtime-skipped branch. | Register and call a synchronous host remainder function with two `number` parameters and a `number` result. Agree on its semantics; see below. | A correct guest runtime helper could implement a chosen floating remainder contract. Correctness across special values and extreme magnitudes is additional feature work, not a simple opcode substitution. |
+| `number % number` implements truncating floating remainder (JavaScript `%`/`fmod`), not mathematical modulo or nearest-quotient IEEE remainder. WebAssembly has no `f64.rem`; an optional guest helper implements it. | Operands execute once, left-to-right. For finite operands and a nonzero divisor, the result has the dividend's sign, including signed zero, and magnitude below the divisor's magnitude. A NaN operand, infinite dividend, or zero divisor yields NaN; a finite dividend with an infinite divisor is unchanged. | Use source `%` directly with no implicit host import or memory runtime. An explicitly registered synchronous host function is still an option for a different numeric contract, not a required workaround. | Mathematical modulo or nearest-quotient remainder would need separately specified semantics; they must not silently replace `%`. |
 | Strings are immutable UTF-8 values with literals, parameter/local/return use, and byte-content `==`/`!=`. No escape processing, concatenation, indexing, string `len`, normalization, or case folding. | Backslash sequences such as `\n` remain literal characters; a quote ends the literal. Visually identical differently normalized Unicode strings can compare unequal. | Use actual Unicode characters where possible and host functions for quoted/control-character construction, concatenation, text length, and normalization. Construct host results according to the memory ABI. | Add selected operations only after defining byte, code-point, or grapheme semantics. Escape parsing is a lexical feature; normalization changes equality expectations and may require additional runtime support. |
-| Arrays contain only numbers, have fixed lengths, and are mutable references. No resize/push operations or array equality operator. Assignment/arguments/returns copy handles, not elements. | Two guest variables can alias the same storage. Every evaluated array literal allocates new storage, even in loops and recursive calls. | Pass an existing array explicitly when sharing is intended. For an independent or resized result, a trusted host can create a new descriptor/payload; compare elements with a loop when content equality is needed. | Dynamic arrays require a capacity/growth/aliasing policy; generalized element types require new layouts and type rules. Neither is implied by the current descriptor ABI. |
+| Arrays contain only numbers, have fixed lengths, and are mutable references. No resize/push operations. Assignment/arguments/returns copy handles, not elements; `==`/`!=` compare contents. | Two guest variables can alias the same storage. Every evaluated array literal allocates new storage, even in loops and recursive calls. | Pass an existing array explicitly when sharing is intended. For an independent or resized result, a trusted host can create a new descriptor/payload. | Dynamic arrays require a capacity/growth/aliasing policy; generalized element types require new layouts and type rules. Neither is implied by the current descriptor ABI. |
+| Numeric-array equality requires equal lengths and exact elementwise `f64` equality, not identity, byte equality, or a tolerance. `!=` is its complement. | Signed zeros compare equal; any compared NaN makes equality false, even for an array compared to itself. Comparisons read current contents after both operands are evaluated once, left-to-right, so RHS mutations are visible. Matching-length comparison takes O(n) time and O(1) auxiliary space; both descriptors are validated before early exits. | Use `==`/`!=` for exact content comparisons. Implement an explicit loop or host function for tolerance-based comparisons and a chosen NaN policy. | Approximate equality or other element types require explicit semantics. A pointer shortcut is invalid with NaN and must not be introduced as a behavior-preserving refactor. |
 | Array indices must be finite, integral, nonnegative, and less than `len(array)`. Negative zero selects element zero. | Fractions, NaN, infinities, negative values, and out-of-range accesses trap instead of being rounded/truncated. Indexed assignment checks its target/bounds before evaluating the RHS. | Produce indices with bounded integral counters. Use explicit checks or host validation for externally supplied indices; do not rely on an implicit cast. | A checked-result API or language exceptions could make failures recoverable, but would change signatures/control flow and need a structured error contract. |
 | Allocation is a growable, eight-byte-aligned bump allocator. No free, garbage collection, or reference counting. Values live until the instance is discarded. | Repeated allocation consumes memory even when values are no longer reachable. Memory grows in 65,536-byte pages to a hard maximum of 65,535 pages, subject to tighter engine limits; overflow or failed growth traps. | Bound work/allocation in the embedding and discard/recreate an instance between independent jobs. Handles cannot survive that reset or cross instances. Do not manually reset the heap while live handles may exist. | Explicit arenas with a lifetime contract, ownership/freeing, or tracing GC offer different application models. Each needs alias/liveness rules; choosing one is runtime feature work. |
 | No compiler-configurable memory quota, execution fuel, or recursion limit. Guest loops and recursive calls execute synchronously. | Nontermination and stack/resource exhaustion depend on the engine and embedding. A same-thread JavaScript timer cannot interrupt a running synchronous Wasm call. | Use an engine with resource controls or run work in a terminable worker/process. Bound normal input sizes and recursion explicitly; limits in test harnesses are not guest execution controls. | Add runtime quotas or a cancellation/fuel contract if required. Instrumented checks change generated behavior/output and must be scoped as a separate feature. |
@@ -53,16 +56,26 @@ Evidence: [expression.rs](../src/codegen/expression.rs),
 
 ### Floating remainder is not a naive arithmetic rewrite
 
-A host function should document whether it provides truncating remainder (as with
-JavaScript `%` or `fmod`) or another operation such as nearest-quotient IEEE
-remainder; those are not interchangeable. Test negative operands, zero divisors,
-NaN, infinities, large ratios, and signed zero.
+Source `%` now implements truncating remainder directly. The optional guest
+`(f64, f64) -> f64` helper is appended after users and any seven memory helpers
+only when `%` occurs anywhere in the typed AST, including unexported bodies,
+unreachable statements, and runtime-skipped operands. It adds no implicit host
+import and requires no Memory/Global/Data sections. Output without `%` is unchanged.
+
+After special-value handling, the helper doubles the absolute divisor until the
+next double would exceed the absolute dividend, then halves back to the original
+divisor while conditionally subtracting each scale. Scaling is exact relative to
+the original divisor, including subnormals; each subtraction is exact by Sterbenz's
+lemma because `scaled <= r < 2 * scaled`. It uses constant auxiliary space with at
+most 2,097 doublings and 2,098 reduction iterations, forms no overflowing quotient,
+and performs no integer casts. This is arithmetic lowering, not an optimization.
 
 Do **not** substitute `a - trunc(a / b) * b` as a generally correct floating
 remainder implementation. Division overflow, intermediate rounding, special
-values, and the sign of a zero result can all make that formula wrong. The
-language also has no built-in `trunc`; host remainder is the current supported
-escape hatch, not an implementation of the source `%` operator.
+values, and the sign of a zero result can all make that formula wrong. A registered
+host function remains an explicit option for another contract, such as
+nearest-quotient IEEE remainder; document and test its semantics rather than
+treating it as interchangeable with source `%`.
 
 ## Host trust and the raw ABI
 
@@ -183,6 +196,10 @@ The [memory tests](../src/codegen/memory_tests.rs) cover aliasing, UTF-8 payload
 invalid indices/descriptors, allocator growth, and trusted raw-host mutation.
 [Export tests](../src/codegen/export_tests.rs) characterize selection, unchanged
 non-export sections/indices, required memory exports, and validation of hidden bodies.
+[Remainder tests](../tests/remainder.rs) cover optional helper layout, result
+types/spans, exact binary64 edge cases against an independent reference, and
+once-only left-to-right operand effects. The compiler-in-Wasm path uses the same
+pipeline; [browser tests](../tests/browser.rs) execute emitted guest modules.
 
 [CLI integration tests](../tests/cli.rs) cover required source files, format
 inference, raw binary output, exports/imports, exit codes, diagnostics, output

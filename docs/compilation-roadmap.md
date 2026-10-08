@@ -62,7 +62,10 @@ The compiler emits bytes. The embedding application decides whether to write a
 | `src/codegen/expression.rs` | Emit scalar literals, variable reads, arithmetic/comparisons, short-circuit boolean operators, and user/host calls. |
 | `src/codegen/statement.rs` | Emit blocks, scalar declarations/assignments, expression cleanup, returns, and delegate control flow. |
 | `src/codegen/values.rs` | Emit fresh array construction, checked element addressing, and variable/element assignments. |
-| `src/codegen/memory.rs` | Plan static strings and emit allocation, descriptor validation, checked array addressing/length, and string equality helpers. |
+| `src/codegen/memory.rs` | Plan static strings and emit allocation, descriptor validation, checked array addressing/length, and string/numeric-array equality helpers. |
+| `src/codegen/numeric.rs` | Detect remainder throughout the typed AST and emit the optional memory-independent `(f64, f64) -> f64` guest remainder helper. |
+| `tests/remainder.rs` | Validate remainder lowering, optional helper layout, result types/spans, exact binary64 edge cases, and operand effects against an independent reference. |
+| `tests/array_equality.rs` | Validate array comparison lowering and execute IEEE-754, aliasing, evaluation-order, and descriptor-safety cases. |
 | `src/codegen/memory_tests.rs` | Validate memory ABI/layout and execute memory-backed guest/host scenarios. |
 
 These are concrete modules with narrow responsibilities, not a generic plugin or
@@ -91,10 +94,17 @@ they explicitly update the corresponding metadata and references.
   Wasm function indices.
 - `FunctionId` remains the source-order index in `TypedProgram.functions`.
   Its Wasm function index is `host_function_count + FunctionId.0`.
-- Memory-using modules append six runtime helpers after all user functions.
+- Memory-using modules append seven runtime helpers after all user functions.
   Existing host/user IDs and index offsets are unchanged. The allocator is exported
   as `__alloc`; linear memory is exported as `memory`. User functions with these names
   cannot be selected as exports in memory-backed modules; unexported names are legal.
+- If `%` occurs anywhere in the typed AST, append one internal `(f64, f64) -> f64`
+  remainder helper after all user functions and, when present, the seven memory
+  helpers. Scan unexported bodies, unreachable statements, and runtime-skipped
+  operands too; export selection is not dead-code elimination. This helper adds
+  no implicit host import and requires no Memory, Global, or Data sections.
+  Existing host/user/memory-helper indices remain unchanged, and programs without
+  `%` retain byte-for-byte output.
 - Type indices are separate from function indices. Identical signatures share
   one Type-section entry, including signatures shared by hosts and users.
 - `VariableId` is function-local. The local layout places parameters first, then
@@ -221,7 +231,7 @@ symbol tables.
 - Run optional Node.js execution tests with
   `cargo test --offline codegen::tests::node_executes -- --include-ignored`.
 
-### M2 — Numeric arithmetic: implemented; remainder checkpoint pending
+### M2 — Numeric arithmetic: implemented; remainder checkpoint complete
 
 - Emit operands left-to-right, followed by `F64Add`, `F64Sub`, `F64Mul`, or
   `F64Div`; emit unary negation with `F64Neg`.
@@ -236,11 +246,11 @@ symbol tables.
 - Every optimization level still emits the same expression instructions without
   constant folding. Malformed typed-AST operands and unsupported operators retain
   enclosing statement spans in their errors.
-- **Separate remainder checkpoint:** Wasm has no `f64.rem`. Specify truncating
-  floating remainder semantics, then implement a tested helper/lowering for `%`.
-  Do not replace it with integer remainder or a naive arithmetic formula that
-  mishandles NaN, infinities, division by zero, or signed zero. Until ready, reject
-  `%` explicitly without blocking the other arithmetic operators.
+- **Separate remainder checkpoint (M9): complete.** Wasm has no `f64.rem`;
+  `%` now lowers to an optional guest helper implementing truncating floating
+  remainder. It preserves operand order, special values, and signed zero without
+  integer remainder or a naive quotient-based rewrite. See M9 for the algorithm
+  and acceptance criteria.
 
 ### M3 — Variables, parameters, assignments, and stack discipline: implemented
 
@@ -347,9 +357,78 @@ symbol tables.
 - Keep optimization and import elimination separate from export visibility and
   correct lowering. No optimization transformations were added.
 
+### M8 — Numeric-array content equality: implemented
+
+- Allow `number[] == number[]` and `number[] != number[]`, producing a `bool`.
+  Compare lengths first, then corresponding elements in order. Equality means
+  equal contents, not identical descriptor handles; two empty arrays are equal.
+- Use exact IEEE-754 numeric equality for elements: `+0` equals `-0`, matching
+  infinities compare equal, and any compared NaN makes equality false. Even an
+  array compared to itself is unequal if it contains NaN. `!=` is the complement
+  of `==`; it is not a separate comparison policy.
+- Evaluate each operand exactly once, left-to-right, before comparing current
+  contents. A right-hand host call may mutate the left array; comparisons observe
+  that mutation, not an earlier snapshot. Preserve array reference assignment and
+  mutable alias semantics; comparison does not allocate, copy, or mutate arrays.
+- Append a checked `(i32, i32) -> i32` array-equality helper after the existing
+  memory helpers. Validate both full descriptors before length-based or element
+  early exits, including same-handle and empty comparisons. Read elements using
+  aligned `f64.load` and compare with `f64.ne`; return canonical `0` or `1`.
+- Preserve the descriptor ABI, existing host/user/helper indices, and byte-for-byte
+  scalar-only output. Reject mixed operand types and array ordering/arithmetic;
+  continue validating malformed typed ASTs, unreachable code, and skipped operands.
+- Acceptance: compile literal examples such as `[1, 2, 3] == [1, 2, 3]` (true),
+  `[1, 2, 3] == [1, 2]` (false), and their `!=` counterparts. Validate modules,
+  decoded helper calls/instructions, and typed results/spans. Execute empty arrays,
+  prefixes, differing elements/order, aliases and mutation, NaN/infinities/signed
+  zero, nested host effects, memory growth, and malformed descriptor traps at
+  every optimization level, including the compiler-in-Wasm browser API.
+- Equality takes O(n) time for matching lengths in the worst case and O(1)
+  auxiliary space. Approximate/tolerance equality and generalized array element
+  types are separate language policies, not part of this milestone.
+
+### M9 — Floating-point remainder (`%`): implemented
+
+- Lower `number % number` to a `number` using truncating floating remainder,
+  matching JavaScript `%`/`fmod`, not nearest-quotient IEEE remainder or mathematical
+  modulo. Evaluate both operands exactly once, left-to-right.
+- A NaN operand, infinite dividend, or zero divisor yields NaN. A finite dividend
+  with an infinite divisor yields the dividend. For finite operands and a nonzero
+  divisor, the result has magnitude less than the divisor's magnitude and the
+  dividend's sign, including signed zero for a zero dividend or exact multiple.
+- Wasm has no `f64.rem`. `src/codegen/numeric.rs` emits an optional internal guest
+  `(f64, f64) -> f64` helper, appended after all user functions and any existing
+  seven memory helpers. Include it only if `%` occurs anywhere in the typed AST,
+  including unexported functions, unreachable statements, and runtime-skipped
+  operands. Preserve host/user/memory-helper indices and byte-for-byte output
+  for programs without `%`. No implicit host import or Memory/Global/Data sections
+  are required by remainder.
+- After handling special values, use an independent exact binary scaled-subtraction
+  algorithm: start with the absolute divisor, double it until the next double
+  would exceed the absolute dividend, then descend by halving back to the original
+  divisor, conditionally subtracting each scale from the running remainder.
+  Doubling and halving are exact relative to the original divisor, including
+  subnormals. Whenever subtraction occurs, `scaled <= r < 2 * scaled`, so Sterbenz's
+  lemma makes the subtraction exact. Restore the dividend's sign, including zero.
+- At most 2,097 doublings and 2,098 reduction iterations are needed for binary64;
+  auxiliary space is constant. No quotient is formed, so quotient overflow is
+  avoided. Do not use integer casts, integer remainder, or `a - trunc(a / b) * b`:
+  overflow and intermediate rounding make that formula incorrect for extreme
+  magnitudes, subnormals, and special values.
+- Acceptance: `tests/remainder.rs` validates modules, decoded helper calls/layout,
+  result types/spans, and absence of implicit imports or memory sections. Execute
+  positive and negative operands/divisors, fractions, exact multiples, signed zero,
+  NaN, infinities, zero divisors, subnormals, and very large magnitude ratios against
+  an independent remainder reference. Preserve nested host effects and once-only
+  left-to-right evaluation; validate malformed typed ASTs, unexported bodies,
+  unreachable code, and skipped operands at every optimization level.
+- The compiler-in-Wasm browser API uses the same compilation pipeline and guest
+  helper; exercise its emitted modules as well as native compilation. No
+  optimization transformations were added.
+
 ## Remaining work
 
-M0–M7 are implemented; this is not a claim that every language/runtime feature is
+M0–M9 are implemented; this is not a claim that every language/runtime feature is
 complete. [Limitations and alternatives](limitations.md) records unsupported
 features, ownership/resource policies, raw-call/ABI constraints, and current
 workarounds versus possible future designs. [Refactoring](refactoring.md) proposes

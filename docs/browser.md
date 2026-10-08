@@ -112,6 +112,21 @@ currently produce identical output because optimization passes are not yet
 implemented. `compileWat` runs the compilation pipeline again; asking for both
 bytes and WAT therefore compiles twice.
 
+The browser adapter uses the same compilation pipeline as the native library,
+including `number % number` with JavaScript `%`/`fmod` truncating remainder semantics.
+Operands execute exactly once, left-to-right, and the dividend's sign is preserved,
+including signed zero. A NaN operand, infinite dividend, or zero divisor yields
+NaN; a finite dividend with an infinite divisor is returned unchanged. For a
+finite dividend and finite nonzero divisor, the remainder's magnitude is less
+than the divisor's.
+The emitted guest module uses an optional `(f64, f64) -> f64` helper, not a
+JavaScript callback: `%` needs no host registration, import, or guest memory.
+The helper follows user functions and any seven memory helpers only when `%`
+occurs anywhere in the typed AST, even in unexported, unreachable, or
+runtime-skipped code. Output without `%` is unchanged. See
+[M9](compilation-roadmap.md#m9--floating-point-remainder--implemented) for the exact
+scaled-subtraction algorithm and bounds; this feature adds no optimization pass.
+
 Always release the compiler with `free()` in a `finally` block, including when
 compilation fails. `compile()` returns an owned copy, not a view into compiler
 memory, so its bytes remain valid after `free()`. The examples' extra `.slice()`

@@ -66,12 +66,20 @@ pages. Arithmetic overflow, exceeding the address limit, or failed growth traps.
 A failed allocation leaves the bump pointer unchanged. Available memory remains
 subject to the runtime's own resource limits.
 
-Memory, the heap global, six internal helper functions, and active data segments
-are omitted from scalar-only programs. Helpers follow all user functions, so host
-imports and user function IDs keep their existing indices. In memory-backed
-modules, selecting a user function named `memory` or `__alloc` as an export fails
-with an export-name collision; unexported functions may use those source names.
-User-export selection never hides the mandatory memory ABI exports.
+Memory, the heap global, seven internal memory helper functions, and active data
+segments are omitted from scalar-only programs. Memory helpers follow all user
+functions, so host imports and user function IDs keep their existing indices.
+The optional `(f64, f64) -> f64` guest remainder helper follows users and any seven
+memory helpers only if `%` occurs anywhere in the typed AST, including unexported,
+unreachable, or runtime-skipped code. It requires no implicit host import or
+Memory/Global/Data sections; scalar-only programs using `%` still omit the memory
+runtime. Programs without `%` retain byte-for-byte output and existing helper
+indices. See [M9](compilation-roadmap.md#m9--floating-point-remainder--implemented).
+
+In memory-backed modules, selecting a user function named `memory` or `__alloc`
+as an export fails with an export-name collision; unexported functions may use
+those source names. User-export selection never hides the mandatory memory ABI
+exports.
 
 JavaScript receives `i32` results as signed numbers. Use `handle >>> 0` to recover
 an unsigned memory offset. Recreate `DataView`/typed-array views after any operation
@@ -88,6 +96,22 @@ Negative zero indexes the first element. NaN, infinities, negative/fractional
 indices, and out-of-bounds accesses trap rather than being rounded or truncated.
 Indexed assignment evaluates the array and index and checks bounds before evaluating
 its RHS. Element expressions in array literals execute left-to-right.
+
+## Numeric-array equality
+
+`number[] == number[]` compares contents: lengths must match and each corresponding
+pair of elements must satisfy exact `f64` equality. `!=` negates that result.
+Two empty arrays are equal; distinct handles may have equal contents. `+0` and `-0`
+compare equal, matching infinities compare equal, and NaN compares unequal even
+when both operands reference the same array. There is no handle-identity shortcut.
+
+Both operands are evaluated once, left-to-right, before comparison. Comparisons
+read current mutable storage; if evaluating the right operand mutates the left
+array, the updated contents are compared. Both descriptors are fully validated
+before length or element early exits, so malformed descriptors trap rather than
+silently compare unequal. The helper allocates nothing and changes no memory;
+worst-case comparison is O(n) time and O(1) auxiliary space. Array assignment still
+copies a handle and aliases storage, not contents.
 
 ## Explicit marshaling and raw ABI
 
