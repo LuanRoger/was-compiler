@@ -1,6 +1,4 @@
 use std::{
-    borrow::Cow,
-    fmt::Write as _,
     fs,
     io::Read,
     path::{Path, PathBuf},
@@ -10,116 +8,17 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use was_compiler::{Compiler, ExportOptions, Type, TypedProgram};
-use wasm_encoder::{CustomSection, Module, RawSection};
+use was_compiler::{Compiler, ExportOptions, Type};
+use wasm_encoder::Module;
 use wasmparser::{Parser, Payload, Validator};
 
 const INTERFACE_SECTION: &str = "was-compiler.interface";
 const NODE_TIMEOUT: Duration = Duration::from_secs(15);
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
-fn json_string(value: &str) -> String {
-    let mut result = String::from("\"");
-    for ch in value.chars() {
-        match ch {
-            '"' => result.push_str("\\\""),
-            '\\' => result.push_str("\\\\"),
-            '\n' => result.push_str("\\n"),
-            '\r' => result.push_str("\\r"),
-            '\t' => result.push_str("\\t"),
-            ch if ch <= '\u{1f}' => write!(result, "\\u{:04x}", ch as u32).unwrap(),
-            ch => result.push(ch),
-        }
-    }
-    result.push('"');
-    result
-}
-
-fn type_name(ty: Type) -> &'static str {
-    match ty {
-        Type::Number => "number",
-        Type::Bool => "bool",
-        Type::String => "string",
-        Type::NumberArray => "number[]",
-        Type::Void => "void",
-    }
-}
-
-fn signature_json(params: impl Iterator<Item = Type>, result: Type) -> String {
-    let params = params
-        .map(|ty| json_string(type_name(ty)))
-        .collect::<Vec<_>>();
-    format!(
-        "\"params\":[{}],\"result\":{}",
-        params.join(","),
-        json_string(type_name(result))
-    )
-}
-
-fn interface_json(program: &TypedProgram, selection: &ExportOptions) -> String {
-    let exports = program
-        .functions
-        .iter()
-        .filter(|function| match selection {
-            ExportOptions::All => true,
-            ExportOptions::None => false,
-            ExportOptions::Only(names) => names.contains(&function.name),
-        })
-        .map(|function| {
-            format!(
-                "{{\"name\":{},{}}}",
-                json_string(&function.name),
-                signature_json(
-                    function.params.iter().map(|param| param.ty),
-                    function.return_type
-                )
-            )
-        })
-        .collect::<Vec<_>>();
-    let imports = program
-        .host_functions
-        .iter()
-        .map(|host| {
-            format!(
-                "{{\"name\":{},\"module\":{},\"field\":{},{}}}",
-                json_string(&host.name),
-                json_string(&host.module),
-                json_string(&host.field),
-                signature_json(host.params.iter().copied(), host.return_type)
-            )
-        })
-        .collect::<Vec<_>>();
-    format!(
-        "{{\"version\":1,\"memoryAbi\":\"descriptor-v1\",\"exports\":[{}],\"imports\":[{}]}}",
-        exports.join(","),
-        imports.join(",")
-    )
-}
-
-fn append_metadata(bytes: &[u8], metadata: &[u8]) -> Vec<u8> {
-    let mut module = Module::new();
-    for payload in Parser::new(0).parse_all(bytes) {
-        if let Some((id, range)) = payload.unwrap().as_section() {
-            let start = usize::try_from(range.start).expect("section start fits usize");
-            let end = usize::try_from(range.end).expect("section end fits usize");
-            module.section(&RawSection {
-                id,
-                data: &bytes[start..end],
-            });
-        }
-    }
-    module.section(&CustomSection {
-        name: Cow::Borrowed(INTERFACE_SECTION),
-        data: Cow::Borrowed(metadata),
-    });
-    module.finish()
-}
-
 fn compile(compiler: &Compiler, source: &str) -> Vec<u8> {
     let program = compiler.analyze(source).expect("analyze runtime source");
     let bytes = compiler.compile(&program).expect("compile runtime source");
-    let metadata = interface_json(&program, compiler.exports());
-    let bytes = append_metadata(&bytes, metadata.as_bytes());
     Validator::new()
         .validate_all(&bytes)
         .expect("valid runtime fixture");
@@ -288,7 +187,7 @@ fn runner(directory: &Path, args: &[&str]) -> Output {
 }
 
 #[test]
-fn metadata_fixtures_use_real_typed_program_fields_and_export_selection() {
+fn runtime_fixtures_have_no_interface_metadata() {
     let mut compiler = Compiler::new();
     compiler
         .register_host_function("print", "env", "log_number", vec![Type::Number], Type::Void)
@@ -296,26 +195,13 @@ fn metadata_fixtures_use_real_typed_program_fields_and_export_selection() {
     compiler.set_exports(ExportOptions::Only(vec!["main".into()]));
     let bytes = compile(
         &compiler,
-        "fn main(x: number) -> void { print(x); } fn hidden() -> string { return \"hidden\"; }",
+        r#"fn main(x: number) -> void { print(x); } fn hidden() -> string { return "hidden"; }"#,
     );
-    let sections = Parser::new(0)
-        .parse_all(&bytes)
-        .filter_map(|payload| match payload.unwrap() {
-            Payload::CustomSection(section) if section.name() == INTERFACE_SECTION => {
-                Some(section.data().to_vec())
-            }
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(sections.len(), 1);
-    assert_eq!(
-        String::from_utf8(sections[0].clone()).unwrap(),
-        "{\"version\":1,\"memoryAbi\":\"descriptor-v1\",\"exports\":[{\"name\":\"main\",\"params\":[\"number\"],\"result\":\"void\"}],\"imports\":[{\"name\":\"print\",\"module\":\"env\",\"field\":\"log_number\",\"params\":[\"number\"],\"result\":\"void\"}]}"
-    );
-    assert_eq!(
-        json_string("\"\\\n\r\t\0é"),
-        "\"\\\"\\\\\\n\\r\\t\\u0000é\""
-    );
+    for payload in Parser::new(0).parse_all(&bytes) {
+        if let Payload::CustomSection(section) = payload.unwrap() {
+            assert_ne!(section.name(), INTERFACE_SECTION);
+        }
+    }
 }
 
 #[test]
@@ -337,23 +223,16 @@ fn node_library_and_cli_invocation_arguments() {
         r#"
         const runtime = instantiate(wasm);
         assert(runtime.instance instanceof WebAssembly.Instance);
+        assert.deepEqual(Object.keys(runtime), ['instance', 'call']);
         assert.equal(runtime.call('main'), 7);
-        assert.equal(runtime.call('calculate', [21, true]), 42);
-        assert.equal(runtime.call('calculate', [Infinity, true]), Infinity);
-        assert.equal(runtime.call('calculate', [-Infinity, true]), -Infinity);
-        assert(Number.isNaN(runtime.call('calculate', [NaN, true])));
-        assert.equal(runtime.call('invert', [true]), false);
+        assert.equal(runtime.call('calculate', [21, 1]), 42);
+        assert.equal(runtime.call('calculate', [21, 0]), 21);
+        for (const value of [Infinity, -Infinity, NaN]) {
+            assert(Object.is(runtime.call('calculate', [value, 1]), value));
+        }
+        assert.equal(runtime.call('invert', [1]), 0);
         assert.equal(runtime.call('nothing'), undefined);
-        assert.equal(runtime.interface.version, 1);
-        assert.equal(runtime.interface.memoryAbi, 'descriptor-v1');
-        assert.deepEqual(runtime.interface.exports.map(e => e.name), ['main', 'calculate', 'invert', 'nothing']);
-        assert(Object.isFrozen(runtime.interface));
-        assert(Object.isFrozen(runtime.interface.exports));
-        assert(Object.isFrozen(runtime.interface.exports[1]));
-        assert(Object.isFrozen(runtime.interface.exports[1].params));
-        assert.throws(() => { runtime.interface.exports[1].params[0] = 'bool'; }, TypeError);
-        assert.throws(() => { runtime.interface.exports[1].name = 'missing'; }, TypeError);
-        assert.equal(runtime.call('calculate', [4, true]), 8);
+        fails('invocation', /numeric scalar/, () => runtime.call('calculate', [21, true]));
         require('./runtime/run.cjs');
     "#,
     );
@@ -363,22 +242,16 @@ fn node_library_and_cli_invocation_arguments() {
     assert_eq!(
         success(runner(
             &scratch.0,
-            &[
-                "program.wasm",
-                "--entry",
-                "calculate",
-                "--args",
-                "[21,true]"
-            ]
+            &["program.wasm", "--entry", "calculate", "--args", "[21,1]"]
         )),
         "42\n"
     );
     assert_eq!(
         success(runner(
             &scratch.0,
-            &["program.wasm", "--entry", "invert", "--args", "[true]"]
+            &["program.wasm", "--entry", "invert", "--args", "[1]"]
         )),
-        "false\n"
+        "0\n"
     );
     assert_eq!(
         success(runner(&scratch.0, &["program.wasm", "--entry", "nothing"])),
@@ -392,7 +265,7 @@ fn node_library_and_cli_invocation_arguments() {
 
 #[test]
 #[ignore = "requires Node.js"]
-fn node_native_imports_and_missing_providers() {
+fn node_raw_imports_and_missing_providers() {
     let mut compiler = Compiler::new();
     compiler
         .register_host_function("print", "env", "log_number", vec![Type::Number], Type::Void)
@@ -405,46 +278,44 @@ fn node_native_imports_and_missing_providers() {
         .unwrap();
     let bytes = compile(
         &compiler,
-        r#"
-        fn main(value: number) -> number {
-            print(value);
-            if ready() { return bias(value); } else { return value; }
-        }
-    "#,
+        "fn main(value: number) -> number { print(value); if ready() { return bias(value); } else { return value; } }",
     );
     script(
         &bytes,
         r#"
-        fails('instantiation', /env\.log_number \(number\)->void/, () => instantiate(wasm));
-        fails('instantiation', /noncallable.*env\.log_number/, () => instantiate(wasm, {env: {log_number: 7}}));
-        const inherited = Object.create({env: {log_number() {}}});
-        fails('instantiation', /env\.log_number/, () => instantiate(wasm, inherited));
-        fails('instantiation', /nativeImports must be an object/, () => instantiate(wasm, null));
+        fails('instantiation', /env/, () => instantiate(wasm));
+        fails('instantiation', /callable/, () => instantiate(wasm, {env: {log_number: 7}}));
+        fails('instantiation', /must be an object/, () => instantiate(wasm, null));
         const seen = [];
         const provider = {env: {
-            log_number(value) { assert.equal(typeof value, 'number'); seen.push(value); },
-            ready() { return true; },
+            log_number(value) { seen.push(value); return 99; },
+            ready() { return 1; },
             bias(value) { return value + 2; }
         }};
+        const originalInstance = WebAssembly.Instance;
+        WebAssembly.Instance = class extends originalInstance {
+            constructor(module, imports) {
+                assert.equal(imports, provider);
+                super(module, imports);
+            }
+        };
         const runtime = instantiate(wasm, provider);
+        WebAssembly.Instance = originalInstance;
         assert.equal(runtime.call('main', [40]), 42);
         assert.deepEqual(seen, [40]);
-        provider.env.ready = () => 1;
-        fails('invocation', /return value.*env\.ready.*must be bool/, () => instantiate(wasm, provider).call('main', [1]));
-        provider.env.ready = () => false;
-        provider.env.log_number = () => 99;
-        fails('invocation', /return value.*env\.log_number.*void/, () => instantiate(wasm, provider).call('main', [1]));
+        provider.env.ready = () => 0;
+        assert.equal(instantiate(wasm, provider).call('main', [40]), 40);
         provider.env.log_number = () => { throw new Error('provider exploded'); };
-        fails('invocation', /env\.log_number.*provider exploded/, () => instantiate(wasm, provider).call('main', [1]));
+        fails('invocation', /provider exploded/, () => instantiate(wasm, provider).call('main', [1]));
     "#,
     );
     let scratch = Scratch::new();
     scratch.write("program.wasm", &bytes);
-    scratch.write("provider.cjs", "module.exports = {env: {log_number(value) { if (typeof value !== 'number') throw Error('bad number'); }, ready() { return true; }, bias(value) { return value + 2; }}};");
+    scratch.write("provider.cjs", "module.exports = {env: {log_number() {}, ready() { return 1; }, bias(value) { return value + 2; }}};");
     failure(
         runner(&scratch.0, &["program.wasm", "--args", "[40]"]),
         "instantiation",
-        "env.log_number (number)->void",
+        "env",
     );
     assert_eq!(
         success(runner(
@@ -463,88 +334,44 @@ fn node_native_imports_and_missing_providers() {
     failure(
         runner(&scratch.0, &["program.wasm", "--imports", "invalid.cjs"]),
         "instantiation",
-        "env.log_number",
+        "callable",
     );
 }
 
 #[test]
 #[ignore = "requires Node.js"]
-fn node_malformed_binary_and_metadata_versions_and_schema() {
-    let compiler = Compiler::new();
-    let program = compiler
-        .analyze("fn main() -> number { return 1; }")
-        .unwrap();
-    let raw = compiler.compile(&program).unwrap();
-    let metadata = interface_json(&program, compiler.exports());
+fn node_malformed_binary_and_ignored_custom_sections() {
+    let bytes = compile(&Compiler::new(), "fn main() -> number { return 1; }");
     script(
-        &raw,
-        &format!(
-            r#"
-        const metadata = {metadata};
-        const pack = value => custom(wasm, JSON.stringify(value));
+        &bytes,
+        r#"
         fails('compilation', /compile WebAssembly/, () => instantiate(Buffer.from('not wasm')));
-        fails('metadata', /exactly one.*found 0/, () => instantiate(wasm));
-        const valid = pack(metadata);
-        assert.equal(instantiate(valid).call('main'), 1);
-        fails('metadata', /exactly one.*found 2/, () => instantiate(custom(valid, JSON.stringify(metadata))));
-        fails('metadata', /version 2.*expected version 1/, () => instantiate(pack({{...metadata, version: 2}})));
-        fails('metadata', /expected version 1/, () => instantiate(pack({{...metadata, version: '1'}})));
-        fails('metadata', /memoryAbi.*descriptor-v1/, () => instantiate(pack({{...metadata, memoryAbi: 'other'}})));
-        fails('metadata', /interface metadata.*fields/, () => instantiate(pack({{version: 1}})));
-        fails('metadata', /exports must be an array/, () => instantiate(pack({{...metadata, exports: null}})));
-        fails('metadata', /imports must be an array/, () => instantiate(pack({{...metadata, imports: {{}}}})));
-        fails('metadata', /void is only a result/, () => instantiate(pack({{...metadata, exports: [{{name: 'main', params: ['void'], result: 'number'}}]}})));
-        fails('metadata', /result must be/, () => instantiate(pack({{...metadata, exports: [{{name: 'main', params: [], result: 'object'}}]}})));
-        fails('metadata', /duplicate exports name/, () => instantiate(pack({{...metadata, exports: [metadata.exports[0], metadata.exports[0]]}})));
-        fails('metadata', /ABI helper/, () => instantiate(pack({{...metadata, exports: [{{name: '__alloc', params: ['number'], result: 'number'}}]}})));
-        fails('metadata', /ABI helper/, () => instantiate(pack({{...metadata, exports: [{{name: 'memory', params: [], result: 'void'}}]}})));
-        fails('metadata', /invalid interface metadata/, () => instantiate(custom(wasm, '{{')));
-        fails('metadata', /invalid interface metadata/, () => instantiate(custom(wasm, Buffer.from([0xc3, 0x28]))));
-        fails('metadata', /metadata exceeds/, () => instantiate(custom(wasm, Buffer.alloc(1024 * 1024 + 1, 32))));
-        fails('metadata', /at most 1024/, () => instantiate(pack({{...metadata, exports: [{{name: 'main', params: new Array(1025).fill('number'), result: 'number'}}]}})));
-    "#
-        ),
+        assert.equal(WebAssembly.Module.customSections(new WebAssembly.Module(wasm), 'was-compiler.interface').length, 0);
+        assert.equal(instantiate(wasm).call('main'), 1);
+        const decorated = custom(custom(wasm, '{not JSON'), Buffer.from([0xff]));
+        const originalCustomSections = WebAssembly.Module.customSections;
+        WebAssembly.Module.customSections = () => { throw Error('runtime must not inspect metadata'); };
+        try {
+            const runtime = instantiate(decorated);
+            assert.equal(runtime.call('main'), 1);
+            assert.equal(Object.hasOwn(runtime, 'interface'), false);
+        } finally {
+            WebAssembly.Module.customSections = originalCustomSections;
+        }
+    "#,
     );
     let scratch = Scratch::new();
     scratch.write("bad.wasm", b"not wasm");
-    scratch.write("missing.wasm", &raw);
-    scratch.write(
-        "version.wasm",
-        append_metadata(
-            &raw,
-            metadata
-                .replace("\"version\":1", "\"version\":2")
-                .as_bytes(),
-        ),
-    );
-    scratch.write(
-        "duplicate.wasm",
-        append_metadata(
-            &append_metadata(&raw, metadata.as_bytes()),
-            metadata.as_bytes(),
-        ),
-    );
     failure(
         runner(&scratch.0, &["bad.wasm"]),
         "compilation",
         "WebAssembly",
     );
-    failure(runner(&scratch.0, &["missing.wasm"]), "metadata", "found 0");
-    failure(
-        runner(&scratch.0, &["version.wasm"]),
-        "metadata",
-        "version 2",
-    );
-    failure(
-        runner(&scratch.0, &["duplicate.wasm"]),
-        "metadata",
-        "found 2",
-    );
 }
 
 #[test]
 #[ignore = "requires Node.js"]
-fn node_memory_roundtrips_copy_payloads_and_refresh_views_after_growth() {
+fn node_explicit_memory_roundtrips_and_raw_descriptor_imports() {
     let mut compiler = Compiler::new();
     compiler
         .register_host_function(
@@ -588,92 +415,63 @@ fn node_memory_roundtrips_copy_payloads_and_refresh_views_after_growth() {
     script(
         &bytes,
         r#"
+        const {createAbi} = require('./runtime/abi.cjs');
+        let runtime;
+        const abi = createAbi(() => runtime.instance);
         let retained;
         const hostArray = new Array(20000).fill(2);
-        const runtime = instantiate(wasm, {env: {
-            edit(values) {
+        runtime = instantiate(wasm, {env: {
+            edit(handle) {
+                assert.equal(typeof handle, 'number');
+                const values = abi.decode('number[]', handle);
                 assert.deepEqual(values, [1, 2]);
                 retained = values;
                 values[0] = 40;
-                return values;
+                return abi.encode('number[]', values);
             },
-            observe(value) {
-                assert.equal(typeof value, 'string');
-                assert.equal(value, 'héllo 🦀');
-                return value + '!';
+            observe(handle) {
+                assert.equal(typeof handle, 'number');
+                assert.equal(abi.decode('string', handle), 'héllo 🦀');
+                return abi.encode('string', 'héllo 🦀!');
             },
-            large() { return hostArray; }
+            large() { return abi.encode('number[]', hostArray); }
         }});
-        assert(!runtime.interface.exports.some(e => e.name === 'memory' || e.name === '__alloc'));
         for (const value of ['', 'héllo 🦀', '\u0000', '\ufeffBOM', 'x'.repeat(100000)]) {
-            assert.equal(runtime.call('text', [value]), value);
+            const handle = abi.encode('string', value);
+            assert.equal(runtime.call('text', [handle]), handle);
+            assert.equal(abi.decode('string', handle), value);
         }
-        assert.equal(runtime.call('observed'), 'héllo 🦀!');
-        assert.equal(runtime.call('literal'), 'héllo 🦀');
-        assert.equal(runtime.call('observed'), 'héllo 🦀!');
+        assert.equal(abi.decode('string', runtime.call('observed')), 'héllo 🦀!');
+        assert.equal(typeof runtime.call('literal'), 'number');
+        assert.equal(abi.decode('string', runtime.call('literal')), 'héllo 🦀');
         const input = Object.freeze([1, 2]);
-        assert.deepEqual(runtime.call('values', [input]), [9, 2]);
+        assert.deepEqual(abi.decode('number[]', runtime.call('values', [abi.encode('number[]', input)])), [9, 2]);
         assert.deepEqual(input, [1, 2]);
-        assert.deepEqual(runtime.call('empty', [[]]), []);
-        const specials = [NaN, Infinity, -Infinity, -0];
-        assert.deepEqual(runtime.call('empty', [specials]), specials);
-        assert.deepEqual(runtime.call('edited'), [1, 41]);
+        for (const value of [[], [NaN, Infinity, -Infinity, -0]]) {
+            assert.deepEqual(abi.decode('number[]', runtime.call('empty', [abi.encode('number[]', value)])), value);
+        }
+        assert.deepEqual(abi.decode('number[]', runtime.call('edited')), [1, 41]);
         assert.deepEqual(retained, [40, 2]);
         retained[0] = 100;
-        assert.deepEqual(runtime.call('edited'), [1, 41]);
+        assert.deepEqual(abi.decode('number[]', runtime.call('edited')), [1, 41]);
         const before = runtime.instance.exports.memory.buffer;
-        const result = runtime.call('grown');
+        const result = abi.decode('number[]', runtime.call('grown'));
         assert.notEqual(runtime.instance.exports.memory.buffer, before);
         assert.equal(result.length, 20000);
         assert.equal(result[0], 2);
         result[0] = 99;
         assert.equal(hostArray[0], 2);
-        assert.equal(runtime.call('grown')[0], 2);
-        assert.equal(runtime.call('lengths', [new Array(25000).fill(1)]), 25000);
-        fails('invocation', /not a language export/, () => runtime.call('__alloc', [8]));
-        fails('invocation', /not a language export/, () => runtime.call('memory'));
-        const wrong = instantiate(wasm, {env: {edit() { return new Float64Array([1]); }, observe() { return 'ok'; }, large() { return []; }}});
-        fails('invocation', /return value.*number\[\]/, () => wrong.call('edited'));
+        assert.equal(abi.decode('number[]', runtime.call('grown'))[0], 2);
+        assert.equal(runtime.call('lengths', [abi.encode('number[]', new Array(25000).fill(1))]), 25000);
+        assert.equal(typeof runtime.call('__alloc', [8]), 'number');
+        fails('invocation', /not a function export/, () => runtime.call('memory'));
     "#,
-    );
-    let scratch = Scratch::new();
-    scratch.write("program.wasm", &bytes);
-    scratch.write("provider.cjs", "module.exports = {env: {edit(values) { return values; }, observe(value) { return value; }, large() { return []; }}};");
-    assert_eq!(
-        success(runner(
-            &scratch.0,
-            &[
-                "program.wasm",
-                "--entry",
-                "text",
-                "--args",
-                "[\"héllo 🦀\"]",
-                "--imports",
-                "provider.cjs"
-            ]
-        )),
-        "héllo 🦀\n"
-    );
-    assert_eq!(
-        success(runner(
-            &scratch.0,
-            &[
-                "program.wasm",
-                "--entry",
-                "values",
-                "--args",
-                "[[1,2]]",
-                "--imports",
-                "provider.cjs"
-            ]
-        )),
-        "[ 9, 2 ]\n"
     );
 }
 
 #[test]
 #[ignore = "requires Node.js"]
-fn node_typed_counts_and_bounds_traps() {
+fn node_raw_arguments_counts_and_bounds_traps() {
     let bytes = compile(
         &Compiler::new(),
         r#"
@@ -687,24 +485,24 @@ fn node_typed_counts_and_bounds_traps() {
         &bytes,
         r#"
         const runtime = instantiate(wasm);
-        assert.equal(runtime.call('main', [[4, 5], 1]), 5);
+        const {createAbi} = require('./runtime/abi.cjs');
+        const abi = createAbi(() => runtime.instance);
+        const handle = abi.encode('number[]', [4, 5]);
+        assert.equal(runtime.call('main', [handle, 1]), 5);
         fails('invocation', /expects 2 arguments, got 0/, () => runtime.call('main'));
-        fails('invocation', /expects 2 arguments, got 3/, () => runtime.call('main', [[1], 0, 3]));
+        fails('invocation', /expects 2 arguments, got 3/, () => runtime.call('main', [handle, 0, 3]));
         fails('invocation', /must be an array/, () => runtime.call('main', '[]'));
-        fails('invocation', /argument 1.*must be number\[\]/, () => runtime.call('main', [new Float64Array([1]), 0]));
-        fails('invocation', /argument 1.*\[1\] must be number/, () => runtime.call('main', [[1, '2'], 0]));
-        fails('invocation', /\[0\] must be number/, () => runtime.call('main', [new Array(1), 0]));
-        fails('invocation', /argument 2.*must be number/, () => runtime.call('main', [[1], '0']));
-        for (const value of [0, 1, 'true', null, new Boolean(true)]) {
-            fails('invocation', /must be bool/, () => runtime.call('flag', [value]));
+        fails('invocation', /limited to 1024/, () => runtime.call('main', new Array(1025).fill(0)));
+        for (const value of [[1], new Float64Array([1]), '0', true, null, {}, new Number(1), undefined]) {
+            fails('invocation', /numeric scalar/, () => runtime.call('echo_number', [value]));
         }
-        fails('invocation', /must be string/, () => runtime.call('text', [new String('text')]));
-        fails('invocation', /must be number/, () => runtime.call('echo_number', [new Number(1)]));
+        fails('invocation', /numeric scalar/, () => runtime.call('echo_number', new Array(1)));
         fails('invocation', /entry name must be a string/, () => runtime.call(1));
-        fails('invocation', /not a language export/, () => runtime.call('missing'));
-        for (const index of [-1, 1, 0.5, NaN, Infinity]) {
-            fails('invocation', /cannot call.*main/, () => runtime.call('main', [[1], index]));
+        fails('invocation', /not a function export/, () => runtime.call('missing'));
+        for (const index of [-1, 2, 0.5, NaN, Infinity]) {
+            fails('invocation', /cannot call.*main/, () => runtime.call('main', [handle, index]));
         }
+        fails('invocation', /cannot call.*main/, () => runtime.call('main', [0, 0]));
     "#,
     );
     let scratch = Scratch::new();
@@ -715,15 +513,17 @@ fn node_typed_counts_and_bounds_traps() {
         "expects 2 arguments",
     );
     failure(
-        runner(&scratch.0, &["program.wasm", "--args", "[[1],1]"]),
+        runner(&scratch.0, &["program.wasm", "--args", "[0,0]"]),
         "invocation",
         "main",
     );
-    failure(
-        runner(&scratch.0, &["program.wasm", "--args", "[[1],\"0\"]"]),
-        "invocation",
-        "must be number",
-    );
+    for args in ["[[1],1]", "[1,\"0\"]", "[true]", "[null]", "[{}]"] {
+        failure(
+            runner(&scratch.0, &["program.wasm", "--args", args]),
+            "invocation",
+            "raw numeric scalars",
+        );
+    }
     failure(
         runner(&scratch.0, &["program.wasm", "--args", "{}"]),
         "invocation",
@@ -738,21 +538,19 @@ fn node_typed_counts_and_bounds_traps() {
 
 #[test]
 #[ignore = "requires Node.js"]
-fn node_export_selection_and_interface_mismatch() {
-    let source = "fn main(value: number) -> number { return helper(value); } fn helper(value: number) -> number { return value * 2; } fn hidden() -> string { return \"hidden\"; }";
+fn node_raw_export_selection() {
+    let source = r#"fn main(value: number) -> number { return helper(value); } fn helper(value: number) -> number { return value * 2; } fn hidden() -> string { return "hidden"; }"#;
     let mut compiler = Compiler::new();
     compiler.set_exports(ExportOptions::Only(vec!["main".into()]));
-    let bytes = compile(&compiler, source);
     script(
-        &bytes,
+        &compile(&compiler, source),
         r#"
         const runtime = instantiate(wasm);
-        assert.deepEqual(runtime.interface.exports.map(e => e.name), ['main']);
         assert.equal(runtime.call('main', [21]), 42);
         assert.equal(runtime.instance.exports.helper, undefined);
         assert(runtime.instance.exports.memory instanceof WebAssembly.Memory);
-        fails('invocation', /not a language export/, () => runtime.call('helper', [1]));
-        fails('invocation', /ABI helpers/, () => runtime.call('__alloc', [8]));
+        fails('invocation', /not a function export/, () => runtime.call('helper', [1]));
+        assert.equal(typeof runtime.call('__alloc', [8]), 'number');
     "#,
     );
     compiler.set_exports(ExportOptions::None);
@@ -760,81 +558,32 @@ fn node_export_selection_and_interface_mismatch() {
         &compile(&compiler, source),
         r#"
         const runtime = instantiate(wasm);
-        assert.deepEqual(runtime.interface.exports, []);
         assert(runtime.instance.exports.memory instanceof WebAssembly.Memory);
-        fails('invocation', /not a language export/, () => runtime.call('main', [1]));
+        fails('invocation', /not a function export/, () => runtime.call('main', [1]));
     "#,
-    );
-    compiler.set_exports(ExportOptions::All);
-    let program = compiler.analyze(source).unwrap();
-    let raw = compiler.compile(&program).unwrap();
-    let metadata = interface_json(&program, compiler.exports());
-    script(
-        &raw,
-        &format!(
-            r#"
-        const metadata = {metadata};
-        fails('metadata', /module export main.*not declared/, () => instantiate(custom(wasm, JSON.stringify({{...metadata, exports: metadata.exports.slice(1)}}))));
-        const extra = {{name: 'missing', params: [], result: 'void'}};
-        fails('metadata', /metadata export missing.*missing/, () => instantiate(custom(wasm, JSON.stringify({{...metadata, exports: metadata.exports.concat([extra])}}))));
-    "#
-        ),
     );
 }
 
 #[test]
 #[ignore = "requires Node.js"]
-fn node_alias_imports_share_wrappers_and_reject_conflicting_signatures() {
+fn node_alias_imports_use_raw_callbacks() {
     let mut compiler = Compiler::new();
     for name in ["left", "right"] {
         compiler
             .register_host_function(name, "env", "shared", vec![Type::Number], Type::Number)
             .unwrap();
     }
-    let source = "fn main(value: number) -> number { return left(value) + right(value); }";
-    let bytes = compile(&compiler, source);
     script(
-        &bytes,
+        &compile(
+            &compiler,
+            "fn main(value: number) -> number { return left(value) + right(value); }",
+        ),
         r#"
-        const originalInstance = WebAssembly.Instance;
-        WebAssembly.Instance = class extends originalInstance {
-            constructor(module, imports) {
-                assert.equal(Object.getPrototypeOf(imports), null);
-                assert.equal(Object.getPrototypeOf(imports.env), null);
-                assert.deepEqual(Object.keys(imports.env), ['shared']);
-                super(module, imports);
-            }
-        };
         let calls = 0;
         const runtime = instantiate(wasm, {env: {shared(value) { calls++; return value + 1; }}});
         assert.equal(runtime.call('main', [20]), 42);
         assert.equal(calls, 2);
-        assert.deepEqual(runtime.interface.imports.map(e => e.name), ['left', 'right']);
-        WebAssembly.Instance = originalInstance;
     "#,
-    );
-    let program = compiler.analyze(source).unwrap();
-    let raw = compiler.compile(&program).unwrap();
-    let metadata = interface_json(&program, compiler.exports());
-    script(
-        &raw,
-        &format!(
-            r#"
-        const metadata = {metadata};
-        const provider = {{env: {{shared(value) {{ return value; }}}}}};
-        function pack(value) {{ return custom(wasm, JSON.stringify(value)); }}
-        fails('metadata', /module import env\.shared.*fewer times/, () => instantiate(pack({{...metadata, imports: metadata.imports.slice(1)}}), provider));
-        fails('metadata', /env\.shared.*import count/, () => instantiate(pack({{...metadata, imports: metadata.imports.concat([{{...metadata.imports[0], name: 'third'}}])}}), provider));
-        fails('metadata', /module import env\.shared.*not declared/, () => instantiate(pack({{...metadata, imports: metadata.imports.map(e => ({{...e, field: 'other'}}))}}), provider));
-        fails('metadata', /duplicate imports name/, () => instantiate(pack({{...metadata, imports: [metadata.imports[0], metadata.imports[0]]}}), provider));
-        const conflicting = metadata.imports.map(e => ({{...e}}));
-        conflicting[1].params = ['bool'];
-        fails('metadata', /conflicting signatures.*env\.shared.*\(number\)->number.*\(bool\)->number/, () => instantiate(pack({{...metadata, imports: conflicting}}), provider));
-        conflicting[1].params = ['number'];
-        conflicting[1].result = 'bool';
-        fails('metadata', /conflicting signatures.*env\.shared/, () => instantiate(pack({{...metadata, imports: conflicting}}), provider));
-    "#
-        ),
     );
     let mut compiler = Compiler::new();
     compiler
@@ -846,7 +595,9 @@ fn node_alias_imports_share_wrappers_and_reject_conflicting_signatures() {
     script(
         &compile(&compiler, "fn main() -> void { left(1); right(true); }"),
         r#"
-        fails('metadata', /conflicting signatures.*env\.shared/, () => instantiate(wasm, {env: {shared(value) { return value; }}}));
+        const seen = [];
+        instantiate(wasm, {env: {shared(value) { seen.push(value); return value; }}}).call('main');
+        assert.deepEqual(seen, [1, 1]);
     "#,
     );
     let mut compiler = Compiler::new();
@@ -862,19 +613,10 @@ fn node_alias_imports_share_wrappers_and_reject_conflicting_signatures() {
     script(
         &compile(&compiler, "fn main() -> number { return special(21); }"),
         r#"
-        const originalInstance = WebAssembly.Instance;
-        WebAssembly.Instance = class extends originalInstance {
-            constructor(module, imports) {
-                assert.equal(Object.getPrototypeOf(imports), null);
-                assert.equal(Object.getPrototypeOf(imports.__proto__), null);
-                super(module, imports);
-            }
-        };
         const provider = Object.create(null);
         provider.__proto__ = Object.create(null);
         provider.__proto__.__proto__ = value => value * 2;
         assert.equal(instantiate(wasm, provider).call('main'), 42);
-        WebAssembly.Instance = originalInstance;
     "#,
     );
 }
@@ -958,7 +700,7 @@ fn node_abi_descriptor_alignment_ranges_utf8_and_copy_limits() {
 
 #[test]
 #[ignore = "requires Node.js"]
-fn node_start_callbacks_and_nonfunction_module_interfaces() {
+fn node_start_callbacks_and_raw_memory_imports_and_exports() {
     use wasm_encoder::{
         EntityType, ExportKind, ExportSection, ImportSection, MemorySection, MemoryType,
         StartSection, TypeSection,
@@ -972,13 +714,13 @@ fn node_start_callbacks_and_nonfunction_module_interfaces() {
         .section(&types)
         .section(&imports)
         .section(&StartSection { function_index: 0 });
-    let metadata = b"{\"version\":1,\"memoryAbi\":\"descriptor-v1\",\"exports\":[],\"imports\":[{\"name\":\"boot\",\"module\":\"env\",\"field\":\"boot\",\"params\":[],\"result\":\"void\"}]}";
     script(
-        &append_metadata(&module.finish(), metadata),
+        &module.finish(),
         r#"
         let called = false;
-        fails('instantiation', /env\.boot.*Start function.*before the instance.*remove the Start section/, () => instantiate(wasm, {env: {boot() { called = true; }}}));
-        assert.equal(called, false);
+        instantiate(wasm, {env: {boot() { called = true; }}});
+        assert.equal(called, true);
+        fails('instantiation', /boot exploded/, () => instantiate(wasm, {env: {boot() { throw Error('boot exploded'); }}}));
     "#,
     );
     let memory_type = MemoryType {
@@ -988,39 +730,119 @@ fn node_start_callbacks_and_nonfunction_module_interfaces() {
         shared: false,
         page_size_log2: None,
     };
-    let empty_metadata =
-        b"{\"version\":1,\"memoryAbi\":\"descriptor-v1\",\"exports\":[],\"imports\":[]}";
     let mut imports = ImportSection::new();
     imports.import("env", "memory", EntityType::Memory(memory_type));
+    let mut exports = ExportSection::new();
+    exports.export("memory", ExportKind::Memory, 0);
     let mut module = Module::new();
-    module.section(&imports);
+    module.section(&imports).section(&exports);
     script(
-        &append_metadata(&module.finish(), empty_metadata),
+        &module.finish(),
         r#"
-        fails('metadata', /env\.memory.*only language function imports/, () => instantiate(wasm));
+        const memory = new WebAssembly.Memory({initial: 1, maximum: 1});
+        const runtime = instantiate(wasm, {env: {memory}});
+        assert.equal(runtime.instance.exports.memory, memory);
+        fails('invocation', /not a function export/, () => runtime.call('memory'));
     "#,
     );
     let mut memories = MemorySection::new();
     memories.memory(memory_type);
     let mut exports = ExportSection::new();
-    exports.export("memory", ExportKind::Memory, 0);
-    let mut module = Module::new();
-    module.section(&memories).section(&exports);
-    script(
-        &append_metadata(&module.finish(), empty_metadata),
-        r#"
-        fails('metadata', /must export both memory and __alloc/, () => instantiate(wasm));
-    "#,
-    );
-    let mut exports = ExportSection::new();
     exports.export("extra", ExportKind::Memory, 0);
     let mut module = Module::new();
     module.section(&memories).section(&exports);
     script(
-        &append_metadata(&module.finish(), empty_metadata),
+        &module.finish(),
         r#"
-        fails('metadata', /export extra.*only language function exports/, () => instantiate(wasm));
+        const runtime = instantiate(wasm);
+        assert(runtime.instance.exports.extra instanceof WebAssembly.Memory);
+        fails('invocation', /not a function export/, () => runtime.call('extra'));
     "#,
+    );
+}
+
+#[test]
+#[ignore = "requires Node.js"]
+fn node_raw_i64_arguments_and_results() {
+    use wasm_encoder::{
+        CodeSection, ExportKind, ExportSection, Function, FunctionSection, Instruction,
+        TypeSection, ValType,
+    };
+    let mut types = TypeSection::new();
+    types.ty().function([ValType::I64], [ValType::I64]);
+    let mut functions = FunctionSection::new();
+    functions.function(0);
+    let mut exports = ExportSection::new();
+    exports.export("main", ExportKind::Func, 0);
+    let mut function = Function::new([]);
+    function
+        .instruction(&Instruction::LocalGet(0))
+        .instruction(&Instruction::End);
+    let mut code = CodeSection::new();
+    code.function(&function);
+    let mut module = Module::new();
+    module
+        .section(&types)
+        .section(&functions)
+        .section(&exports)
+        .section(&code);
+    script(
+        &module.finish(),
+        r#"
+        const runtime = instantiate(wasm);
+        assert.equal(runtime.call('main', [9007199254740993n]), 9007199254740993n);
+        fails('invocation', /BigInt/, () => runtime.call('main', [1]));
+    "#,
+    );
+}
+
+#[test]
+#[ignore = "requires Node.js"]
+fn node_example_provider_uses_explicit_descriptor_abi() {
+    let mut compiler = Compiler::new();
+    compiler
+        .register_host_function("echo", "env", "echo", vec![Type::String], Type::String)
+        .unwrap();
+    compiler
+        .register_host_function("print", "env", "print", vec![Type::String], Type::Void)
+        .unwrap();
+    compiler
+        .register_host_function(
+            "adjust",
+            "env",
+            "adjust",
+            vec![Type::NumberArray],
+            Type::NumberArray,
+        )
+        .unwrap();
+    let bytes = compile(
+        &compiler,
+        r#"
+        fn main() -> void { print(echo("hello")); }
+        fn adjusted() -> number[] { return adjust([1, 2]); }
+    "#,
+    );
+    script(
+        &bytes,
+        r#"
+        const {createAbi} = require('./runtime/abi.cjs');
+        const createProvider = require('./examples/host-provider.cjs');
+        let runtime;
+        const provider = createProvider(() => runtime && runtime.instance);
+        runtime = instantiate(wasm, provider);
+        const abi = createAbi(() => runtime.instance);
+        assert.deepEqual(abi.decode('number[]', runtime.call('adjusted')), [2, 3]);
+    "#,
+    );
+    let scratch = Scratch::new();
+    scratch.write("program.wasm", &bytes);
+    let provider = root().join("examples/host-provider.cjs");
+    assert_eq!(
+        success(runner(
+            &scratch.0,
+            &["program.wasm", "--imports", provider.to_str().unwrap()]
+        )),
+        "hello from host\n"
     );
 }
 
@@ -1052,6 +874,12 @@ fn node_runner_file_errors_and_option_validation() {
         "PROGRAM.wasm is required",
     );
     failure(
+        runner(&scratch.0, &["--entry", "main"]),
+        "invocation",
+        "PROGRAM.wasm is required",
+    );
+    failure(runner(&scratch.0, &["-"]), "file", "cannot read program");
+    failure(
         runner(&scratch.0, &["program.wasm", "--unknown"]),
         "invocation",
         "unknown option",
@@ -1075,8 +903,8 @@ fn node_runner_file_errors_and_option_validation() {
         "unknown option",
     );
     failure(
-        runner(&scratch.0, &["program.wasm", "--entry", "__alloc"]),
+        runner(&scratch.0, &["program.wasm", "--entry", "memory"]),
         "invocation",
-        "not a language export",
+        "not a function export",
     );
 }

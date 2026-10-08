@@ -8,11 +8,10 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use was_compiler::{Compiler, ExportOptions};
+use was_compiler::{Compiler, ExportOptions, Type};
 use wasmparser::{ExternalKind, Parser, Payload, TypeRef, Validator};
 
 const PROCESS_TIMEOUT: Duration = Duration::from_secs(15);
-const INTERFACE_SECTION: &str = "was-compiler.interface";
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
 const SIMPLE_SOURCE: &str = "fn main() -> number { return 7; }";
@@ -97,6 +96,12 @@ impl Scratch {
         bytes
     }
 
+    fn node_script(&self, script: &str) -> Output {
+        let mut command = Command::new("node");
+        command.current_dir(&self.0).args(["-e", script]);
+        process_output(&mut command, None)
+    }
+
     fn node(&self, args: &[&str]) -> Output {
         let mut command = Command::new("node");
         command
@@ -123,10 +128,18 @@ impl Drop for ChildGuard {
 }
 
 fn process_output(command: &mut Command, input: Option<&[u8]>) -> Output {
+    process_output_with_stdin(command, input, false)
+}
+
+fn process_output_with_stdin(
+    command: &mut Command,
+    input: Option<&[u8]>,
+    keep_open: bool,
+) -> Output {
     let description = format!("{command:?}");
     let mut child = ChildGuard(
         command
-            .stdin(if input.is_some() {
+            .stdin(if input.is_some() || keep_open {
                 Stdio::piped()
             } else {
                 Stdio::null()
@@ -136,6 +149,11 @@ fn process_output(command: &mut Command, input: Option<&[u8]>) -> Output {
             .spawn()
             .unwrap_or_else(|error| panic!("start {description}: {error}")),
     );
+    let open_stdin = if keep_open {
+        child.0.stdin.take()
+    } else {
+        None
+    };
     let mut stdout = child.0.stdout.take().unwrap();
     let mut stderr = child.0.stderr.take().unwrap();
     let stdout = thread::spawn(move || {
@@ -166,6 +184,7 @@ fn process_output(command: &mut Command, input: Option<&[u8]>) -> Output {
         }
         thread::sleep(Duration::from_millis(10));
     };
+    drop(open_stdin);
     let output = Output {
         status,
         stdout: stdout.join().unwrap(),
@@ -247,8 +266,6 @@ fn assert_plain_wat(bytes: &[u8]) -> &str {
         "expected plain WAT, got {wat:?}"
     );
     assert!(wat.trim_end().ends_with(')'));
-    assert!(!wat.contains(INTERFACE_SECTION));
-    assert!(!wat.contains("memoryAbi"));
     wat
 }
 
@@ -318,21 +335,14 @@ fn decode(bytes: &[u8]) -> Decoded {
             _ => {}
         }
     }
+    assert!(
+        module.custom.is_empty(),
+        "unexpected custom sections: {:?}",
+        module.custom
+    );
     assert_eq!(module.code_count as usize, module.functions.len());
     assert_eq!(module.bodies.len(), module.functions.len());
     module
-}
-
-fn assert_metadata(module: &Decoded, exports: &[&str], imports: &[&str]) {
-    let expected = format!(
-        r#"{{"version":1,"memoryAbi":"descriptor-v1","exports":[{}],"imports":[{}]}}"#,
-        exports.join(","),
-        imports.join(",")
-    );
-    assert_eq!(
-        module.custom,
-        vec![(INTERFACE_SECTION.to_owned(), expected.into_bytes())]
-    );
 }
 
 fn user_exports(module: &Decoded) -> Vec<&str> {
@@ -360,23 +370,97 @@ fn abi_exports(module: &Decoded) -> Vec<(String, ExternalKind, u32)> {
 }
 
 #[test]
-fn no_arguments_prints_the_plain_array_example() {
+fn missing_source_is_a_usage_error_without_artifacts() {
     let scratch = Scratch::new("no_arguments");
-    let bytes = success(scratch.cli(&[], None));
-    let wat = assert_plain_wat(&bytes);
-    assert_eq!(wat, raw_wat(EXAMPLE_SOURCE));
-    assert!(wat.contains("(export \"main\""));
-    assert!(wat.contains("(export \"sum\""));
-    assert!(wat.contains("(export \"memory\""));
-    scratch.assert_entries(&[]);
+    for args in [
+        vec![],
+        vec!["--emit", "wat"],
+        vec!["--export", "main"],
+        vec!["--no-exports"],
+        vec!["-O3"],
+        vec!["--host", "print=env.log_number(number)->void"],
+    ] {
+        let stderr = failure(
+            scratch.cli(&args, Some(SIMPLE_SOURCE.as_bytes())),
+            2,
+            &["required arguments", "<SOURCE>", "Usage:", "--help"],
+        );
+        assert!(stderr.starts_with("error:"));
+        scratch.assert_entries(&[]);
+    }
+}
+
+#[test]
+fn output_flags_without_source_leave_existing_and_missing_artifacts_unchanged() {
+    let scratch = Scratch::new("missing_source_outputs");
+    let sentinel = b"existing artifact";
+    for name in ["existing.wasm", "existing.wat", "-"] {
+        scratch.write(name, sentinel);
+    }
+    for name in [
+        "existing.wasm",
+        "existing.wat",
+        "missing.wasm",
+        "missing.wat",
+        "-",
+    ] {
+        for output_flag in ["-o", "--output"] {
+            for format in [None, Some("wasm"), Some("wat")] {
+                let mut args = vec![output_flag, name];
+                if let Some(format) = format {
+                    args.extend(["--emit", format]);
+                }
+                failure(
+                    scratch.cli(&args, Some(SIMPLE_SOURCE.as_bytes())),
+                    2,
+                    &["required arguments", "<SOURCE>"],
+                );
+                for existing in ["existing.wasm", "existing.wat", "-"] {
+                    assert_eq!(fs::read(scratch.0.join(existing)).unwrap(), sentinel);
+                }
+                scratch.assert_entries(&["existing.wasm", "existing.wat", "-"]);
+            }
+        }
+    }
+}
+
+#[test]
+fn stdin_is_not_consumed_implicitly_or_for_a_literal_dash_source() {
+    let scratch = Scratch::new("open_stdin");
+    scratch.write("program.was", SIMPLE_SOURCE);
+    for args in [
+        vec![],
+        vec!["--emit", "wat"],
+        vec!["program.was"],
+        vec!["-"],
+    ] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_was-compiler"));
+        command.current_dir(&scratch.0).args(&args);
+        let output = process_output_with_stdin(&mut command, None, true);
+        match args.first().copied() {
+            Some("program.was") => assert_eq!(text(output), raw_wat(SIMPLE_SOURCE)),
+            Some("-") => {
+                failure(output, 1, &["-: input I/O error:"]);
+            }
+            _ => {
+                failure(output, 2, &["required arguments", "<SOURCE>"]);
+            }
+        }
+    }
+    scratch.assert_entries(&["program.was"]);
 }
 
 #[test]
 fn help_flags_print_usage_without_compiling_or_writing() {
     let scratch = Scratch::new("help");
     for flag in ["-h", "--help"] {
-        let help = text(scratch.cli(&["missing.was", "-o", "program.wasm", flag], None));
-        assert!(help.contains("Usage: was-compiler [OPTIONS] [SOURCE]"));
+        let help = text(scratch.cli(&[flag], None));
+        let help_with_source =
+            text(scratch.cli(&["missing.was", "-o", "program.wasm", flag], None));
+        let help_with_output = text(scratch.cli(&["-o", "program.wasm", flag], None));
+        assert_eq!(help, help_with_source);
+        assert_eq!(help, help_with_output);
+        assert!(help.contains("Usage: was-compiler [OPTIONS] <SOURCE>"));
         for option in [
             "--output",
             "--emit",
@@ -389,6 +473,9 @@ fn help_flags_print_usage_without_compiling_or_writing() {
         ] {
             assert!(help.contains(option), "help omits {option}: {help}");
         }
+        assert!(!help.to_lowercase().contains("stdin"));
+        assert!(!help.to_lowercase().contains("sample"));
+        assert!(help.to_lowercase().contains("source file"));
         assert!(help.contains("print=env.log_number(number)->void"));
         assert!(help.contains("node runtime/run.cjs"));
         scratch.assert_entries(&[]);
@@ -425,7 +512,7 @@ fn invalid_arguments_exit_two_without_artifacts() {
             &["first.was", "second.was"],
             &["unexpected argument 'second.was'"],
         ),
-        (&[""], &["[SOURCE]", "path cannot be empty"]),
+        (&[""], &["<SOURCE>", "path cannot be empty"]),
         (
             &["--export", ""],
             &["a value is required", "--export <NAME>"],
@@ -451,8 +538,14 @@ fn invalid_arguments_exit_two_without_artifacts() {
             &["-o", "first.wasm", "--output", "second.wasm"],
             &["--output <PATH>", "cannot be used multiple times"],
         ),
-        (&["--emit", "wasm"], &["binary Wasm requires -o"]),
-        (&["--emit", "wasm", "-o", "-"], &["binary Wasm requires -o"]),
+        (
+            &["program.was", "--emit", "wasm"],
+            &["binary Wasm requires -o"],
+        ),
+        (
+            &["program.was", "--emit", "wasm", "-o", "-"],
+            &["binary Wasm requires -o"],
+        ),
     ];
     for (args, details) in cases {
         let stderr = failure(scratch.cli(args, None), 2, details);
@@ -464,8 +557,8 @@ fn invalid_arguments_exit_two_without_artifacts() {
 }
 
 #[test]
-fn file_and_stdin_sources_have_identical_plain_wat_stdout() {
-    let scratch = Scratch::new("file_stdin");
+fn file_sources_emit_plain_wat_to_stdout() {
+    let scratch = Scratch::new("file_stdout");
     scratch.write("source with spaces.was", SIMPLE_SOURCE);
     let expected = raw_wat(SIMPLE_SOURCE);
     for args in [
@@ -475,14 +568,6 @@ fn file_and_stdin_sources_have_identical_plain_wat_stdout() {
         vec!["source with spaces.was", "--output", "-", "--emit", "wat"],
     ] {
         let bytes = success(scratch.cli(&args, None));
-        assert_eq!(assert_plain_wat(&bytes), expected);
-    }
-    for args in [
-        vec!["-"],
-        vec!["-", "-o", "-"],
-        vec!["--emit", "wat", "--output", "-", "-"],
-    ] {
-        let bytes = success(scratch.cli(&args, Some(SIMPLE_SOURCE.as_bytes())));
         assert_eq!(assert_plain_wat(&bytes), expected);
     }
     scratch.assert_entries(&["source with spaces.was"]);
@@ -501,11 +586,9 @@ fn end_of_options_accepts_dash_prefixed_source_paths() {
         assert_eq!(text(scratch.cli(&args, None)), raw_wat(SIMPLE_SOURCE));
     }
     assert!(success(scratch.cli(&["-o", "program.wasm", "--", "-source.was"], None)).is_empty());
-    assert_metadata(
-        &decode(&fs::read(scratch.0.join("program.wasm")).unwrap()),
-        &[r#"{"name":"main","params":[],"result":"number"}"#],
-        &[],
-    );
+    let bytes = fs::read(scratch.0.join("program.wasm")).unwrap();
+    decode(&bytes);
+    assert_eq!(bytes, raw_wasm(SIMPLE_SOURCE));
     failure(
         scratch.cli(&["--", "-source.was", "--help"], None),
         2,
@@ -535,15 +618,8 @@ fn output_formats_follow_extension_unless_explicitly_overridden() {
         assert!(success(scratch.cli(&args, None)).is_empty());
         let bytes = fs::read(scratch.0.join(name)).unwrap();
         if *binary {
-            assert!(
-                bytes.starts_with(&raw),
-                "packaging rewrote raw codegen bytes"
-            );
-            assert_metadata(
-                &decode(&bytes),
-                &[r#"{"name":"main","params":[],"result":"number"}"#],
-                &[],
-            );
+            assert_eq!(bytes, raw, "CLI output differs from raw compiler bytes");
+            decode(&bytes);
         } else {
             assert_eq!(assert_plain_wat(&bytes), raw_wat(SIMPLE_SOURCE));
         }
@@ -554,32 +630,45 @@ fn output_formats_follow_extension_unless_explicitly_overridden() {
 }
 
 #[test]
-fn stdin_can_write_a_valid_packaged_binary_without_stdout() {
-    let scratch = Scratch::new("stdin_binary");
+fn dash_source_is_a_literal_file_and_ignores_stdin() {
+    let scratch = Scratch::new("dash_file");
+    failure(
+        scratch.cli(&["-", "-o", "program.wasm"], Some(SIMPLE_SOURCE.as_bytes())),
+        1,
+        &["-: input I/O error:"],
+    );
+    scratch.assert_entries(&[]);
+    scratch.write("-", SIMPLE_SOURCE);
+    for args in [
+        vec!["-"],
+        vec!["--", "-"],
+        vec!["-", "-o", "-", "--emit", "wat"],
+    ] {
+        assert_eq!(
+            text(scratch.cli(&args, Some(b"invalid stdin"))),
+            raw_wat(SIMPLE_SOURCE)
+        );
+    }
     assert!(
-        success(scratch.cli(
-            &["-", "--output", "stdin.wasm"],
-            Some(SIMPLE_SOURCE.as_bytes())
-        ))
-        .is_empty()
+        success(scratch.cli(&["-", "--output", "program.wasm"], Some(b"invalid stdin"))).is_empty()
     );
-    let bytes = fs::read(scratch.0.join("stdin.wasm")).unwrap();
-    assert_metadata(
-        &decode(&bytes),
-        &[r#"{"name":"main","params":[],"result":"number"}"#],
-        &[],
+    let bytes = fs::read(scratch.0.join("program.wasm")).unwrap();
+    decode(&bytes);
+    assert_eq!(bytes, raw_wasm(SIMPLE_SOURCE));
+    assert_eq!(
+        fs::read(scratch.0.join("-")).unwrap(),
+        SIMPLE_SOURCE.as_bytes()
     );
-    scratch.assert_entries(&["stdin.wasm"]);
+    scratch.assert_entries(&["-", "program.wasm"]);
 }
 
 #[test]
-fn library_codegen_is_raw_and_only_binary_cli_output_adds_metadata() {
+fn binary_cli_output_is_exactly_raw_library_codegen() {
     let scratch = Scratch::new("raw_library");
     let raw = raw_wasm(MEMORY_SOURCE);
     assert!(decode(&raw).custom.is_empty());
-    let packaged = scratch.compile(MEMORY_SOURCE, &[]);
-    assert!(packaged.starts_with(&raw));
-    assert_eq!(decode(&packaged).custom.len(), 1);
+    let bytes = scratch.compile(MEMORY_SOURCE, &[]);
+    assert_eq!(bytes, raw);
     let wat = success(scratch.cli(&["program.was"], None));
     assert_eq!(
         assert_plain_wat(&wat),
@@ -618,25 +707,6 @@ fn export_selection_preserves_source_order_bodies_and_memory_abi() {
             assert!(all.exports.contains(export));
         }
     }
-    assert_metadata(
-        &all,
-        &[
-            r#"{"name":"hidden","params":[],"result":"string"}"#,
-            r#"{"name":"main","params":["number[]"],"result":"number"}"#,
-            r#"{"name":"helper","params":["number[]"],"result":"number"}"#,
-            r#"{"name":"enabled","params":["bool"],"result":"bool"}"#,
-        ],
-        &[],
-    );
-    assert_metadata(
-        &only,
-        &[
-            r#"{"name":"main","params":["number[]"],"result":"number"}"#,
-            r#"{"name":"enabled","params":["bool"],"result":"bool"}"#,
-        ],
-        &[],
-    );
-    assert_metadata(&none, &[], &[]);
     for (flags, selection) in [
         (
             vec!["--export", "enabled", "--export", "main"],
@@ -648,8 +718,9 @@ fn export_selection_preserves_source_order_bodies_and_memory_abi() {
         args.extend(flags);
         let mut compiler = Compiler::new();
         compiler.set_exports(selection);
-        let expected =
-            wasmprinter::print_bytes(compiler.compile_source(MEMORY_SOURCE).unwrap()).unwrap();
+        let raw = compiler.compile_source(MEMORY_SOURCE).unwrap();
+        assert_eq!(scratch.compile(MEMORY_SOURCE, &args[3..]), raw);
+        let expected = wasmprinter::print_bytes(&raw).unwrap();
         let bytes = success(scratch.cli(&args, None));
         assert_eq!(assert_plain_wat(&bytes), expected);
     }
@@ -672,12 +743,6 @@ fn scalar_no_exports_retains_every_function_without_adding_memory() {
         assert_eq!(selected.bodies, all.bodies);
         assert_eq!(selected.code_count, 3);
     }
-    assert_metadata(
-        &only,
-        &[r#"{"name":"main","params":[],"result":"number"}"#],
-        &[],
-    );
-    assert_metadata(&none, &[], &[]);
 }
 
 #[test]
@@ -805,16 +870,12 @@ fn attached_option_values_and_separated_levels_preserve_artifacts() {
     let module = decode(&bytes);
 
     assert_eq!(user_exports(&module), ["main", "helper"]);
-    assert_metadata(
-        &module,
-        &[
-            r#"{"name":"main","params":[],"result":"number"}"#,
-            r#"{"name":"helper","params":[],"result":"number"}"#,
-        ],
-        &[
-            r#"{"name":"print","module":"env","field":"log_number","params":["number"],"result":"void"}"#,
-            r#"{"name":"ready","module":"app","field":"ready","params":[],"result":"bool"}"#,
-        ],
+    assert_eq!(
+        module.imports,
+        [
+            ("env".into(), "log_number".into()),
+            ("app".into(), "ready".into())
+        ]
     );
     scratch.assert_entries(&["program.was", "attached.wasm", "separated.wasm"]);
 }
@@ -874,15 +935,16 @@ fn located_diagnostics_show_absolute_file_paths_phases_and_source_carets() {
 }
 
 #[test]
-fn stdin_diagnostics_and_unicode_crlf_tabs_have_correct_locations() {
-    let scratch = Scratch::new("stdin_diagnostics");
+fn file_diagnostics_and_unicode_crlf_tabs_have_correct_locations() {
+    let scratch = Scratch::new("unicode_diagnostics");
     let source = "fn main() -> void {\r\n\tlet text: string = \"é🦀\"; missing();\r\n}\r\n";
     let line = source.lines().nth(1).unwrap();
     let prefix = &line[..line.find("missing").unwrap()];
     let column = prefix.chars().count() + 1;
-    let location = format!("<stdin>:2:{column}: semantic error:");
+    scratch.write("unicode.was", source);
+    let location = format!("unicode.was:2:{column}: semantic error:");
     let stderr = failure(
-        scratch.cli(&["-"], Some(source.as_bytes())),
+        scratch.cli(&["unicode.was"], None),
         1,
         &[
             &location,
@@ -895,13 +957,14 @@ fn stdin_diagnostics_and_unicode_crlf_tabs_have_correct_locations() {
     );
     assert!(stderr.starts_with(&location));
     assert!(!stderr.contains('\r'));
+    scratch.write("eof.was", "fn main() -> void {\n");
     let stderr = failure(
-        scratch.cli(&["-"], Some(b"fn main() -> void {\n")),
+        scratch.cli(&["eof.was"], None),
         1,
-        &["<stdin>:2:1: parse error:", "2 |", "^"],
+        &["eof.was:2:1: parse error:", "2 |", "^"],
     );
-    assert!(stderr.starts_with("<stdin>:2:1:"));
-    scratch.assert_entries(&[]);
+    assert!(stderr.starts_with("eof.was:2:1:"));
+    scratch.assert_entries(&["unicode.was", "eof.was"]);
 }
 
 #[test]
@@ -919,11 +982,6 @@ fn source_io_errors_are_exit_one_and_label_the_input() {
         scratch.cli(&["invalid.was"], None),
         1,
         &["invalid.was: input I/O error:"],
-    );
-    failure(
-        scratch.cli(&["-"], Some(&[0xff, 0xfe])),
-        1,
-        &["<stdin>: input I/O error:"],
     );
     fs::create_dir(scratch.0.join("directory.was")).unwrap();
     failure(
@@ -962,11 +1020,6 @@ fn failed_compilation_never_replaces_or_creates_outputs() {
             &["--export", "main", "--export", "main"],
             "duplicate requested export",
         ),
-        (
-            "fn memory() -> number { return 1; }",
-            &[],
-            "packaging error:",
-        ),
     ];
     for existing in [false, true] {
         if existing {
@@ -994,29 +1047,73 @@ fn failed_compilation_never_replaces_or_creates_outputs() {
 }
 
 #[test]
-fn packaging_errors_do_not_affect_plain_wat_or_unselected_reserved_names() {
-    let scratch = Scratch::new("packaging");
+fn scalar_memory_and_allocator_names_are_valid_raw_exports() {
+    let scratch = Scratch::new("scalar_abi_names");
     for name in ["memory", "__alloc"] {
         let source = format!("fn {name}() -> number {{ return 7; }}");
-        scratch.write("program.was", &source);
-        let stderr = failure(
-            scratch.cli(&["program.was", "-o", "program.wasm"], None),
-            1,
-            &[
-                "packaging error:",
-                &format!("export `{name}` is reserved"),
-                "emit raw WAT",
-            ],
+        let bytes = scratch.compile(&source, &[]);
+        assert_eq!(bytes, raw_wasm(&source));
+        assert_eq!(
+            decode(&bytes).exports,
+            [(name.to_owned(), ExternalKind::Func, 0)]
         );
-        assert!(stderr.starts_with("program.was: packaging error:"));
-        assert!(!stderr.contains('^'));
-        assert!(!scratch.0.join("program.wasm").exists());
         let wat = success(scratch.cli(&["program.was", "--emit", "wat"], None));
         assert_eq!(assert_plain_wat(&wat), raw_wat(&source));
-        let bytes = scratch.compile(&source, &["--no-exports"]);
-        assert_metadata(&decode(&bytes), &[], &[]);
-        fs::remove_file(scratch.0.join("program.wasm")).unwrap();
-        scratch.assert_entries(&["program.was"]);
+        assert_eq!(scratch.compile(&source, &["--export", name]), bytes);
+        let mut compiler = Compiler::new();
+        compiler.set_exports(ExportOptions::None);
+        let none = scratch.compile(&source, &["--no-exports"]);
+        assert_eq!(none, compiler.compile_source(&source).unwrap());
+        assert!(decode(&none).exports.is_empty());
+        scratch.assert_entries(&["program.was", "program.wasm"]);
+    }
+}
+
+#[test]
+fn memory_abi_name_conflicts_are_codegen_errors_only_when_selected() {
+    let scratch = Scratch::new("abi_conflicts");
+    let sentinel = b"existing artifact";
+    for name in ["memory", "__alloc"] {
+        let source = format!(
+            "fn {name}() -> number {{ return 7; }} fn main() -> string {{ return \"text\"; }}"
+        );
+        scratch.write("program.was", &source);
+        scratch.write("program.wasm", sentinel);
+        for flags in [vec![], vec!["--export", name]] {
+            for format in ["wasm", "wat"] {
+                let mut args = vec!["program.was", "-o", "program.wasm", "--emit", format];
+                args.extend_from_slice(&flags);
+                let stderr = failure(
+                    scratch.cli(&args, None),
+                    1,
+                    &[
+                        "code generation error:",
+                        &format!("duplicate user function export name `{name}`"),
+                    ],
+                );
+                assert!(stderr.starts_with("program.was: code generation error:"));
+                assert!(!stderr.contains('^'));
+                assert_eq!(fs::read(scratch.0.join("program.wasm")).unwrap(), sentinel);
+                assert_eq!(
+                    fs::read(scratch.0.join("program.was")).unwrap(),
+                    source.as_bytes()
+                );
+                scratch.assert_entries(&["program.was", "program.wasm"]);
+            }
+        }
+        for (flags, selection) in [
+            (
+                vec!["--export", "main"],
+                ExportOptions::Only(vec!["main".into()]),
+            ),
+            (vec!["--no-exports"], ExportOptions::None),
+        ] {
+            let mut compiler = Compiler::new();
+            compiler.set_exports(selection);
+            let bytes = scratch.compile(&source, &flags);
+            assert_eq!(bytes, compiler.compile_source(&source).unwrap());
+            assert_eq!(abi_exports(&decode(&bytes)).len(), 2);
+        }
     }
 }
 
@@ -1027,12 +1124,8 @@ fn successful_compilation_overwrites_a_valid_artifact_without_leaking_files() {
     let source = "fn main() -> number { return 65; }";
     let replacement = scratch.compile(source, &[]);
     assert_ne!(original, replacement);
-    assert!(replacement.starts_with(&raw_wasm(source)));
-    assert_metadata(
-        &decode(&replacement),
-        &[r#"{"name":"main","params":[],"result":"number"}"#],
-        &[],
-    );
+    assert_eq!(replacement, raw_wasm(source));
+    decode(&replacement);
     assert_eq!(
         fs::read(scratch.0.join("program.was")).unwrap(),
         source.as_bytes()
@@ -1100,7 +1193,7 @@ fn output_io_failure_does_not_create_parents_or_leave_sibling_temporaries() {
 }
 
 #[test]
-fn repeatable_host_declarations_package_all_signatures_in_registration_order() {
+fn repeatable_host_declarations_preserve_raw_imports_in_registration_order() {
     let scratch = Scratch::new("host_snapshot");
     let source = r#"
 fn main(value: number) -> number {
@@ -1124,21 +1217,35 @@ fn values(value: number[]) -> number[] { return edit(value); }
         "--host",
         "idle=env.unused(bool, string, number[])->void",
     ];
-    let exports = [
-        r#"{"name":"main","params":["number"],"result":"number"}"#,
-        r#"{"name":"text","params":["string"],"result":"string"}"#,
-        r#"{"name":"values","params":["number[]"],"result":"number[]"}"#,
-    ];
-    let imports = [
-        r#"{"name":"print","module":"env","field":"log_number","params":["number"],"result":"void"}"#,
-        r#"{"name":"ready","module":"app","field":"ready","params":[],"result":"bool"}"#,
-        r#"{"name":"bias","module":"env","field":"bias","params":["number"],"result":"number"}"#,
-        r#"{"name":"echo","module":"env","field":"echo","params":["string"],"result":"string"}"#,
-        r#"{"name":"edit","module":"env","field":"edit","params":["number[]"],"result":"number[]"}"#,
-        r#"{"name":"idle","module":"env","field":"unused","params":["bool","string","number[]"],"result":"void"}"#,
-    ];
-    let all = decode(&scratch.compile(source, &hosts));
-    assert_metadata(&all, &exports, &imports);
+    let mut compiler = Compiler::new();
+    for (name, module, field, params, result) in [
+        ("print", "env", "log_number", vec![Type::Number], Type::Void),
+        ("ready", "app", "ready", vec![], Type::Bool),
+        ("bias", "env", "bias", vec![Type::Number], Type::Number),
+        ("echo", "env", "echo", vec![Type::String], Type::String),
+        (
+            "edit",
+            "env",
+            "edit",
+            vec![Type::NumberArray],
+            Type::NumberArray,
+        ),
+        (
+            "idle",
+            "env",
+            "unused",
+            vec![Type::Bool, Type::String, Type::NumberArray],
+            Type::Void,
+        ),
+    ] {
+        compiler
+            .register_host_function(name, module, field, params, result)
+            .unwrap();
+    }
+    let bytes = scratch.compile(source, &hosts);
+    assert_eq!(bytes, compiler.compile_source(source).unwrap());
+    let all = decode(&bytes);
+    assert_eq!(user_exports(&all), ["main", "text", "values"]);
     assert_eq!(
         all.imports,
         [
@@ -1152,13 +1259,18 @@ fn values(value: number[]) -> number[] { return edit(value); }
     );
     let mut selected_flags = hosts.to_vec();
     selected_flags.extend(["--export", "values", "--export", "main"]);
-    let only = decode(&scratch.compile(source, &selected_flags));
-    assert_metadata(&only, &[exports[0], exports[2]], &imports);
+    compiler.set_exports(ExportOptions::Only(vec!["values".into(), "main".into()]));
+    let bytes = scratch.compile(source, &selected_flags);
+    assert_eq!(bytes, compiler.compile_source(source).unwrap());
+    let only = decode(&bytes);
     assert_eq!(user_exports(&only), ["main", "values"]);
     let mut none_flags = hosts.to_vec();
     none_flags.push("--no-exports");
-    let none = decode(&scratch.compile(source, &none_flags));
-    assert_metadata(&none, &[], &imports);
+    compiler.set_exports(ExportOptions::None);
+    let bytes = scratch.compile(source, &none_flags);
+    assert_eq!(bytes, compiler.compile_source(source).unwrap());
+    let none = decode(&bytes);
+    assert!(user_exports(&none).is_empty());
     for selected in [&only, &none] {
         assert_eq!(selected.imports, all.imports);
         assert_eq!(selected.sections, all.sections);
@@ -1227,15 +1339,17 @@ fn malformed_or_invalid_host_declarations_exit_one_without_outputs() {
 #[ignore = "requires Node.js"]
 fn node_cli_compiles_and_runs_the_array_example_to_65() {
     let scratch = Scratch::new("node_example");
-    assert!(success(scratch.cli(&["-o", "program.wasm"], None)).is_empty());
-    decode(&fs::read(scratch.0.join("program.wasm")).unwrap());
+    assert_eq!(
+        scratch.compile(EXAMPLE_SOURCE, &[]),
+        raw_wasm(EXAMPLE_SOURCE)
+    );
     assert_eq!(text(scratch.node(&["program.wasm"])), "65\n");
-    scratch.assert_entries(&["program.wasm"]);
+    scratch.assert_entries(&["program.was", "program.wasm"]);
 }
 
 #[test]
 #[ignore = "requires Node.js"]
-fn node_cli_entry_and_json_arguments_use_language_types_and_selected_exports() {
+fn node_cli_entry_and_json_arguments_use_raw_numeric_scalars_and_handles() {
     let scratch = Scratch::new("node_arguments");
     scratch.compile(
         r#"
@@ -1247,7 +1361,9 @@ fn helper(value: number) -> number { return value * 2; }
 fn invert(value: bool) -> bool { return !value; }
 fn nothing() -> void {}
 fn text(value: string) -> string { return value; }
-fn values(value: number[]) -> number[] { value[0] = 9; return value; }
+fn literal() -> string { return "fixture"; }
+fn values(value: number[]) -> number[] { return value; }
+fn make_values() -> number[] { return [1, 2]; }
 "#,
         &[
             "-O3",
@@ -1260,55 +1376,76 @@ fn values(value: number[]) -> number[] { value[0] = 9; return value; }
             "--export",
             "text",
             "--export",
+            "literal",
+            "--export",
             "values",
+            "--export",
+            "make_values",
         ],
     );
     for (entry, args, expected) in [
-        ("calculate", "[21,true]", "42\n"),
-        ("calculate", "[21,false]", "21\n"),
-        ("invert", "[true]", "false\n"),
+        ("calculate", "[21,1]", "42\n"),
+        ("calculate", "[21,0]", "21\n"),
+        ("invert", "[1]", "0\n"),
+        ("invert", "[0]", "1\n"),
         ("nothing", "[]", ""),
-        ("text", "[\"héllo 🦀\"]", "héllo 🦀\n"),
-        ("text", "[\"\"]", "\n"),
-        ("values", "[[1,2]]", "[ 9, 2 ]\n"),
     ] {
         assert_eq!(
             text(scratch.node(&["program.wasm", "--entry", entry, "--args", args])),
             expected
         );
     }
-    for (entry, args, expected) in [
-        (
-            "calculate",
-            "[]",
-            "(number,bool)->number expects 2 arguments, got 0",
-        ),
-        ("calculate", "[21,true,0]", "expects 2 arguments, got 3"),
-        (
-            "calculate",
-            "[\"21\",true]",
-            "argument 1 of calculate must be number",
-        ),
-        ("invert", "[1]", "must be bool"),
-        ("text", "[1]", "must be string"),
-        ("values", "[[1,\"2\"]]", "[1] must be number"),
-        ("calculate", "{}", "JSON array"),
-        ("helper", "[21]", "not a language export"),
-        ("main", "[]", "not a language export"),
-    ] {
-        let stderr = failure(
+    let handle = text(scratch.node_script(
+        r#"
+const fs = require("node:fs");
+const module = new WebAssembly.Module(fs.readFileSync("program.wasm"));
+const {exports} = new WebAssembly.Instance(module);
+console.log(exports.literal());
+"#,
+    ));
+    let handle: u32 = handle.trim().parse().expect("static string handle");
+    let args = format!("[{handle}]");
+    assert_eq!(
+        text(scratch.node(&["program.wasm", "--entry", "text", "--args", &args])),
+        format!("{handle}\n")
+    );
+    for (entry, args) in [("text", "[1234]"), ("values", "[5678]")] {
+        failure(
             scratch.node(&["program.wasm", "--entry", entry, "--args", args]),
             1,
-            &[expected],
+            &["invocation:", "unreachable"],
         );
-        assert!(stderr.starts_with("invocation:"));
     }
+    assert!(
+        success(scratch.node_script(
+            r#"
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const module = new WebAssembly.Module(fs.readFileSync("program.wasm"));
+const {exports} = new WebAssembly.Instance(module);
+assert.equal(exports.helper, undefined);
+assert.equal(exports.main, undefined);
+assert.equal(exports.calculate(21, 1), 42);
+assert.equal(exports.invert(1), 0);
+assert.equal(exports.nothing(), undefined);
+const textHandle = exports.literal();
+const arrayHandle = exports.make_values();
+assert.equal(typeof textHandle, "number");
+assert.equal(typeof arrayHandle, "number");
+assert.equal(exports.text(textHandle), textHandle);
+assert.equal(exports.values(arrayHandle), arrayHandle);
+assert.throws(() => exports.text(1234), WebAssembly.RuntimeError);
+assert.throws(() => exports.values(5678), WebAssembly.RuntimeError);
+"#
+        ))
+        .is_empty()
+    );
     scratch.assert_entries(&["program.was", "program.wasm"]);
 }
 
 #[test]
 #[ignore = "requires Node.js"]
-fn node_cli_native_numeric_hosts_and_missing_provider_signatures() {
+fn node_cli_raw_numeric_hosts_accept_unwrapped_callbacks() {
     let scratch = Scratch::new("node_numeric_hosts");
     scratch.compile(
         r#"
@@ -1326,35 +1463,14 @@ fn main(value: number) -> number {
             "bias=env.bias(number)->number",
         ],
     );
-    let stderr = failure(
-        scratch.node(&["program.wasm", "--args", "[40]"]),
-        1,
-        &["env.log_number (number)->void"],
-    );
-    assert!(stderr.starts_with("instantiation:"));
-    scratch.write("partial.cjs", "module.exports = {env: {log_number() {}}};");
-    failure(
-        scratch.node(&["program.wasm", "--args", "[40]", "--imports", "partial.cjs"]),
-        1,
-        &["instantiation:", "env.ready ()->bool"],
-    );
-    scratch.write(
-        "partial.cjs",
-        "module.exports = {env: {log_number() {}, ready() { return true; }}};",
-    );
-    failure(
-        scratch.node(&["program.wasm", "--args", "[40]", "--imports", "partial.cjs"]),
-        1,
-        &["instantiation:", "env.bias (number)->number"],
-    );
     scratch.write(
         "provider.cjs",
         r#"
-const assert = require('node:assert/strict');
+const assert = require("node:assert/strict");
 module.exports = {env: {
-    log_number(value) { assert.equal(typeof value, 'number'); assert.equal(value, 40); },
-    ready() { return true; },
-    bias(value) { assert.equal(typeof value, 'number'); return value + 2; }
+    log_number(value) { assert.equal(typeof value, "number"); assert.equal(value, 40); return 99; },
+    ready() { return 1; },
+    bias(value) { assert.equal(typeof value, "number"); return value + 2; }
 }};
 "#,
     );
@@ -1368,141 +1484,96 @@ module.exports = {env: {
         ])),
         "42\n"
     );
-    scratch.write("bad.cjs", "module.exports = {env: {log_number() { return 99; }, ready() { return true; }, bias(value) { return value; }}};");
-    failure(
-        scratch.node(&["program.wasm", "--args", "[40]", "--imports", "bad.cjs"]),
-        1,
-        &[
-            "invocation:",
-            "env.log_number (number)->void",
-            "must be void (undefined)",
-        ],
-    );
-    scratch.assert_entries(&[
-        "program.was",
-        "program.wasm",
-        "partial.cjs",
-        "provider.cjs",
-        "bad.cjs",
-    ]);
+    assert!(success(scratch.node_script(r#"
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const module = new WebAssembly.Module(fs.readFileSync("program.wasm"));
+assert.throws(() => new WebAssembly.Instance(module), TypeError);
+assert.throws(() => new WebAssembly.Instance(module, {env: {log_number() {}}}), WebAssembly.LinkError);
+const {exports} = new WebAssembly.Instance(module, require("./provider.cjs"));
+assert.equal(exports.main(40), 42);
+"#)).is_empty());
+    scratch.assert_entries(&["program.was", "program.wasm", "provider.cjs"]);
 }
 
 #[test]
 #[ignore = "requires Node.js"]
-fn node_cli_native_string_and_array_hosts_copy_and_allocate_payloads() {
+fn node_embedding_string_and_array_hosts_receive_and_return_raw_handles() {
     let scratch = Scratch::new("node_memory_hosts");
     scratch.compile(
         r#"
-fn text(value: string) -> string { return echo(value); }
+fn text() -> string { return echo("héllo 🦀"); }
 fn edited() -> number[] {
     let original: number[] = [1, 2];
     let result: number[] = edit(original);
     result[0] = result[0] + 1;
-    return [original[0], result[0]];
+    return original;
 }
-fn grown() -> number {
-    let result: number[] = large();
-    result[0] = 9;
-    return len(result) + result[19999];
-}
+fn first(values: number[]) -> number { return values[0]; }
+fn count(values: number[]) -> number { return len(values); }
 "#,
         &[
             "--host",
             "echo=env.echo(string)->string",
             "--host",
             "edit=env.edit(number[])->number[]",
-            "--host",
-            "large=env.large()->number[]",
         ],
     );
-    scratch.write(
-        "provider.cjs",
-        r#"
-const assert = require('node:assert/strict');
-let retained;
-const large = new Array(20000).fill(2);
-module.exports = {env: {
-    echo(value) { assert.equal(typeof value, 'string'); return value + '!'; },
-    edit(values) {
-        assert(Array.isArray(values));
-        assert.deepEqual(values, [1, 2]);
-        retained = values;
-        values[0] = 40;
-        return values;
-    },
-    large() { return large; }
-}};
-process.on('exit', () => {
-    if (retained) assert.deepEqual(retained, [40, 2]);
-    assert.equal(large[0], 2);
-});
-"#,
+    assert!(
+        success(scratch.node_script(
+            r#"
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const module = new WebAssembly.Module(fs.readFileSync("program.wasm"));
+let textHandle;
+let arrayHandle;
+const {exports} = new WebAssembly.Instance(module, {env: {
+    echo(handle) { assert.equal(typeof handle, "number"); textHandle = handle; return handle; },
+    edit(handle) { assert.equal(typeof handle, "number"); arrayHandle = handle; return handle; }
+}});
+assert.equal(exports.text(), textHandle);
+const result = exports.edited();
+assert.equal(result, arrayHandle);
+assert.equal(exports.first(result), 2);
+assert.equal(exports.count(result), 2);
+assert(exports.memory instanceof WebAssembly.Memory);
+assert.equal(typeof exports.__alloc, "function");
+"#
+        ))
+        .is_empty()
     );
-    for (entry, args, expected) in [
-        ("text", "[\"héllo 🦀\"]", "héllo 🦀!\n"),
-        ("text", "[\"\"]", "!\n"),
-        ("edited", "[]", "[ 1, 41 ]\n"),
-        ("grown", "[]", "20002\n"),
-    ] {
-        assert_eq!(
-            text(scratch.node(&[
-                "program.wasm",
-                "--entry",
-                entry,
-                "--args",
-                args,
-                "--imports",
-                "provider.cjs"
-            ])),
-            expected
-        );
-    }
-    scratch.write("bad.cjs", "module.exports = {env: {echo(value) { return value; }, edit() { return new Float64Array([1]); }, large() { return []; }}};");
-    failure(
-        scratch.node(&["program.wasm", "--entry", "edited", "--imports", "bad.cjs"]),
-        1,
-        &[
-            "invocation:",
-            "return value of env.edit (number[])->number[]",
-            "must be number[]",
-        ],
-    );
-    scratch.assert_entries(&["program.was", "program.wasm", "provider.cjs", "bad.cjs"]);
+    scratch.assert_entries(&["program.was", "program.wasm"]);
 }
 
 #[test]
 #[ignore = "requires Node.js"]
-fn node_cli_array_boundaries_trap_instead_of_printing_a_result() {
+fn node_embedding_array_boundaries_trap_for_raw_handles() {
     let scratch = Scratch::new("node_bounds");
-    scratch.compile("fn main(values: number[], index: number) -> number { return values[index]; } fn store(values: number[], index: number) -> number { values[index] = 9; return values[0]; }", &[]);
-    assert_eq!(
-        text(scratch.node(&["program.wasm", "--args", "[[4,5],1]"])),
-        "5\n"
+    scratch.compile(
+        "fn values() -> number[] { return [4, 5]; } fn empty() -> number[] { return []; } fn load(values: number[], index: number) -> number { return values[index]; } fn store(values: number[], index: number) -> number { values[index] = 9; return values[0]; }",
+        &[],
     );
-    assert_eq!(
-        text(scratch.node(&["program.wasm", "--entry", "store", "--args", "[[4,5],1]"])),
-        "4\n"
-    );
-    for entry in ["main", "store"] {
-        for args in [
-            "[[],0]",
-            "[[1],-1]",
-            "[[1],1]",
-            "[[1],0.5]",
-            "[[1],4294967296]",
-        ] {
-            let stderr = failure(
-                scratch.node(&["program.wasm", "--entry", entry, "--args", args]),
-                1,
-                &["invocation:", "cannot call", "unreachable"],
-            );
-            assert!(stderr.contains(&format!("\"{entry}\"")));
-        }
+    assert!(
+        success(scratch.node_script(
+            r#"
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const module = new WebAssembly.Module(fs.readFileSync("program.wasm"));
+const {exports} = new WebAssembly.Instance(module);
+const values = exports.values();
+assert.equal(typeof values, "number");
+assert.equal(exports.load(values, 1), 5);
+assert.equal(exports.store(values, 1), 4);
+assert.equal(exports.load(values, 1), 9);
+for (const entry of ["load", "store"]) {
+    for (const index of [-1, 2, 0.5, 4294967296, NaN, Infinity]) {
+        assert.throws(() => exports[entry](values, index), WebAssembly.RuntimeError);
     }
-    failure(
-        scratch.node(&["program.wasm", "--args", "[[1],\"0\"]"]),
-        1,
-        &["invocation:", "argument 2 of main must be number"],
+    assert.throws(() => exports[entry](exports.empty(), 0), WebAssembly.RuntimeError);
+}
+"#
+        ))
+        .is_empty()
     );
     scratch.assert_entries(&["program.was", "program.wasm"]);
 }

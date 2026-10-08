@@ -1,4 +1,3 @@
-mod artifact;
 mod cli;
 mod diagnostic;
 

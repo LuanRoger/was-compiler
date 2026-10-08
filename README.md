@@ -13,12 +13,13 @@ cargo run --offline -- examples/array-sum.was -o target/array-sum.wasm --export 
 node runtime/run.cjs target/array-sum.wasm
 ```
 
-The runner prints `65`. No source argument still compiles the built-in example and
-prints plain WAT; `--help` lists file/stdin, output-format, export, and host options.
+The runner prints `65`. A source file is required; no arguments produce a usage
+error (exit `2`). `--help` exits `0` and lists source-file, output-format, export,
+and host options. `-` is a literal source filename, not stdin.
 The Node harness uses built-in modules only and requires no npm installation.
 
 - [Runtime integration](docs/runtime-integration.md): CLI usage, host providers,
-  export selection, typed calls, artifact metadata, and diagnostic stages.
+  export selection, raw Wasm calls, explicit marshaling, and diagnostic stages.
 - [Limitations and alternatives](docs/limitations.md): current restrictions,
   available workarounds, and possible future solutions with tradeoffs.
 - [Refactoring plan](docs/refactoring.md): prioritized maintainability work,
@@ -161,11 +162,13 @@ let mut compiler = Compiler::new();
 compiler.set_exports(ExportOptions::Only(vec!["main".into()]));
 ```
 
-Library output is raw Wasm. CLI binary output additionally contains versioned
-`was-compiler.interface` metadata for the typed Node runner. Plain WAT has no
-packaging metadata. The runner accepts native JavaScript strings/arrays by copying
-across the descriptor ABI; wrapped host-array mutations do not mutate guest data.
-Use direct embedding and the memory ABI when reference mutation is required.
+Library and CLI binary output are the same raw Wasm bytes for the same source,
+host declarations, and compiler/export options. The Node runtime's
+`instantiate(bytes, imports)` returns `{ instance, call }`; `call` passes raw
+argument values and returns raw results. Numbers use `f64`; booleans and
+string/array descriptor handles use `i32`. Native strings/arrays are not marshaled
+automatically. Use `createAbi` from `runtime/abi.cjs` for explicit conversion, or
+access memory directly when reference mutation is required.
 
 ## Optimization levels
 
@@ -190,7 +193,8 @@ level. The stage currently borrows the input without cloning or changing it;
 future transformations can return an owned typed AST. Calling the lower-level
 `codegen::compile` directly bypasses compiler options and optimization.
 
-Run the sample with `cargo run --offline` to print plain WAT with `wasmprinter`.
+Run `cargo run --offline -- examples/array-sum.was` to print plain WAT with
+`wasmprinter`.
 Run tests with `cargo test --offline`. Optional runtime tests require Node.js:
 
 ```text

@@ -1,7 +1,7 @@
 use std::{
     ffi::{OsStr, OsString},
     fs::{self, OpenOptions},
-    io::{self, Read, Write},
+    io::{self, Write},
     path::{Path, PathBuf},
     process::ExitCode,
     sync::atomic::{AtomicU64, Ordering},
@@ -16,28 +16,7 @@ use was_compiler::{
     CompileError, Compiler, CompilerOptions, ExportOptions, OptimizationLevel, Type,
 };
 
-use crate::{artifact, diagnostic};
-
-const EXAMPLE: &str = "
-    fn main() -> number {
-        let values: number[] = [10, 20, 30];
-        values[1] = 25;
-
-        return sum(values);
-    }
-
-    fn sum(values: number[]) -> number {
-        let total: number = 0;
-        let index: number = 0;
-
-        while index < len(values) {
-            total = total + values[index];
-            index = index + 1;
-        }
-
-        return total;
-    }
-";
+use crate::diagnostic;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum Format {
@@ -47,7 +26,7 @@ enum Format {
 
 #[derive(Debug, Default)]
 struct Options {
-    source: Option<PathBuf>,
+    source: PathBuf,
     output: Option<PathBuf>,
     format: Option<Format>,
     exports: ExportOptions,
@@ -60,15 +39,15 @@ struct Options {
     name = "was-compiler",
     about = "Compile the language to WebAssembly or plain WAT",
     color = clap::ColorChoice::Never,
-    after_help = "Without SOURCE, compile the built-in array example and print plain WAT.\nUse - as SOURCE to read UTF-8 source from stdin.\nUse -- before a source path starting with -.\n\nBinary Wasm requires an output file and includes typed-runtime metadata.\nWAT remains plain text without packaging metadata.\nExample host declaration: 'print=env.log_number(number)->void'\nRun a binary: node runtime/run.cjs program.wasm --entry main --args '[]'"
+    after_help = "SOURCE is a required UTF-8 source file.\nUse -- before a source path starting with -.\n\nBinary Wasm requires an output file.\nWAT remains plain text and defaults to stdout.\nExample host declaration: 'print=env.log_number(number)->void'\nRun a binary: node runtime/run.cjs program.wasm --entry main --args '[]'"
 )]
 struct Arguments {
     #[arg(
         value_name = "SOURCE",
         value_parser = path_parser(),
-        help = "UTF-8 source file, or - for stdin"
+        help = "Required UTF-8 source file"
     )]
-    source: Option<PathBuf>,
+    source: PathBuf,
 
     #[arg(
         short = 'o',
@@ -217,7 +196,7 @@ fn compile(options: Options) -> Result<(), String> {
             .map_err(|error| format!("host registration error in {declaration:?}: {error}"))?;
     }
 
-    let (label, source) = load_source(options.source.as_deref())?;
+    let (label, source) = load_source(&options.source)?;
     let program = compiler
         .analyze(&source)
         .map_err(|error| diagnostic::render(&label, &source, &error))?;
@@ -225,8 +204,7 @@ fn compile(options: Options) -> Result<(), String> {
         .compile(&program)
         .map_err(|error| diagnostic::render(&label, &source, &CompileError::Codegen(error)))?;
     let bytes = match format {
-        Format::Wasm => artifact::package(wasm, &program, compiler.exports())
-            .map_err(|error| format!("{label}: packaging error: {error}"))?,
+        Format::Wasm => wasm,
         Format::Wat => wasmprinter::print_bytes(&wasm)
             .map_err(|error| format!("{label}: WAT serialization error: {error}"))?
             .into_bytes(),
@@ -234,11 +212,7 @@ fn compile(options: Options) -> Result<(), String> {
 
     match options.output.as_deref() {
         Some(output) if output != Path::new("-") => {
-            if let Some(input) = options
-                .source
-                .as_deref()
-                .filter(|path| *path != Path::new("-"))
-                && let (Ok(input), Ok(output)) = (input.canonicalize(), output.canonicalize())
+            if let (Ok(input), Ok(output)) = (options.source.canonicalize(), output.canonicalize())
                 && input == output
             {
                 return Err(
@@ -256,23 +230,10 @@ fn compile(options: Options) -> Result<(), String> {
     }
 }
 
-fn load_source(path: Option<&Path>) -> Result<(String, String), String> {
-    match path {
-        Some(path) if path == Path::new("-") => {
-            let mut source = String::new();
-
-            io::stdin()
-                .lock()
-                .read_to_string(&mut source)
-                .map_err(|error| format!("<stdin>: input I/O error: {error}"))?;
-
-            Ok(("<stdin>".into(), source))
-        }
-        Some(path) => fs::read_to_string(path)
-            .map(|source| (path.display().to_string(), source))
-            .map_err(|error| format!("{}: input I/O error: {error}", path.display())),
-        None => Ok(("<example>".into(), EXAMPLE.into())),
-    }
+fn load_source(path: &Path) -> Result<(String, String), String> {
+    fs::read_to_string(path)
+        .map(|source| (path.display().to_string(), source))
+        .map_err(|error| format!("{}: input I/O error: {error}", path.display()))
 }
 
 fn register_host(compiler: &mut Compiler, declaration: &str) -> Result<(), String> {
@@ -369,6 +330,7 @@ mod tests {
     #[test]
     fn clap_parses_attached_values_and_optimization_levels() {
         let parsed = options(&[
+            "input.was",
             "--output=program.wasm",
             "--emit=wasm",
             "--export=main",
@@ -381,7 +343,21 @@ mod tests {
         assert_eq!(parsed.exports, ExportOptions::Only(vec!["main".into()]));
         assert_eq!(parsed.hosts, vec!["print=env.log_number(number)->void"]);
         assert_eq!(parsed.level, OptimizationLevel::Standard);
-        assert_eq!(options(&["-O", "3"]).level, OptimizationLevel::Aggressive);
+        assert_eq!(
+            options(&["input.was", "-O", "3"]).level,
+            OptimizationLevel::Aggressive
+        );
+    }
+
+    #[test]
+    fn source_file_is_required_even_with_output_options() {
+        for args in [vec![], vec!["--emit", "wat"], vec!["-o", "program.wasm"]] {
+            let error = parse(args.into_iter().map(OsString::from)).unwrap_err();
+
+            assert_eq!(error.kind(), ErrorKind::MissingRequiredArgument);
+            assert_eq!(error.exit_code(), 2);
+            assert!(error.to_string().contains("<SOURCE>"));
+        }
     }
 
     #[test]
@@ -394,7 +370,7 @@ mod tests {
 
     #[test]
     fn default_and_file_formats_keep_wat_stdout_safe() {
-        assert_eq!(output_format(&options(&[])), Format::Wat);
+        assert_eq!(output_format(&options(&["input.was"])), Format::Wat);
         assert_eq!(
             output_format(&options(&["input.was", "-o", "program.wasm"])),
             Format::Wasm
@@ -409,10 +385,17 @@ mod tests {
             ])),
             Format::Wat
         );
-        assert!(parse(["--emit", "wasm"].map(OsString::from).into_iter()).is_err());
         assert!(
             parse(
-                ["--emit", "wasm", "-o", "-"]
+                ["input.was", "--emit", "wasm"]
+                    .map(OsString::from)
+                    .into_iter()
+            )
+            .is_err()
+        );
+        assert!(
+            parse(
+                ["input.was", "--emit", "wasm", "-o", "-"]
                     .map(OsString::from)
                     .into_iter()
             )
@@ -439,10 +422,10 @@ mod tests {
 
         assert_eq!(
             options(&["--", "-source.was"]).source,
-            Some(PathBuf::from("-source.was"))
+            PathBuf::from("-source.was")
         );
         assert_eq!(
-            options(&["--export", "main", "--export", "helper"]).exports,
+            options(&["input.was", "--export", "main", "--export", "helper"]).exports,
             ExportOptions::Only(vec!["main".into(), "helper".into()])
         );
     }
