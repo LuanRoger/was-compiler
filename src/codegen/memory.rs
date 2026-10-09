@@ -1,9 +1,9 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, ops::ControlFlow};
 
 use crate::{
     ast::Type,
     typed_ast::{
-        BuiltinFunction, FunctionRef, TypedBlock, TypedExpr, TypedExprKind, TypedProgram,
+        BuiltinFunction, FunctionRef, TypedExpr, TypedExprKind, TypedProgram, TypedStatement,
         TypedStatementKind,
     },
 };
@@ -12,6 +12,7 @@ use wasm_encoder::{BlockType, Function, Instruction, MemArg, ValType};
 use super::{
     CodegenError,
     abi::{self, Signature},
+    walker::{self, Visitor},
 };
 
 pub(super) const PAGE_BYTES: u64 = 65_536;
@@ -98,7 +99,14 @@ impl MemoryPlan {
             used |= memory_type(function.return_type)
                 || function.params.iter().any(|param| memory_type(param.ty));
 
-            plan.visit_block(&function.body, &mut used)?;
+            let mut visitor = MemoryVisitor {
+                plan: &mut plan,
+                used: &mut used,
+            };
+
+            if let ControlFlow::Break(error) = walker::walk_block(&function.body, &mut visitor) {
+                return Err(error);
+            }
         }
 
         if !used {
@@ -112,95 +120,6 @@ impl MemoryPlan {
 
     pub fn string(&self, value: &str) -> Option<u32> {
         self.strings.get(value).copied()
-    }
-
-    fn visit_block(&mut self, block: &TypedBlock, used: &mut bool) -> Result<(), CodegenError> {
-        for statement in block {
-            match &statement.kind {
-                TypedStatementKind::Let { ty, value, .. } => {
-                    *used |= memory_type(*ty);
-
-                    self.visit_expr(value, used)?;
-                }
-
-                TypedStatementKind::Assignment { target, value } => {
-                    self.visit_expr(target, used)?;
-                    self.visit_expr(value, used)?;
-                }
-
-                TypedStatementKind::If { cond, then, else_ } => {
-                    self.visit_expr(cond, used)?;
-                    self.visit_block(then, used)?;
-
-                    if let Some(block) = else_ {
-                        self.visit_block(block, used)?;
-                    }
-                }
-
-                TypedStatementKind::While { cond, body } => {
-                    self.visit_expr(cond, used)?;
-                    self.visit_block(body, used)?;
-                }
-
-                TypedStatementKind::Return(value) => {
-                    if let Some(value) = value {
-                        self.visit_expr(value, used)?;
-                    }
-                }
-
-                TypedStatementKind::Expression(value) => self.visit_expr(value, used)?,
-            }
-        }
-
-        Ok(())
-    }
-
-    fn visit_expr(&mut self, expr: &TypedExpr, used: &mut bool) -> Result<(), CodegenError> {
-        *used |= memory_type(expr.ty);
-
-        match &expr.kind {
-            TypedExprKind::String(value) => {
-                *used = true;
-
-                self.intern(value)?;
-            }
-
-            TypedExprKind::Unary { expr, .. } => self.visit_expr(expr, used)?,
-
-            TypedExprKind::Binary { left, right, .. } => {
-                self.visit_expr(left, used)?;
-                self.visit_expr(right, used)?;
-            }
-
-            TypedExprKind::Call { func, args, .. } => {
-                *used |= matches!(func, FunctionRef::Builtin(BuiltinFunction::Len));
-
-                for arg in args {
-                    self.visit_expr(arg, used)?;
-                }
-            }
-
-            TypedExprKind::Array(elements) => {
-                *used = true;
-
-                for element in elements {
-                    self.visit_expr(element, used)?;
-                }
-            }
-
-            TypedExprKind::Index { expr, index } => {
-                *used = true;
-
-                self.visit_expr(expr, used)?;
-                self.visit_expr(index, used)?;
-            }
-
-            TypedExprKind::Number(_)
-            | TypedExprKind::Bool(_)
-            | TypedExprKind::Identifier { .. } => {}
-        }
-
-        Ok(())
     }
 
     fn intern(&mut self, value: &str) -> Result<(), CodegenError> {
@@ -233,6 +152,47 @@ impl MemoryPlan {
         self.strings.insert(value.to_owned(), handle);
 
         Ok(())
+    }
+}
+
+struct MemoryVisitor<'a> {
+    plan: &'a mut MemoryPlan,
+    used: &'a mut bool,
+}
+
+impl Visitor for MemoryVisitor<'_> {
+    type Break = CodegenError;
+
+    fn enter_statement(&mut self, statement: &TypedStatement) -> ControlFlow<CodegenError> {
+        if let TypedStatementKind::Let { ty, .. } = &statement.kind {
+            *self.used |= memory_type(*ty);
+        }
+
+        ControlFlow::Continue(())
+    }
+
+    fn enter_expression(&mut self, expr: &TypedExpr) -> ControlFlow<CodegenError> {
+        *self.used |= memory_type(expr.ty);
+
+        match &expr.kind {
+            TypedExprKind::String(value) => {
+                *self.used = true;
+
+                if let Err(error) = self.plan.intern(value) {
+                    return ControlFlow::Break(error);
+                }
+            }
+
+            TypedExprKind::Call { func, .. } => {
+                *self.used |= matches!(func, FunctionRef::Builtin(BuiltinFunction::Len));
+            }
+
+            TypedExprKind::Array(_) | TypedExprKind::Index { .. } => *self.used = true,
+
+            _ => {}
+        }
+
+        ControlFlow::Continue(())
     }
 }
 
@@ -695,7 +655,7 @@ mod tests {
     use crate::{
         host::{HostFunction, HostFunctionId},
         tokens::Span,
-        typed_ast::{FunctionId, TypedFunction, TypedStatement, VariableId},
+        typed_ast::{FunctionId, TypedBlock, TypedFunction, TypedStatement, VariableId},
     };
     use wasm_encoder::{
         CodeSection, ConstExpr, FunctionSection, GlobalSection, GlobalType, ImportSection,

@@ -1,60 +1,37 @@
+use std::ops::ControlFlow;
+
 use crate::{
     ast::BinaryOp,
-    typed_ast::{TypedBlock, TypedExpr, TypedExprKind, TypedProgram, TypedStatementKind},
+    typed_ast::{TypedExpr, TypedExprKind, TypedProgram},
 };
 use wasm_encoder::{BlockType, Function, Instruction, ValType};
+
+use super::walker::{self, Visitor};
 
 pub(super) fn needs_remainder(program: &TypedProgram) -> bool {
     program
         .functions
         .iter()
-        .any(|function| block_needs_remainder(&function.body))
+        .any(|function| walker::walk_block(&function.body, &mut RemainderVisitor).is_break())
 }
 
-fn block_needs_remainder(block: &TypedBlock) -> bool {
-    block.iter().any(|statement| match &statement.kind {
-        TypedStatementKind::Let { value, .. } | TypedStatementKind::Expression(value) => {
-            expr_needs_remainder(value)
+struct RemainderVisitor;
+
+impl Visitor for RemainderVisitor {
+    type Break = ();
+
+    fn enter_expression(&mut self, expr: &TypedExpr) -> ControlFlow<()> {
+        if matches!(
+            &expr.kind,
+            TypedExprKind::Binary {
+                op: BinaryOp::Remainder,
+                ..
+            }
+        ) {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
         }
-
-        TypedStatementKind::Assignment { target, value } => {
-            expr_needs_remainder(target) || expr_needs_remainder(value)
-        }
-
-        TypedStatementKind::If { cond, then, else_ } => {
-            expr_needs_remainder(cond)
-                || block_needs_remainder(then)
-                || else_.as_ref().is_some_and(block_needs_remainder)
-        }
-
-        TypedStatementKind::While { cond, body } => {
-            expr_needs_remainder(cond) || block_needs_remainder(body)
-        }
-
-        TypedStatementKind::Return(value) => value.as_ref().is_some_and(expr_needs_remainder),
-    })
-}
-
-fn expr_needs_remainder(expr: &TypedExpr) -> bool {
-    match &expr.kind {
-        TypedExprKind::Binary { left, op, right } => {
-            *op == BinaryOp::Remainder || expr_needs_remainder(left) || expr_needs_remainder(right)
-        }
-
-        TypedExprKind::Unary { expr, .. } => expr_needs_remainder(expr),
-
-        TypedExprKind::Array(elements) => elements.iter().any(expr_needs_remainder),
-
-        TypedExprKind::Call { args, .. } => args.iter().any(expr_needs_remainder),
-
-        TypedExprKind::Index { expr, index } => {
-            expr_needs_remainder(expr) || expr_needs_remainder(index)
-        }
-
-        TypedExprKind::Number(_)
-        | TypedExprKind::String(_)
-        | TypedExprKind::Bool(_)
-        | TypedExprKind::Identifier { .. } => false,
     }
 }
 
@@ -153,7 +130,10 @@ mod tests {
     use crate::{
         ast::{Type, UnaryOp},
         tokens::Span,
-        typed_ast::{FunctionId, FunctionRef, TypedFunction, TypedStatement, VariableId},
+        typed_ast::{
+            FunctionId, FunctionRef, TypedBlock, TypedFunction, TypedStatement, TypedStatementKind,
+            VariableId,
+        },
     };
     use wasm_encoder::{
         CodeSection, ExportKind, ExportSection, FunctionSection, Module, TypeSection,

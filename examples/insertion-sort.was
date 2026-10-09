@@ -1,0 +1,21 @@
+fn insertionSort(arr: number[]) -> number[] {
+    let counter: number = 1;
+    while counter < len(arr) {
+        let key: number = arr[counter];
+        let j: number = counter - 1;
+        while j >= 0 && arr[j] > key {
+            arr[j + 1] = arr[j];
+            j = j - 1;
+        }
+        arr[j + 1] = key;
+        counter = counter + 1;
+    }
+
+    return arr;
+}
+
+fn main() -> number {
+    let arr: number[] = [5, 2, 4, 6, 1, 3];
+    let sortedArr: number[] = insertionSort(arr);
+    return sortedArr[0];
+}

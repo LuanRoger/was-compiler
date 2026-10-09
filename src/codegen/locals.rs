@@ -1,13 +1,20 @@
-use std::collections::{HashMap, hash_map::Entry};
+use std::{
+    collections::{HashMap, hash_map::Entry},
+    ops::ControlFlow,
+};
 
 use crate::{
     ast::Type,
     tokens::Span,
-    typed_ast::{TypedBlock, TypedFunction, TypedStatementKind, VariableId},
+    typed_ast::{TypedFunction, TypedStatement, TypedStatementKind, VariableId},
 };
 use wasm_encoder::ValType;
 
-use super::{CodegenError, abi, checked_u32, indices::LocalIndex};
+use super::{
+    CodegenError, abi, checked_u32,
+    indices::LocalIndex,
+    walker::{self, Visitor},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Local {
@@ -38,51 +45,20 @@ impl LocalLayout {
             layout.insert(param.id, param.ty, &function.name, param.span)?;
         }
 
-        layout.collect(&function.body, &function.name)?;
+        let mut visitor = LocalVisitor {
+            layout: &mut layout,
+            function: &function.name,
+        };
+
+        if let ControlFlow::Break(error) = walker::walk_block(&function.body, &mut visitor) {
+            return Err(error);
+        }
 
         Ok(layout)
     }
 
     pub fn get(&self, id: VariableId) -> Option<Local> {
         self.bindings.get(&id).copied()
-    }
-
-    fn collect(&mut self, block: &TypedBlock, function: &str) -> Result<(), CodegenError> {
-        for statement in block {
-            match &statement.kind {
-                TypedStatementKind::Let { id, ty, .. } => {
-                    let value_type = abi::value_type(function, "local", *ty).map_err(|_| {
-                        CodegenError::UnsupportedLocalType {
-                            function: function.into(),
-                            ty: *ty,
-                            span: statement.span,
-                        }
-                    })?;
-
-                    self.insert(*id, *ty, function, statement.span)?;
-
-                    self.types.push(value_type);
-                }
-
-                TypedStatementKind::If { then, else_, .. } => {
-                    self.collect(then, function)?;
-
-                    if let Some(block) = else_ {
-                        self.collect(block, function)?;
-                    }
-                }
-
-                TypedStatementKind::While { body, .. } => {
-                    self.collect(body, function)?;
-                }
-
-                TypedStatementKind::Assignment { .. }
-                | TypedStatementKind::Return(_)
-                | TypedStatementKind::Expression(_) => {}
-            }
-        }
-
-        Ok(())
     }
 
     fn insert(
@@ -107,5 +83,148 @@ impl LocalLayout {
                 Ok(())
             }
         }
+    }
+}
+
+struct LocalVisitor<'a> {
+    layout: &'a mut LocalLayout,
+    function: &'a str,
+}
+
+impl Visitor for LocalVisitor<'_> {
+    type Break = CodegenError;
+
+    fn enter_statement(&mut self, statement: &TypedStatement) -> ControlFlow<CodegenError> {
+        if let TypedStatementKind::Let { id, ty, .. } = &statement.kind {
+            let value_type = match abi::value_type(self.function, "local", *ty) {
+                Ok(value_type) => value_type,
+                Err(_) => {
+                    return ControlFlow::Break(CodegenError::UnsupportedLocalType {
+                        function: self.function.into(),
+                        ty: *ty,
+                        span: statement.span,
+                    });
+                }
+            };
+
+            if let Err(error) = self.layout.insert(*id, *ty, self.function, statement.span) {
+                return ControlFlow::Break(error);
+            }
+
+            self.layout.types.push(value_type);
+        }
+
+        ControlFlow::Continue(())
+    }
+
+    fn visit_expressions(&self) -> bool {
+        false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        compiler::Compiler,
+        typed_ast::{TypedExpr, TypedExprKind},
+    };
+
+    #[test]
+    fn slots_preserve_parameter_branch_loop_and_unreachable_declaration_order() {
+        let program = Compiler::new()
+            .analyze(
+                "fn test(value: number, flag: bool) -> void {
+                let a: number = 0;
+                if flag { let b: string = \"b\"; } else { let c: number[] = []; }
+                while flag { let d: bool = false; }
+                return;
+                let e: number = 1;
+            }",
+            )
+            .unwrap();
+        let original = program.clone();
+        let layout = LocalLayout::new(&program.functions[0]).unwrap();
+
+        assert_eq!(
+            layout.types,
+            [
+                ValType::F64,
+                ValType::I32,
+                ValType::I32,
+                ValType::I32,
+                ValType::F64
+            ]
+        );
+        for (index, ty) in [
+            Type::Number,
+            Type::Bool,
+            Type::Number,
+            Type::String,
+            Type::NumberArray,
+            Type::Bool,
+            Type::Number,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let local = layout.get(VariableId(index)).unwrap();
+            assert_eq!(local.index.raw(), index as u32);
+            assert_eq!(local.ty, ty);
+        }
+        assert_eq!(program, original);
+    }
+
+    #[test]
+    fn local_collection_does_not_validate_or_descend_into_initializers_and_conditions() {
+        let mut program = Compiler::new()
+            .analyze("fn test() -> void { let a: number = 1; if true { let b: bool = false; } }")
+            .unwrap();
+        let function = &mut program.functions[0];
+        let invalid = TypedExpr {
+            kind: TypedExprKind::Number("invalid".into()),
+            ty: Type::Void,
+        };
+        let TypedStatementKind::Let { value, .. } = &mut function.body[0].kind else {
+            panic!("let");
+        };
+        *value = invalid.clone();
+        let TypedStatementKind::If { cond, .. } = &mut function.body[1].kind else {
+            panic!("if");
+        };
+        **cond = invalid;
+
+        let layout = LocalLayout::new(function).unwrap();
+
+        assert_eq!(layout.types, [ValType::F64, ValType::I32]);
+        assert_eq!(layout.get(VariableId(0)).unwrap().index.raw(), 0);
+        assert_eq!(layout.get(VariableId(1)).unwrap().index.raw(), 1);
+    }
+
+    #[test]
+    fn unsupported_local_type_precedes_duplicate_id_and_later_declaration_errors() {
+        let mut program = Compiler::new().analyze(
+            "fn test(value: number) -> void { if true { let a: number = 1; } else { let b: number = 2; } }",
+        ).unwrap();
+        let function = &mut program.functions[0];
+        let TypedStatementKind::If { then, else_, .. } = &mut function.body[0].kind else {
+            panic!("if");
+        };
+        let span = then[0].span;
+        let TypedStatementKind::Let { id, ty, .. } = &mut then[0].kind else {
+            panic!("let");
+        };
+        *id = VariableId(0);
+        *ty = Type::Void;
+        let TypedStatementKind::Let { id, .. } = &mut else_.as_mut().unwrap()[0].kind else {
+            panic!("let");
+        };
+        *id = VariableId(0);
+
+        assert!(
+            matches!(LocalLayout::new(function), Err(CodegenError::UnsupportedLocalType {
+            function, ty: Type::Void, span: actual,
+        }) if function == "test" && actual == span)
+        );
     }
 }

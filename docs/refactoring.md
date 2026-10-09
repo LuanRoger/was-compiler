@@ -57,7 +57,7 @@ new acceptance criteria instead of calling it a refactor.
 | 1 — high, implemented | Split large backend tests; share bounded subprocess support | [scalar tests](../src/codegen/tests/), [memory tests](../src/codegen/memory_tests/), [process harness](../tests/support/process.rs), [harness tests](../tests/process.rs) | Existing assertions and ignored-runtime policy preserved; bounded child cleanup and useful stdout/stderr. |
 | 2 — high, implemented | Name ABI constants and strengthen cross-language layout fixtures | [abi.rs](../src/codegen/abi.rs), [memory.rs](../src/codegen/memory.rs), [runtime/abi.cjs](../runtime/abi.cjs), [ABI tests](../tests/abi.rs) | Pre-refactor module bytes preserved; independent raw-ABI and explicit-conversion roundtrips agree. |
 | 3 — medium, implemented | Add a small function-body emission facade and index/label types | [function.rs](../src/codegen/function.rs), [indices.rs](../src/codegen/indices.rs), [emitter tests](../tests/emitter.rs), [layout.rs](../src/codegen/layout.rs) | Pre-refactor bytes and instruction/index output preserved, including nested control flow and live stack prefixes. |
-| 4 — medium | Share structural typed-AST walking for planning | [memory.rs](../src/codegen/memory.rs), [locals.rs](../src/codegen/locals.rs), [temporaries.rs](../src/codegen/temporaries.rs) | Same preorder, static handles, declaration order, temporary count, and planning error order. |
+| 4 — medium, implemented | Share structural typed-AST walking for planning | [walker.rs](../src/codegen/walker.rs), [walker tests](../src/codegen/walker_tests.rs), [memory.rs](../src/codegen/memory.rs), [locals.rs](../src/codegen/locals.rs), [temporaries.rs](../src/codegen/temporaries.rs), [numeric.rs](../src/codegen/numeric.rs) | Same preorder, static handles, declaration order, temporary count, remainder discovery, and planning error order. |
 | 5 — medium | Define a validated typed-program boundary | [typed_ast.rs](../src/typed_ast.rs), [semantic.rs](../src/semantic.rs), [compiler.rs](../src/compiler.rs), backend malformed-tree tests | Checked/legacy paths agree on bytes and diagnostics; no unchecked bypass hidden by the new API. |
 | 6 — medium | Add common span accessors and codify configuration/output contracts | [tokens.rs](../src/tokens.rs), [parser.rs](../src/parser.rs), [compiler.rs](../src/compiler.rs), [cli.rs](../src/cli.rs), [diagnostic.rs](../src/diagnostic.rs) | Existing module split, errors/rendering, raw-byte compatibility, CLI formats/statuses, and output safety preserved. |
 
@@ -192,33 +192,50 @@ normalization point, return analysis, branch depth, diagnostic precedence/span,
 or optimization behavior changes. Golden fixtures are compatibility evidence,
 not outputs to regenerate automatically when a refactor fails.
 
-## 4. One structural walker, separate planning policies
+## 4. One structural walker, separate planning policies: implemented
 
-`MemoryPlan::visit_block`/`visit_expr` and
-`temporaries::visit_block`/`visit_expr` repeat recursive matches for the same typed
-statements/expressions. `LocalLayout::collect` independently descends nested
-blocks to collect declarations. A new AST variant currently requires updating
-these traversals separately.
+[walker.rs](../src/codegen/walker.rs) owns exhaustive recursion over typed
+statements and expressions. Its private visitor interface has statement/expression
+entry hooks, block entry/exit hooks, and an option to skip expression traversal.
+`ControlFlow` propagates an immediate break payload: memory, local, and temporary
+visitors carry `CodegenError`; remainder discovery carries a found signal.
+Existing planner entrypoints still return the same `Result` or `bool` types.
 
-Add a private, fallible structural walker with exhaustive matches and a small
-visitor interface: statement/expression enter hooks and explicit block entry/exit
-where needed. Walk source preorder, left operand before right, arguments/elements
-in order, and condition before branch/body. Keep the three planning policies
-separate: memory need/string interning, declaration collection, and array-literal
-temporary counting. The local collector can ignore expression hooks rather than
-inventing another AST representation.
+Traversal is sequential source preorder: assignment target before value, left
+operand before right, arguments/elements in order, condition before then/else or
+loop body, and index base before index expression. It includes empty blocks,
+unreachable statements, and both short-circuit operands. Block exit hooks run
+only after successful traversal of that block; a break does not synthesize exit
+hooks or provide unwinding/restoration semantics.
 
-Do not make code emission or semantic analysis blindly use that walker. Their
-scope, validation precedence, short-circuit lowering, and return rules have
-meaning beyond structural traversal. A planning walk still visits unreachable
-code and both logical operands; runtime execution does not necessarily do so.
-The walker must not accidentally change which planning error is reported first.
+Planning policies and pass order remain separate:
 
-Characterize signature-driven memory inclusion, literal interning preorder,
-branch/loop declaration order, nested arrays, unused memory-backed imports, and
-unreachable literals before migrating one planner at a time. Keep each planner's
-results identical; sharing recursion is the objective, not combining passes or
-reducing visits.
+- [Memory planning](../src/codegen/memory.rs) retains signature-driven inclusion,
+  expression/declaration type inspection, builtin `len` detection, and string
+  interning at expression entry. It scans hosts and function signatures outside
+  the structural walker, preserving existing ordering and owned host snapshots.
+- [Local collection](../src/codegen/locals.rs) still checks and inserts parameters
+  first, then declarations in source order. It disables expression traversal
+  entirely, preserving its previous exclusion of initializers and conditions,
+  including malformed expressions. Declaration errors retain their precedence.
+- [Temporary planning](../src/codegen/temporaries.rs) counts each array occurrence
+  before its children, including nested/forged arrays and runtime-skipped code.
+  It preserves checked overflow and does not reuse slots across branches/loops.
+- [Remainder discovery](../src/codegen/numeric.rs) stops at the first `%`, before
+  visiting that operator's children or later nodes/functions, just as before.
+
+[walker_tests.rs](../src/codegen/walker_tests.rs) pins exact visitation order for
+every statement/expression shape, expression exclusion, empty-block hooks, input
+immutability, and immediate breaks at every hook. Local and temporary tests add
+independent declaration/slot counts, malformed-expression exclusion, diagnostic
+precedence, and overflow checks. Existing memory-inclusion/string-preorder tests,
+remainder tests, and ABI/emitter golden fixtures remain unchanged.
+
+Semantic analysis and code emission do not use this walker: their scope,
+validation precedence, short-circuit execution, and return rules are specialized.
+No passes are combined, no parallel execution or optimization is introduced, and
+no public AST/API, generated byte layout, static handle, local/temporary order,
+or error variant/span changes.
 
 ## 5. An explicit validated typed-program boundary
 

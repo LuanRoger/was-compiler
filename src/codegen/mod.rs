@@ -24,6 +24,7 @@ mod numeric;
 mod statement;
 mod temporaries;
 mod values;
+mod walker;
 
 #[cfg(test)]
 mod export_tests;
