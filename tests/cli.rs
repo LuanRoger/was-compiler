@@ -620,6 +620,87 @@ fn comments_preserve_raw_cli_and_library_wasm() {
 }
 
 #[test]
+fn inferred_cli_binary_matches_annotated_library_at_every_level() {
+    let scratch = Scratch::new("inference_binary");
+    let annotated = r#"
+        fn main() -> number {
+            let n: number = 10;
+            let flag: bool = true;
+            let text: string = "é🦀";
+            let values: number[] = [n, 2];
+            let empty: number[] = [];
+            let alias: number[] = values;
+            if flag { alias[1] = later(n); }
+            return values[1] + len(empty);
+        }
+        fn later(value: number) -> number { return value * 2; }
+    "#;
+    let inferred = annotated
+        .replace(": number[] =", " =")
+        .replace(": number =", " =")
+        .replace(": bool =", " =")
+        .replace(": string =", " =");
+    let mut compiler = Compiler::new();
+    compiler.set_exports(ExportOptions::Only(vec!["main".into()]));
+    for (flag, level) in [
+        ("-O0", was_compiler::OptimizationLevel::None),
+        ("-O1", was_compiler::OptimizationLevel::Basic),
+        ("-O2", was_compiler::OptimizationLevel::Standard),
+        ("-O3", was_compiler::OptimizationLevel::Aggressive),
+    ] {
+        compiler.set_optimization_level(level);
+        let expected = compiler.compile_source(annotated).unwrap();
+        assert_eq!(
+            scratch.compile(&inferred, &[flag, "--export", "main"]),
+            expected
+        );
+    }
+    scratch.assert_entries(&["program.was", "program.wasm"]);
+}
+
+#[test]
+fn inferred_cli_reassignment_and_void_errors_preserve_diagnostics_and_outputs() {
+    let scratch = Scratch::new("inference_errors");
+    let sentinel = b"existing artifact";
+    let cases = [
+        (
+            "fn main() -> void {\n    let n = 10;\n    n = true;\n}",
+            "program.was:3:5: semantic error:",
+            "Type mismatch: expected Number, found Bool",
+            "3 |     n = true;",
+        ),
+        (
+            "fn main() -> void {\n    let value = noop();\n}\nfn noop() -> void {}",
+            "program.was:2:5: semantic error:",
+            "'value' cannot have type void",
+            "2 |     let value = noop();",
+        ),
+    ];
+    for existing in [false, true] {
+        if existing {
+            scratch.write("program.wasm", sentinel);
+        }
+        for (source, location, message, excerpt) in cases {
+            let input = scratch.write("program.was", source);
+            let before = scratch.entries();
+            let stderr = failure(
+                scratch.cli(&["program.was", "-o", "program.wasm"], None),
+                1,
+                &[location, message, excerpt, " |     ^"],
+            );
+            assert!(stderr.starts_with(location));
+            assert_eq!(fs::read(input).unwrap(), source.as_bytes());
+            if existing {
+                assert_eq!(fs::read(scratch.0.join("program.wasm")).unwrap(), sentinel);
+            } else {
+                assert!(!scratch.0.join("program.wasm").exists());
+            }
+            assert_eq!(scratch.entries(), before, "failed compilation leaked files");
+        }
+    }
+}
+
+#[test]
 fn export_selection_preserves_source_order_bodies_and_memory_abi() {
     let scratch = Scratch::new("memory_exports");
     let all = decode(&scratch.compile(MEMORY_SOURCE, &[]));

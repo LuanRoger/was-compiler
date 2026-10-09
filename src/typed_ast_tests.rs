@@ -163,6 +163,124 @@ fn assert_block_spans(ast: &AstBlock, typed: &TypedBlock) {
 }
 
 #[test]
+fn inferred_declarations_resolve_every_initializer_to_a_concrete_type() {
+    let source = r#"
+        fn test() -> void {
+            let literal = 10;
+            let decimal = 10.5;
+            let arithmetic = -(literal + decimal) / 2;
+            let comparison = arithmetic >= 0;
+            let boolean = !comparison || literal == 0;
+            let text = "é";
+            let same = text == "é";
+            let values = [literal, decimal];
+            let empty = [];
+            let element = values[0];
+            let length = len(empty);
+            let result = identity(element);
+            let alias = values;
+        }
+
+        fn identity(value: number) -> number { return value; }
+    "#;
+    let ast = parse(source);
+    let typed = SemanticAnalyzer::new().analyze(&ast).unwrap();
+    let expected = [
+        Type::Number,
+        Type::Number,
+        Type::Number,
+        Type::Bool,
+        Type::Bool,
+        Type::String,
+        Type::Bool,
+        Type::NumberArray,
+        Type::NumberArray,
+        Type::Number,
+        Type::Number,
+        Type::Number,
+        Type::NumberArray,
+    ];
+    let body = &typed.functions[0].body;
+
+    assert_eq!(body.len(), expected.len());
+    assert_block_spans(&ast.functions[0].body, body);
+
+    for (index, (statement, expected_type)) in body.iter().zip(expected).enumerate() {
+        let StmtKind::Let { id, ty, value, .. } = &statement.kind else {
+            panic!("expected declaration");
+        };
+
+        assert_eq!(*id, VariableId(index));
+        assert_eq!(*ty, expected_type);
+        assert_eq!(value.ty, expected_type);
+        assert!(matches!(
+            ast.functions[0].body[index].kind,
+            AstStatementKind::Let { ty: None, .. }
+        ));
+    }
+
+    let StmtKind::Let { value, .. } = &body[11].kind else {
+        panic!("expected call initializer");
+    };
+
+    assert_eq!(
+        *value,
+        call(
+            FunctionRef::User(FunctionId(1)),
+            "identity",
+            vec![identifier(9, "element", Type::Number)],
+            Type::Number,
+        )
+    );
+}
+
+#[test]
+fn inferred_shadow_initializers_resolve_outer_ids_and_restore_bindings() {
+    let source = "fn test(value: number[]) -> number[] {
+        if true {
+            let value = value;
+            let size = len(value);
+        }
+
+        let copy = value;
+        return copy;
+    }";
+    let ast = parse(source);
+    let typed = SemanticAnalyzer::new().analyze(&ast).unwrap();
+    let body = &typed.functions[0].body;
+    let StmtKind::If { then, .. } = &body[0].kind else {
+        panic!("expected conditional");
+    };
+
+    assert_let(
+        &then[0],
+        1,
+        "value",
+        Type::NumberArray,
+        identifier(0, "value", Type::NumberArray),
+    );
+    assert_let(
+        &then[1],
+        2,
+        "size",
+        Type::Number,
+        len(identifier(1, "value", Type::NumberArray)),
+    );
+    assert_let(
+        &body[1],
+        3,
+        "copy",
+        Type::NumberArray,
+        identifier(0, "value", Type::NumberArray),
+    );
+    assert_eq!(
+        returned(&body[2]),
+        &identifier(3, "copy", Type::NumberArray)
+    );
+    assert_block_spans(&ast.functions[0].body, body);
+}
+
+#[test]
 fn nested_arithmetic_arrays_calls_and_indices_have_types_at_every_node() {
     let typed = analyze(
         "fn make(n: number) -> number { return n; }

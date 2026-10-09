@@ -77,7 +77,7 @@ pub type Block = Vec<Statement>;
 pub enum StatementKind {
     Let {
         name: String,
-        ty: Type,
+        ty: Option<Type>,
         value: Expr,
     },
 

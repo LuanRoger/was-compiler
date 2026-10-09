@@ -30,6 +30,13 @@ Source
 are semantic IDs, not raw Wasm indices. This lets an analyzed program be compiled
 later, even after the compiler's host registry changes or the analyzer is dropped.
 
+The public untyped AST represents the optional local annotation as
+`StatementKind::Let.ty: Option<Type>` (previously `Type`): `Some(type)` for an
+annotated declaration and `None` for an inferred one. Callers constructing or
+matching untyped declarations must account for this API change. Semantic analysis
+resolves both forms to `TypedStatementKind::Let.ty: Type`; the typed AST retains
+concrete types, with no walker, backend, or ABI changes for local inference.
+
 The compiler emits bytes. The embedding application decides whether to write a
 `.wasm` file, instantiate it in a browser, or pass it to another runtime.
 
@@ -448,6 +455,36 @@ Acceptance covers LF/CR/EOF line endings, multiline and non-nesting block
 comments, adjacency to tokens, string delimiters, token separation, original byte
 spans, and unterminated-block parser errors. Comments do not add a numbered
 backend milestone.
+
+## Implemented language extension: local initializer inference
+
+Local declarations accept `let name = initializer;` as well as the existing
+`let name: type = initializer;`. Every nonvoid expression already has a concrete
+`number`, `bool`, `string`, or `number[]` type; an omitted annotation uses that
+type. Empty `[]` infers `number[]` because only numeric arrays exist. Explicit
+annotations continue to require exact initializer-type matches.
+
+Semantic analysis checks the initializer before introducing the new binding.
+A same-named initializer reference therefore resolves only to an existing outer
+binding; otherwise it is unknown. Nested scopes may shadow bindings, while
+same-scope duplicate checks and existing first-error ordering are preserved.
+Once initialized, the binding's type is fixed for subsequent assignments.
+An inferred void-returning call initializer uses the existing
+`SemanticError::InvalidVoidType` for the local, not a new error variant.
+
+This is local initializer inference, not function inference or whole-program
+type unification. Parameter and result annotations remain mandatory, and every
+local declaration still requires an initializer. No `i32` language type,
+promotions, or implicit coercions are introduced: `number` remains IEEE-754 `f64`,
+including integer-looking literals. Inference ends at semantic analysis; typed
+local layout, traversal, lowering, and the host/memory ABI are unchanged.
+
+Acceptance covers inferred literals and compound/call expressions of all nonvoid
+types, empty arrays, exact explicit annotations, fixed-type reassignment,
+outer-binding reads during shadowing, unknown self-references, void initializers,
+and duplicate/error-ordering compatibility. Emission checks compare equivalent
+annotated and inferred programs across optimization levels; runtime checks cover
+initializer effects and shadowing. This extension adds no numbered backend milestone.
 
 ## Remaining work
 

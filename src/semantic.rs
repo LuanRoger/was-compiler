@@ -280,18 +280,31 @@ impl SemanticAnalyzer {
 
         let kind = match &statement.kind {
             StatementKind::Let { name, ty, value } => {
-                self.check_variable_type(name, *ty, span)?;
+                if let Some(ty) = ty {
+                    self.check_variable_type(name, *ty, span)?;
+                }
 
                 let value = self.analyze_expr(value, span)?;
+                let ty = match ty {
+                    Some(ty) => {
+                        self.expect_type(*ty, value.ty, span)?;
 
-                self.expect_type(*ty, value.ty, span)?;
+                        *ty
+                    }
 
-                let id = self.declare_variable(name, *ty, span)?;
+                    None => {
+                        self.check_variable_type(name, value.ty, span)?;
+
+                        value.ty
+                    }
+                };
+
+                let id = self.declare_variable(name, ty, span)?;
 
                 TypedStatementKind::Let {
                     id,
                     name: name.clone(),
-                    ty: *ty,
+                    ty,
                     value,
                 }
             }

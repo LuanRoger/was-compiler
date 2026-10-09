@@ -93,8 +93,13 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
 
 ## Current language support
 
-- Types: `number`, `bool`, `string`, `number[]`, and `void`. Parameters, results,
-  and initialized `let` declarations require explicit types; no implicit coercion.
+- Types: `number`, `bool`, `string`, `number[]`, and `void`. Parameters and results
+  require explicit types. Locals accept `let name = initializer;` or
+  `let name: type = initializer;`; every declaration requires an initializer.
+  All nonvoid expressions infer concrete existing types; `[]` infers `number[]`
+  because only numeric arrays exist. Explicit annotations require exact matches.
+- Local inference adds no source `i32` type, promotions, implicit coercions,
+  function inference, or whole-program type unification. `number` remains `f64`.
 - Named functions support forward, nested, self-recursive, mutual, and registered
   host calls. Statements include `let`, variable/index assignment, expression
   statements, `return`, `if`/`else`, and `while`.
@@ -129,6 +134,20 @@ refactors; specify and test any intentional behavior change explicitly.
 - An unterminated block comment emits `Invalid` spanning the opening slash to EOF,
   followed by `Eof`. Report it via existing parser errors, without a new error
   stage. Comments change no AST, codegen, or ABI contract.
+
+### Local initializer inference
+
+- Analyze the initializer before introducing the binding. A same-named reference
+  resolves only to an existing outer binding; otherwise it is unknown. Allow
+  nested-scope shadowing while preserving same-scope duplicate checks and existing
+  first-error ordering. After initialization, the binding's type is fixed.
+- An inferred void call initializer yields the existing
+  `SemanticError::InvalidVoidType` for the local. Explicit annotations retain
+  exact type checking; do not add coercions or a new error stage.
+- Public untyped `StatementKind::Let.ty` is `Option<Type>`: `Some(type)` for
+  annotated declarations, `None` for inferred declarations. Typed
+  `TypedStatementKind::Let.ty` remains concrete `Type`. Resolve inference in
+  semantic analysis; do not change the walker, backend, or ABI for this feature.
 
 ### Evaluation, scopes, and module layout
 

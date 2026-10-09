@@ -163,11 +163,18 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
 
     fn parse_let(&mut self) -> Result<StatementKind, ParseError> {
         self.expect(TokenKind::Let)?;
+
         let name = self.parse_identifier()?;
-        self.expect(TokenKind::Colon)?;
-        let ty = self.parse_type()?;
+        let ty = if self.consume(TokenKind::Colon) {
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+
         self.expect(TokenKind::Equal)?;
+
         let value = self.parse_expression()?;
+
         self.expect(TokenKind::Semicolon)?;
 
         Ok(StatementKind::Let { name, ty, value })
@@ -622,7 +629,7 @@ mod tests {
             statements[0].kind,
             StatementKind::Let {
                 name: "xs".into(),
-                ty: Type::NumberArray,
+                ty: Some(Type::NumberArray),
                 value: Expr::Array(vec![number("1"), number("2")]),
             }
         );
@@ -653,6 +660,79 @@ mod tests {
             statements[0].span,
             Span::new(start, start + "let xs: number[] = [1, 2];".len())
         );
+    }
+
+    #[test]
+    fn parses_mixed_inferred_and_annotated_declarations_with_original_spans() {
+        let source = "fn main() -> void { let/* note */n = 1; let flag: bool = true; let text = \"é\"; let values = []; }";
+        let program = parse(source).unwrap();
+        let statements = &program.functions[0].body;
+        let expected = [
+            (
+                "let/* note */n = 1;",
+                StatementKind::Let {
+                    name: "n".into(),
+                    ty: None,
+                    value: number("1"),
+                },
+            ),
+            (
+                "let flag: bool = true;",
+                StatementKind::Let {
+                    name: "flag".into(),
+                    ty: Some(Type::Bool),
+                    value: Expr::Bool(true),
+                },
+            ),
+            (
+                "let text = \"é\";",
+                StatementKind::Let {
+                    name: "text".into(),
+                    ty: None,
+                    value: Expr::String("é".into()),
+                },
+            ),
+            (
+                "let values = [];",
+                StatementKind::Let {
+                    name: "values".into(),
+                    ty: None,
+                    value: Expr::Array(vec![]),
+                },
+            ),
+        ];
+
+        assert_eq!(statements.len(), expected.len());
+
+        for (statement, (fragment, kind)) in statements.iter().zip(expected) {
+            let start = source.find(fragment).unwrap();
+
+            assert_eq!(statement.kind, kind);
+            assert_eq!(statement.span, Span::new(start, start + fragment.len()));
+        }
+    }
+
+    #[test]
+    fn incomplete_local_declarations_report_the_offending_token() {
+        for (statement, expected, found) in [
+            ("let value;", "=", ";"),
+            ("let value: number;", "=", ";"),
+            ("let value = ;", "expression", ";"),
+            ("let value: = 1;", "type", "="),
+            ("let value = 1", ";", "}"),
+        ] {
+            let source = format!("fn main() -> void {{ {statement} }}");
+            let start = source.find(found).unwrap();
+
+            assert_eq!(
+                parse(&source).unwrap_err(),
+                ParseError::UnexpectedToken {
+                    expected,
+                    found,
+                    span: Span::new(start, start + found.len()),
+                }
+            );
+        }
     }
 
     #[test]
@@ -902,7 +982,12 @@ mod tests {
             "fn main(x: unknown) -> void {}",
             "fn main(x: bool[]) -> void {}",
             "fn main() -> string[] {}",
-            "fn main() -> void { let x = 1; }",
+            "fn main(x) -> void {}",
+            "fn main() -> void { let x; }",
+            "fn main() -> void { let x = ; }",
+            "fn main() -> void { let x: = 1; }",
+            "fn main() -> void { let x = 1 }",
+            "fn main() -> void { let x number = 1; }",
             "fn main() -> void { let x: number; }",
             "fn main() -> void { return +1; }",
             "fn main() -> void { if true {} else if false {} }",
@@ -972,13 +1057,18 @@ mod tests {
 
     #[test]
     fn truncated_programs_never_panic() {
-        let tokens = Lexer::new("fn compute(xs: number[], x: number) -> number { let y: number = xs[x] + call(1, 2); if y > 0 { return y; } else { return -y; } }").tokenize();
-
-        for end in 0..tokens.len() - 1 {
-            assert!(
-                Parser::new(&tokens[..end]).parse_program().is_err(),
-                "accepted truncated input at token {end}"
+        for declaration in ["let y: number", "let y"] {
+            let source = format!(
+                "fn compute(xs: number[], x: number) -> number {{ {declaration} = xs[x] + call(1, 2); if y > 0 {{ return y; }} else {{ return -y; }} }}"
             );
+            let tokens = Lexer::new(&source).tokenize();
+
+            for end in 0..tokens.len() - 1 {
+                assert!(
+                    Parser::new(&tokens[..end]).parse_program().is_err(),
+                    "accepted truncated input at token {end} for {declaration}"
+                );
+            }
         }
     }
 }

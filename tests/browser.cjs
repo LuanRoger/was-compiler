@@ -147,6 +147,78 @@ async function main() {
         }
     });
 
+    test('inferred locals preserve all types, host order, and annotated bytes at every level', compiler => {
+        compiler.registerHostFunction('mark', 'env', 'mark', ['number'], 'number');
+        const annotated = `
+            fn numeric() -> number {
+                let n: number = 10;
+                let values: number[] = [mark(1), mark(2)];
+                let alias: number[] = values;
+                alias[1] = mark(3);
+                let length: number = len(values);
+                let indexed: number = values[1];
+                let result: number = later(n) + length + indexed;
+                return result;
+            }
+            fn boolean() -> bool { let flag: bool = true; let value: bool = flag && !false; return value; }
+            fn text() -> string { let text: string = "é🦀"; let copy: string = text; return copy; }
+            fn items() -> number[] { let values: number[] = [1, 2]; return values; }
+            fn empty() -> number[] { let values: number[] = []; return values; }
+            fn later(value: number) -> number { return value * 2; }
+        `;
+        const inferred = annotated.replace(/: (number\[\]|number|bool|string) =/g, ' =');
+        const expected = compile(compiler, annotated).bytes;
+        const wat = compiler.compileWat(annotated);
+        for (const level of [0, 1, 2, 3]) {
+            compiler.setOptimizationLevel(level);
+            assert.deepEqual(compile(compiler, annotated).bytes, expected);
+            const { bytes, module } = compile(compiler, inferred);
+            assert.deepEqual(bytes, expected);
+            assert.equal(compiler.compileWat(inferred), wat);
+            const events = [];
+            const instance = new WebAssembly.Instance(module, { env: {
+                mark(value) { events.push(value); return value; },
+            } });
+            assert.equal(instance.exports.numeric(), 25);
+            assert.deepEqual(events, [1, 2, 3]);
+            assert.equal(instance.exports.boolean(), 1);
+            assert.equal(readDescriptor(instance, 'string', instance.exports.text()), 'é🦀');
+            const a = instance.exports.items(), b = instance.exports.items();
+            assert.notEqual(a, b);
+            assert.deepEqual(readDescriptor(instance, 'number[]', a), [1, 2]);
+            assert.deepEqual(readDescriptor(instance, 'number[]', b), [1, 2]);
+            assert.deepEqual(readDescriptor(instance, 'number[]', instance.exports.empty()), []);
+        }
+    });
+
+    test('inferred reassignment and void diagnostics retain locations and recover', compiler => {
+        const valid = 'fn main() -> number { let n = 10; n = n / 4; return n; }';
+        const cases = [
+            ['fn main() -> void {\n    let n = 10;\n    n = true;\n}', 3,
+                /Type mismatch: expected Number, found Bool/, 'n = true;'],
+            ['fn main() -> void {\n    let value = noop();\n}\nfn noop() -> void {}', 2,
+                /'value' cannot have type void/, 'let value = noop();'],
+        ];
+        for (const level of [0, 1, 2, 3]) {
+            compiler.setOptimizationLevel(level);
+            for (const [source, line, message, excerpt] of cases) {
+                for (const method of ['compile', 'compileWat']) {
+                    assert.throws(() => compiler[method](source), error => {
+                        assert.ok(error instanceof Error);
+                        assert.equal(error.name, 'Error');
+                        assert.match(error.message, new RegExp(`^<browser>:${line}:5: semantic error:`));
+                        assert.match(error.message, message);
+                        assert.ok(error.message.includes(`${line} |     ${excerpt}`));
+                        assert.match(error.message, /\| {5}\^/);
+                        return true;
+                    });
+                    assert.equal(instantiate(compiler, valid).exports.main(), 2.5);
+                    assert.match(compiler.compileWat(valid), /\(export "main"/);
+                }
+            }
+        }
+    });
+
     test('remainder arithmetic, IEEE-754 inputs, host order, and guest-only memory', compiler => {
         const source = `
             fn remainder(left: number, right: number) -> number { return left % right; }

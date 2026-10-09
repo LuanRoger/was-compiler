@@ -60,6 +60,31 @@ and `while`. Strings, numeric arrays, checked array access/assignment, and built
 Calls can be forward, nested, self-recursive, or mutually recursive; arguments
 are evaluated left-to-right.
 
+Local declarations support both `let name = initializer;` and the existing
+`let name: type = initializer;`. Without an annotation, the initializer determines
+the local's concrete type: `number`, `bool`, `string`, or `number[]`. This works for
+all nonvoid expressions, including calls; `[]` infers `number[]` because numeric
+arrays are the only array type. Explicit annotations still require an exact match.
+
+```text
+fn main() -> number {
+    let values = [10, 20];
+    let index = 1;
+    let result: number = values[index] * 2;
+
+    return result;
+}
+```
+
+The initializer is analyzed before the new binding is introduced. In a nested
+scope, `let value = value + 1;` can read an outer `value` and then shadow it; without
+an outer binding, it is an unknown-variable error. The local's type is fixed after
+initialization, so later assignments must match it. A void-returning call cannot
+initialize a local. Every declaration still needs an initializer, and parameter
+and function result types remain mandatory. There is no function inference,
+whole-program type unification, promotion, or implicit coercion. `number` remains
+IEEE-754 `f64`, even for `let index = 1;`; there is no source `i32` type.
+
 `//` line comments run to LF, CR, or end of file. `/* ... */` block comments can
 span lines and end at the first `*/`; they do not nest. Both are skipped between
 tokens anywhere whitespace can appear. Comment delimiters inside string literals

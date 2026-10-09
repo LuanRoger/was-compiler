@@ -329,6 +329,9 @@ fn initializer_is_analyzed_before_registering_the_variable() {
         "let value: number = value;",
         "let value: number = value + 1;",
         "value; let value: number = 1;",
+        "let value = value;",
+        "let value = value + 1;",
+        "value; let value = 1;",
     ] {
         let source = format!("fn test() -> void {{ {body} }}");
         let statement = body.split(';').next().unwrap().to_owned() + ";";
@@ -353,10 +356,12 @@ fn initializer_is_analyzed_before_registering_the_variable() {
 
 #[test]
 fn initializer_can_call_a_function_before_shadowing_it() {
-    assert_valid(
-        "fn value() -> number { return 1; }
-        fn test() -> number { let value: number = value(); return value; }",
-    );
+    for declaration in ["let value: number", "let value"] {
+        assert_valid(&format!(
+            "fn value() -> number {{ return 1; }}
+            fn test() -> number {{ {declaration} = value(); return value; }}"
+        ));
+    }
 }
 
 #[test]
@@ -467,6 +472,177 @@ fn rejects_void_parameters_and_variables_with_declaration_spans() {
             SemanticError::InvalidVoidType {
                 name: "value".into(),
                 span: span(source, statement),
+            },
+        );
+    }
+}
+
+#[test]
+fn inferred_bindings_keep_the_initializer_type_on_reassignment() {
+    let types = [
+        ("1", Type::Number),
+        ("true", Type::Bool),
+        ("\"text\"", Type::String),
+        ("[]", Type::NumberArray),
+    ];
+
+    for (initial, expected) in types {
+        for (value, found) in types {
+            let statement = format!("value = {value};");
+            let body = format!("let value = {initial}; {statement}");
+
+            if expected == found {
+                assert_valid(&format!("fn test() -> void {{ {body} }}"));
+            } else {
+                assert_body_mismatch(&body, &statement, expected, found);
+            }
+        }
+    }
+
+    assert_body_mismatch(
+        "let values = [1]; values[0] = true;",
+        "values[0] = true;",
+        Type::Number,
+        Type::Bool,
+    );
+}
+
+#[test]
+fn inferred_void_initializers_are_invalid_local_types() {
+    for initializer in ["noop()", "(noop())"] {
+        let statement = format!("let value = {initializer};");
+        let source = format!("fn noop() -> void {{}} fn test() -> void {{ {statement} }}");
+
+        assert_error(
+            &source,
+            SemanticError::InvalidVoidType {
+                name: "value".into(),
+                span: span(&source, &statement),
+            },
+        );
+    }
+}
+
+#[test]
+fn inference_preserves_initializer_type_and_duplicate_error_order() {
+    let prefix = "fn noop() -> void {} fn test() -> void { let value = 1; ";
+    let at = |statement: &str| Span::new(prefix.len(), prefix.len() + statement.len());
+
+    for (statement, expected) in [
+        (
+            "let value = missing;",
+            SemanticError::UndefinedVariable {
+                name: "missing".into(),
+                span: at("let value = missing;"),
+            },
+        ),
+        (
+            "let value = noop();",
+            SemanticError::InvalidVoidType {
+                name: "value".into(),
+                span: at("let value = noop();"),
+            },
+        ),
+        (
+            "let value = \"text\";",
+            SemanticError::DuplicateVariable {
+                name: "value".into(),
+                span: at("let value = \"text\";"),
+            },
+        ),
+        (
+            "let value: void = missing;",
+            SemanticError::InvalidVoidType {
+                name: "value".into(),
+                span: at("let value: void = missing;"),
+            },
+        ),
+        (
+            "let value: bool = 1;",
+            SemanticError::TypeMismatch {
+                expected: Type::Bool,
+                found: Type::Number,
+                span: at("let value: bool = 1;"),
+            },
+        ),
+    ] {
+        let source = format!("{prefix}{statement} }}");
+
+        assert_error(&source, expected);
+    }
+}
+
+#[test]
+fn inferred_declarations_preserve_same_scope_duplicate_checks() {
+    for source in [
+        "fn test(value: number) -> void { let value = 2; }",
+        "fn test() -> void { let value: number = 1; let value = 2; }",
+        "fn test() -> void { let value = 1; let value = 2; }",
+        "fn test() -> void { if true { let value = 1; let value = 2; } }",
+        "fn test() -> void { while false { let value = 1; let value = 2; } }",
+    ] {
+        assert_error(
+            source,
+            SemanticError::DuplicateVariable {
+                name: "value".into(),
+                span: span(source, "let value = 2;"),
+            },
+        );
+    }
+}
+
+#[test]
+fn inferred_initializers_still_require_valid_expression_types() {
+    for (statement, expected, found) in [
+        ("let value = [true];", Type::Number, Type::Bool),
+        ("let value = !1;", Type::Bool, Type::Number),
+        (
+            "let value = len(\"text\");",
+            Type::NumberArray,
+            Type::String,
+        ),
+    ] {
+        assert_body_mismatch(statement, statement, expected, found);
+    }
+}
+
+#[test]
+fn inferred_locals_obey_scope_and_unreachable_code_checks() {
+    for body in [
+        "if true { let value = 1; } let copy = value;",
+        "while false { let value = 1; } let copy = value;",
+        "if true { let value = 1; } else { let copy = value; }",
+    ] {
+        let source = format!("fn test() -> void {{ {body} }}");
+
+        assert_error(
+            &source,
+            SemanticError::UndefinedVariable {
+                name: "value".into(),
+                span: span(&source, "let copy = value;"),
+            },
+        );
+    }
+
+    for body in [
+        "let value = missing;",
+        "return; let value = missing;",
+        "if false { let value = missing; }",
+        "while false { let value = missing; }",
+        "let value = false && missing;",
+    ] {
+        let source = format!("fn hidden() -> void {{ {body} }} fn test() -> void {{}}");
+        let statement = if body.contains("false &&") {
+            "let value = false && missing;"
+        } else {
+            "let value = missing;"
+        };
+
+        assert_error(
+            &source,
+            SemanticError::UndefinedVariable {
+                name: "missing".into(),
+                span: span(&source, statement),
             },
         );
     }

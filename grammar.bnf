@@ -34,7 +34,7 @@
 
 
 <variable_declaration> ::= "let" <ws1> <identifier>
-                           <ws> ":" <ws> <type>
+                           ( <ws> ":" <ws> <type> )?
                            <ws> "=" <ws> <expression>
                            <ws> ";"
 
