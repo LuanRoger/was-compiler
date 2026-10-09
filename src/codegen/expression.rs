@@ -200,11 +200,11 @@ fn binary_instruction(
     body: &BodyEmitter<'_>,
 ) -> Result<Instruction<'static>, &'static str> {
     match op {
-        BinaryOp::Add => Ok(Instruction::F64Add),
-        BinaryOp::Subtract => Ok(Instruction::F64Sub),
-        BinaryOp::Multiply => Ok(Instruction::F64Mul),
-        BinaryOp::Divide => Ok(Instruction::F64Div),
-        BinaryOp::Remainder => Ok(Instruction::Call(body.remainder().raw())),
+        BinaryOp::Add
+        | BinaryOp::Subtract
+        | BinaryOp::Multiply
+        | BinaryOp::Divide
+        | BinaryOp::Remainder => arithmetic_instruction(op, body),
 
         BinaryOp::Equal => match operand_type {
             Type::Number => Ok(Instruction::F64Eq),
@@ -223,6 +223,27 @@ fn binary_instruction(
         BinaryOp::GreaterThan => Ok(Instruction::F64Gt),
         BinaryOp::GreaterThanOrEqual => Ok(Instruction::F64Ge),
 
+        BinaryOp::And => Err("&&"),
+        BinaryOp::Or => Err("||"),
+    }
+}
+
+pub(super) fn arithmetic_instruction(
+    op: &BinaryOp,
+    body: &BodyEmitter<'_>,
+) -> Result<Instruction<'static>, &'static str> {
+    match op {
+        BinaryOp::Add => Ok(Instruction::F64Add),
+        BinaryOp::Subtract => Ok(Instruction::F64Sub),
+        BinaryOp::Multiply => Ok(Instruction::F64Mul),
+        BinaryOp::Divide => Ok(Instruction::F64Div),
+        BinaryOp::Remainder => Ok(Instruction::Call(body.remainder().raw())),
+        BinaryOp::Equal => Err("=="),
+        BinaryOp::NotEqual => Err("!="),
+        BinaryOp::LessThan => Err("<"),
+        BinaryOp::LessThanOrEqual => Err("<="),
+        BinaryOp::GreaterThan => Err(">"),
+        BinaryOp::GreaterThanOrEqual => Err(">="),
         BinaryOp::And => Err("&&"),
         BinaryOp::Or => Err("||"),
     }

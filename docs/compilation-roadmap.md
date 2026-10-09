@@ -67,12 +67,13 @@ The compiler emits bytes. The embedding application decides whether to write a
 | `src/codegen/function.rs` | Per-function emission context, scoped initialized-binding checks, return-path checks, and function termination. |
 | `src/codegen/control_flow.rs` | Emit structured branches and loops, preserve scope boundaries, and track guaranteed returns. |
 | `src/codegen/locals.rs` | Map typed variable IDs to dense Wasm slots and declare value/handle local types. |
-| `src/codegen/temporaries.rs` | Preallocate independent array-construction scratch slots, including nested and unreachable expressions. |
+| `src/codegen/temporaries.rs` | Preallocate ordered typed scratch slots for array construction and indexed compounds, including nested and unreachable expressions. |
 | `src/codegen/mod.rs` | Validate raw typed input through the private checked constructor, then assemble Type, Import, Function, optional Memory/Global, Export, Code, and optional Data sections from checked state. |
 | `src/codegen/tests.rs` | Inspect and validate emitted modules with `wasmparser`. |
 | `src/codegen/expression.rs` | Emit scalar literals, variable reads, arithmetic/comparisons, short-circuit boolean operators, and user/host calls. |
 | `src/codegen/statement.rs` | Emit blocks, scalar declarations/assignments, expression cleanup, returns, and delegate control flow. |
-| `src/codegen/values.rs` | Emit fresh array construction, checked element addressing, and variable/element assignments. |
+| `src/codegen/values.rs` | Emit fresh array construction and checked element addressing. |
+| `src/codegen/place.rs` | Shared checked local/index places and ordinary/compound assignment lowering. |
 | `src/codegen/memory.rs` | Plan static strings and emit allocation, descriptor validation, checked array addressing/length, and string/numeric-array equality helpers. |
 | `src/codegen/numeric.rs` | Detect remainder throughout the typed AST and emit the optional memory-independent `(f64, f64) -> f64` guest remainder helper. |
 | `tests/remainder.rs` | Validate remainder lowering, optional helper layout, result types/spans, exact binary64 edge cases, and operand effects against an independent reference. |
@@ -485,6 +486,36 @@ outer-binding reads during shadowing, unknown self-references, void initializers
 and duplicate/error-ordering compatibility. Emission checks compare equivalent
 annotated and inferred programs across optimization levels; runtime checks cover
 initializer effects and shadowing. This extension adds no numbered backend milestone.
+
+## Implemented language extension: compound assignments (WP1)
+
+Statement-only `+=`, `-=`, `*=`, `/=`, and `%=` accept `number` variables and
+identifier-rooted numeric-array elements. Target and RHS types must both be
+`number`; assignment expressions, whole-array arithmetic, and general postfix
+places remain unsupported.
+
+Lowering resolves the target once, validates bounds, reads the old value, then
+evaluates the RHS and stores to the original place. If the RHS changes an element
+from `10` to `100` and returns `2`, addition stores `12`, not `102`. Invalid targets
+trap before RHS effects. `src/codegen/place.rs` shares checked places with ordinary
+assignment; indexed compounds reserve ordered `i32` address / `f64` old-value
+scratch slots without reuse. Scalar updates keep the old value on the stack.
+Both raw and typed statement enums add `CompoundAssignment { target, op, value }`;
+public consumers matching statements must handle the new variant. Its `BinaryOp`
+field is checked to allow only the five arithmetic operations.
+Legacy array temporary groups and old-source Wasm bytes remain unchanged.
+
+`%=` itself triggers exact remainder-helper discovery even without a binary `%`,
+including hidden, unreachable, and runtime-skipped code. Scalar-only compounds
+add no memory or implicit imports. There is no new language type, ABI, or optimizer.
+Acceptance includes frontend errors/spans, forged typed nodes, decoded instruction
+and scratch layout, validator checks, aliases, once-only effects, bounds-before-RHS
+traps, memory growth, numerical special values, and optimization/export parity.
+
+See the [extension specification](was_language_extensions_spec.md) and
+[implementation plan](was_language_extensions_plan.md) for later work packages;
+WP2 (`break` / `continue` in `while`) is next. Closure-dependent captured scalar
+mutation and array-binding rebinding tests belong to WP11, not this milestone.
 
 ## Remaining work
 

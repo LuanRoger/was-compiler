@@ -266,6 +266,52 @@ fn declaration_only_walk_skips_expression_roots_and_all_their_children() {
 }
 
 #[test]
+fn compound_walk_visits_target_then_rhs_and_respects_skip_and_break_hooks() {
+    let block = vec![statement(
+        1,
+        TypedStatementKind::CompoundAssignment {
+            target: expr(TypedExprKind::Index {
+                expr: Box::new(identifier("target")),
+                index: Box::new(identifier("index")),
+            }),
+            op: BinaryOp::Remainder,
+            value: identifier("rhs"),
+        },
+    )];
+    let expected = [
+        "block+1",
+        "statement:1",
+        "index",
+        "identifier:target",
+        "identifier:index",
+        "identifier:rhs",
+        "block-1",
+    ];
+    let mut recorder = Recorder::default();
+    assert_eq!(walk_block(&block, &mut recorder), ControlFlow::Continue(()));
+    assert_eq!(recorder.events, expected);
+
+    for stop_at in 1..=expected.len() {
+        let mut recorder = Recorder {
+            stop_at: Some(stop_at),
+            ..Recorder::default()
+        };
+        assert_eq!(
+            walk_block(&block, &mut recorder),
+            ControlFlow::Break(stop_at)
+        );
+        assert_eq!(recorder.events, expected[..stop_at]);
+    }
+
+    let mut recorder = Recorder {
+        skip_expressions: true,
+        ..Recorder::default()
+    };
+    assert_eq!(walk_block(&block, &mut recorder), ControlFlow::Continue(()));
+    assert_eq!(recorder.events, ["block+1", "statement:1", "block-1"]);
+}
+
+#[test]
 fn empty_blocks_still_receive_entry_and_exit_hooks() {
     let mut recorder = Recorder::default();
 

@@ -140,6 +140,21 @@ impl<'a> Lexer<'a> {
     }
 
     pub fn par_symbol(&mut self, current_char: &u8) -> Token<'a> {
+        let compound = match (*current_char, self.source_iter.peek().map(|&&char| char)) {
+            (b'+', Some(b'=')) => Some(TokenKind::PlusEqual),
+            (b'-', Some(b'=')) => Some(TokenKind::MinusEqual),
+            (b'*', Some(b'=')) => Some(TokenKind::StarEqual),
+            (b'/', Some(b'=')) => Some(TokenKind::SlashEqual),
+            (b'%', Some(b'=')) => Some(TokenKind::PercentEqual),
+            _ => None,
+        };
+
+        if let Some(kind) = compound {
+            self.advance();
+
+            return self.make_token(kind);
+        }
+
         match *current_char {
             b'<' => {
                 if self.source_iter.peek().is_some_and(|&&char| char == b'=') {
@@ -409,6 +424,82 @@ mod tests {
         assert_eq!(eof.kind, TokenKind::Eof);
         assert_eq!(eof.span, Span::new(19, 19));
         assert_eq!(lexer.next_token().span, eof.span);
+    }
+
+    #[test]
+    fn compound_operators_use_longest_match_and_preserve_arrow_and_single_tokens() {
+        for (symbol, compound, single) in [
+            ("+", TokenKind::PlusEqual, TokenKind::Plus),
+            ("-", TokenKind::MinusEqual, TokenKind::Minus),
+            ("*", TokenKind::StarEqual, TokenKind::Star),
+            ("/", TokenKind::SlashEqual, TokenKind::Slash),
+            ("%", TokenKind::PercentEqual, TokenKind::Percent),
+        ] {
+            let source = format!("{symbol}== {symbol} ->");
+            let tokens = Lexer::new(&source).tokenize();
+
+            assert_eq!(tokens[0].kind, compound);
+            assert_eq!(tokens[0].span, Span::new(0, 2));
+            assert_eq!(tokens[1].kind, TokenKind::Equal);
+            assert_eq!(tokens[1].span, Span::new(2, 3));
+            assert_eq!(tokens[2].kind, single);
+            assert_eq!(tokens[2].span, Span::new(4, 5));
+            assert_eq!(tokens[3].kind, TokenKind::Arrow);
+            assert_eq!(tokens[3].span, Span::new(6, 8));
+            assert_eq!(tokens[4].kind, TokenKind::Eof);
+            assert_eq!(tokens[4].span, Span::new(8, 8));
+        }
+    }
+
+    #[test]
+    fn compound_operator_bytes_cannot_be_joined_across_trivia() {
+        for (symbol, single) in [
+            ("+", TokenKind::Plus),
+            ("-", TokenKind::Minus),
+            ("*", TokenKind::Star),
+            ("/", TokenKind::Slash),
+            ("%", TokenKind::Percent),
+        ] {
+            for trivia in [" ", "\r\n", " /*é*/", " //é\n"] {
+                let source = format!("{symbol}{trivia}=");
+                let tokens = Lexer::new(&source).tokenize();
+
+                assert_eq!(tokens.len(), 3);
+                assert_eq!(tokens[0].kind, single);
+                assert_eq!(tokens[0].span, Span::new(0, 1));
+                assert_eq!(tokens[1].kind, TokenKind::Equal);
+                assert_eq!(tokens[1].span, Span::new(1 + trivia.len(), source.len()));
+                assert_eq!(tokens[2].kind, TokenKind::Eof);
+            }
+        }
+    }
+
+    #[test]
+    fn compound_operators_preserve_comment_and_string_boundaries_and_byte_spans() {
+        let source = "/*é*/+=/**/-=/*λ*/*=//🙂\r\n/=/**/%= \"+= -= *= /= %=\"";
+        let tokens = Lexer::new(source).tokenize();
+
+        assert_eq!(tokens.len(), 7);
+
+        for (token, (text, kind)) in tokens.iter().zip([
+            ("+=", TokenKind::PlusEqual),
+            ("-=", TokenKind::MinusEqual),
+            ("*=", TokenKind::StarEqual),
+            ("/=", TokenKind::SlashEqual),
+            ("%=", TokenKind::PercentEqual),
+        ]) {
+            let start = source.find(text).unwrap();
+
+            assert_eq!(token.kind, kind);
+            assert_eq!(token.span, Span::new(start, start + 2));
+        }
+
+        assert_eq!(
+            tokens[5].kind,
+            TokenKind::StringLiteral("+= -= *= /= %=".into())
+        );
+        assert_eq!(tokens[6].kind, TokenKind::Eof);
+        assert_eq!(tokens[6].span, Span::new(source.len(), source.len()));
     }
 
     #[test]

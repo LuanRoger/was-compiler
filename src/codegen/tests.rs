@@ -44,6 +44,8 @@ enum DecodedInstruction {
     F64Mul,
     F64Div,
     F64Neg,
+    F64Load { offset: u64, align: u8, memory: u32 },
+    F64Store { offset: u64, align: u8, memory: u32 },
     Return,
     End,
     Runtime(String),
@@ -167,6 +169,16 @@ fn decode(bytes: &[u8]) -> DecodedModule {
                         Operator::F64Mul => DecodedInstruction::F64Mul,
                         Operator::F64Div => DecodedInstruction::F64Div,
                         Operator::F64Neg => DecodedInstruction::F64Neg,
+                        Operator::F64Load { memarg } => DecodedInstruction::F64Load {
+                            offset: memarg.offset,
+                            align: memarg.align,
+                            memory: memarg.memory,
+                        },
+                        Operator::F64Store { memarg } => DecodedInstruction::F64Store {
+                            offset: memarg.offset,
+                            align: memarg.align,
+                            memory: memarg.memory,
+                        },
                         Operator::Return => DecodedInstruction::Return,
                         Operator::End => DecodedInstruction::End,
                         operator => DecodedInstruction::Runtime(format!("{operator:?}")),
@@ -434,6 +446,7 @@ fn run_guest_at_all_optimization_levels(source: &str, script: &str) {
 }
 
 mod calls;
+mod compound_assignment;
 mod control_flow;
 mod expressions;
 mod layout;

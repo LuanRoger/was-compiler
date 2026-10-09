@@ -129,6 +129,62 @@ async function main() {
         assert.doesNotMatch(wat, /was-compiler\.interface/);
     });
 
+    test('compound updates preserve old values, target traps, and optimization parity', compiler => {
+        compiler.registerHostFunction('index', 'env', 'index', [], 'number');
+        compiler.registerHostFunction('rhs', 'env', 'rhs', ['number[]'], 'number');
+        const source = `
+            fn main() -> number {
+                let values = [10];
+                let alias = values;
+                alias[index()] += rhs(values);
+                return values[0];
+            }
+            fn checked(values: number[], i: number) -> number {
+                values[i] += rhs(values);
+                return values[i];
+            }
+            fn arithmetic(n: number) -> number {
+                n += 2; n -= 1; n *= 3; n /= 2; n %= 5;
+                return n;
+            }
+            fn remainder(n: number, divisor: number) -> number { n %= divisor; return n; }
+        `;
+        const expected = compile(compiler, source).bytes;
+        for (const level of [0, 1, 2, 3]) {
+            compiler.setOptimizationLevel(level);
+            const { bytes, module } = compile(compiler, source);
+            assert.deepEqual(bytes, expected);
+            let instance;
+            const events = [];
+            instance = new WebAssembly.Instance(module, { env: {
+                index() { events.push('index'); return 0; },
+                rhs(handle) {
+                    events.push('rhs');
+                    instance.exports.memory.grow(1);
+                    const view = new DataView(instance.exports.memory.buffer);
+                    view.setFloat64(view.getUint32(handle, true), 100, true);
+                    return 2;
+                }
+            }});
+            assert.equal(instance.exports.main(), 12);
+            assert.deepEqual(events, ['index', 'rhs']);
+            assert.equal(instance.exports.arithmetic(10), 1.5);
+            for (const [a, b] of [[-0, 3], [NaN, 1], [Infinity, 2], [1, 0],
+                [2, Infinity], [Number.MAX_VALUE, Number.MIN_VALUE]]) {
+                assert.ok(Object.is(instance.exports.remainder(a, b), a % b));
+            }
+            const handle = writeDescriptor(instance, 'number[]', [10]);
+            for (const invalid of [-1, 1, 0.5, NaN, Infinity]) {
+                events.length = 0;
+                assert.throws(() => instance.exports.checked(handle, invalid), WebAssembly.RuntimeError);
+                assert.deepEqual(events, []);
+                assert.deepEqual(readDescriptor(instance, 'number[]', handle), [10]);
+            }
+            fails(() => compiler.compile('fn bad() -> void { let b = true; b += 1; }'), /semantic error/);
+            fails(() => compiler.compile('fn bad() -> void { let n = 1; let result = n += 2; }'), /parse error/);
+        }
+    });
+
     test('comments preserve bytes across optimization levels and execute without changing strings or division', compiler => {
         const plain = 'fn main() -> number { return 84 / 2; } fn text() -> string { return "// /* */ é🦀"; }';
         const commented = '// leading comment\n'

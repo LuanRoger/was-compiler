@@ -1,17 +1,18 @@
 # WAS Language Extensions — Unified Design and Implementation Specification
 
-**Status:** Design baseline with the 13 approved decisions and implementation clarifications (extensions not yet implemented)  
+**Status:** Design baseline with the 13 approved decisions and implementation clarifications (compound assignments/WP1 implemented; remaining extensions proposed)
 **Version:** 0.3 — 9 October 2026 (implementation clarification update)  
 **Target:** Core WebAssembly, initially the MVP-compatible instruction set already used by `was-compiler`, with optional optimizations gated by Wasm features.  
 **Repository:** https://github.com/LuanRoger/was-compiler
 
-> **Normative language.** **MUST**, **SHOULD**, and **MAY** describe requirements, strong recommendations, and optional implementation choices. This document establishes a coherent *proposed* semantic model. Decisions tagged **Open decision** need confirmation before being frozen as language guarantees. Code examples are proposed `.was` syntax, not claims about the present compiler.
+> **Normative language.** **MUST**, **SHOULD**, and **MAY** describe requirements, strong recommendations, and optional implementation choices. This document establishes a coherent *proposed* semantic model. Decisions tagged **Open decision** need confirmation before being frozen as language guarantees. Except for implemented compound assignments (§4), extension examples are proposed `.was` syntax, not claims about the present compiler.
 
 The [concrete implementation plan](was_language_extensions_plan.md) maps this
 specification to ordered work packages, repository files, acceptance tests, and
 validation gates. This revision retains the approved v0.2 direction, including
 shared mutable captures and local-only closures; it clarifies implementation
-safety and corrects the current-language baseline without implementing features.
+safety and corrects the current-language baseline. Compound assignments (§4/WP1)
+are now implemented; the remaining work packages are still proposed.
 
 ## 1. Goals and non-goals
 
@@ -39,8 +40,9 @@ safety and corrects the current-language baseline without implementing features.
 
 The current compiler supports `fn` with required parameter/return annotations,
 annotated `let name: type = value;` and inferred `let name = value;` declarations,
-reassignment, `if`, `while`, `return`, named calls, and `number`, `bool`, `string`,
-`number[]`, and `void`. Every local requires an initializer and retains a fixed
+reassignment, numeric compound assignments, `if`, `while`, `return`, named calls,
+and `number`, `bool`, `string`, `number[]`, and `void`. Every local requires an
+initializer and retains a fixed
 type. `//` line comments and non-nesting `/* ... */` block comments are implemented.
 Use the local implementation and tests, alongside README and grammar, as evidence
 of the existing-language baseline rather than assuming a public copy is current.
@@ -143,6 +145,10 @@ node SHOULD retain an origin span so compiler errors and any future mapping refe
 to source syntax rather than generated scaffolding.
 
 ## 4. Feature specification: compound assignment
+
+**Implementation status:** All five operators are implemented for numeric local
+and indexed places, with frontend, checked-backend, and integration tests. Shared
+capture and array-binding rebinding scenarios await the closure work package.
 
 ### 4.1 Syntax
 

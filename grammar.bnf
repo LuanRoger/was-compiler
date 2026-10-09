@@ -27,6 +27,7 @@
 
 <statement> ::= <variable_declaration>
               | <assignment>
+              | <compound_assignment>
               | <if_statement>
               | <while_statement>
               | <return_statement>
@@ -41,6 +42,18 @@
 
 <assignment> ::= <identifier> <ws> "=" <ws> <expression> <ws> ";"
                | <array_access> <ws> "=" <ws> <expression> <ws> ";"
+
+
+<compound_assignment> ::= <identifier> <ws> <compound_assignment_operator>
+                          <ws> <expression> <ws> ";"
+                         | <array_access> <ws> <compound_assignment_operator>
+                          <ws> <expression> <ws> ";"
+
+<compound_assignment_operator> ::= "+=" | "-=" | "*=" | "/=" | "%="
+
+# Compound assignment is statement-only. Targets and RHS must have type number;
+# array-element targets use an identifier-rooted number[] base and number index.
+# Each compound operator is one contiguous token; trivia cannot split its bytes.
 
 
 <if_statement> ::= "if" <ws1> <expression>

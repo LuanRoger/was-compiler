@@ -1,6 +1,6 @@
 # WAS language extensions implementation plan
 
-**Status:** Proposed work; this document does not implement or mark features complete.
+**Status:** WP1 implemented; WP2–WP12 proposed; WP13 requires separate authorization.
 **Baseline:** Extension specification v0.3.
 
 Follow the [agent guide](../AGENTS.md), [extension specification](was_language_extensions_spec.md),
@@ -10,16 +10,21 @@ The spec defines behavior; this plan defines incremental work. References use nu
 ## 1. Implemented baseline and compatibility envelope
 
 Comments, local initializer inference, exact `%`, and export selection are implemented prerequisites.
+WP1 adds numeric compound assignments; the baseline implementation notes below
+reflect that completed package.
+
 Evidence: `src/lexer.rs`, `src/parser.rs`, `src/semantic.rs`, `src/codegen/numeric.rs`, `src/cli.rs`,
-`tests/comments.rs`, `tests/inference.rs`, `tests/remainder.rs`, and `tests/emitter.rs`.
+`tests/comments.rs`, `tests/inference.rs`, `tests/remainder.rs`, `tests/emitter.rs`,
+and `tests/compound_assignment.rs`.
 
 - `Type` in `src/ast.rs` is a small `Copy` enum, not an extensible callable/type tree.
   `Block` and `TypedBlock` are currently `Vec<Statement>` / `Vec<TypedStatement>`.
   Function results are concrete and explicitly annotated; calls resolve names/IDs.
 - Semantic/backend blocks report guaranteed return with a boolean, insufficient for
   loop transfers/value-producing divergent branches. Extend this only when each step needs it.
-- The locals visitor currently skips expressions. The temporary visitor counts only
-  array literals; `BodyEmitter` allocates those scratch slots as `i32` without reuse.
+- The locals visitor currently skips expressions. The temporary visitor plans
+  ordered array `i32` slots and indexed-compound `i32` address / `f64` old-value
+  slots without reuse; local compounds keep the old value on the operand stack.
 - `ValidatedProgram` privately borrows the public, mutable `TypedProgram`, completes
   layout, then checks/lowers all user bodies in source order and caches encoded bodies.
   Keep that boundary; semantic analysis is not proof that a public tree is valid.
@@ -34,8 +39,9 @@ Evidence: `src/lexer.rs`, `src/parser.rs`, `src/semantic.rs`, `src/codegen/numer
 - Old-source Wasm fixtures must remain unchanged unless an explicit contract decision
   justifies a difference. Never regenerate goldens to conceal incidental drift.
 
-All extensions below are proposed. New keywords require matching host source-name validation,
-not restrictions on arbitrary nonempty host module/field names. Reserve standalone `_`
+WP1 is implemented; subsequent extensions below remain proposed. New keywords
+require matching host source-name validation, not restrictions on arbitrary
+nonempty host module/field names. Reserve standalone `_`
 when its syntax arrives, reject its bindings, retain `_temp`, and keep `by` contextual.
 
 ## 2. File ownership and change boundaries
@@ -53,7 +59,7 @@ These paths exist today; ownership denotes responsibility, not mandatory edits f
 | `src/codegen/locals.rs`, `src/codegen/temporaries.rs` | Separate declaration and typed scratch-slot planning policies |
 | `src/codegen/abi.rs`, `src/codegen/indices.rs`, `src/codegen/layout.rs` | Private representation constants/signatures, typed indices, deterministic layout |
 | `src/codegen/function.rs`, `src/codegen/control_flow.rs` | Scoped initialization, label/loop contexts, reachability and result-bearing regions |
-| `src/codegen/expression.rs`, `src/codegen/statement.rs`, `src/codegen/values.rs`, `src/codegen/call.rs` | Checked lowering, places, value blocks, normalized direct calls |
+| `src/codegen/expression.rs`, `src/codegen/statement.rs`, `src/codegen/values.rs`, `src/codegen/call.rs`, `src/codegen/place.rs` | Checked lowering, shared places, value blocks, normalized direct calls |
 | `src/codegen/memory.rs`, `src/codegen/numeric.rs` | Memory discovery/allocation, existing helpers, `%` / `%=` discovery |
 | `src/codegen/validation.rs`, `src/codegen/mod.rs`, `src/codegen/validation_tests.rs` | Layout-before-body checked construction, cached bodies and assembly |
 | `src/codegen/tests/`, `src/codegen/memory_tests/`, `src/codegen/export_tests.rs` | Forged trees, decoded instructions/layout, runtime and ABI regressions |
@@ -65,9 +71,8 @@ These paths exist today; ownership denotes responsibility, not mandatory edits f
 | `src/optimization.rs` | Existing no-op boundary through correctness work; WP13 only |
 | `README.md`, `docs/`, `AGENTS.md` | Supported-versus-proposed status, contracts, restrictions and validation workflow |
 
-**Proposed new files, not existing implementation:** `src/codegen/place.rs` in WP1 if
-sharing place lowering warrants it; `src/codegen/range.rs` in WP5 for exact operations;
-`src/semantic/inference.rs` in WP7 and `src/semantic/captures.rs` in WP11 if those policies
+**Proposed new files, not existing implementation:** `src/codegen/range.rs` in WP5
+for exact operations; `src/semantic/inference.rs` in WP7 and `src/semantic/captures.rs` in WP11 if those policies
 outgrow `semantic.rs`; `src/codegen/closures.rs` in WP11 for direct helpers/cells.
 These are cohesive modules, not another IR. Proposed integration suites appear below;
 create them at their step, not as empty scaffolding now. Keep specialized decoders local.
@@ -112,24 +117,24 @@ Deliver WP1 → WP2 → WP3 → WP4 → WP5 in exactly this order. Continue with
 in the order below; WP13 is separately authorized performance work, not prerequisite
 correctness infrastructure. Every package also inherits the common gates.
 
-### WP1 — All five compound assignments (spec §4)
+### WP1 — All five compound assignments (spec §4): implemented
 
-**Entry:** implemented binary remainder and checked assignment behavior are pinned.
-Add longest-match `+= -= *= /= %=` and a statement-only compound node; accept only
-number variables and numeric-array elements with existing identifier-rooted places.
-Resolve/check the place, then RHS type. Share checked address computation in
-`values.rs` / proposed `place.rs`; never duplicate the target in a textual rewrite.
+**Completed scope:** Longest-match `+= -= *= /= %=` tokens and statement-only
+`CompoundAssignment { target, op: BinaryOp, value }` variants in both raw and typed
+ASTs. Targets are number variables or identifier-rooted numeric-array elements;
+semantic and backend checks reject non-arithmetic operators in forged trees.
+Public AST consumers must handle these new statement variants. Checked places
+in `place.rs` share ordinary-assignment lowering and `values.rs` address checks.
 
-Plan typed temporaries per syntactic occurrence: an `i32` element address and an
-`f64` saved old value as needed. Preserve the old-value-before-RHS rule for both
-local and indexed updates; captured local mutation becomes testable in WP11.
-Generalize `temporaries.rs`/`BodyEmitter` beyond an all-`i32` count, without slot reuse
-or changes to legacy array-slot order/encoding. Load old value before RHS; store to
-the saved original place after computing. Delegate `%=` to the existing exact helper.
-Add a remainder visitor statement hook: `%=` itself needs the helper even with no
-binary `%`, inside unexported, unreachable or runtime-skipped bodies.
+Typed temporaries reserve an `i32` element address and `f64` old value per indexed
+occurrence before traversing children. Local updates keep the old value on the
+operand stack. Target/bounds checks and old-value reads precede RHS effects;
+writes use the original place. There is no scratch reuse or change to legacy
+array-slot order/encoding. Captured scalar mutation becomes testable in WP11.
+`%=` delegates to the unchanged exact helper and triggers its statement discovery
+hook even without binary `%`, in hidden, unreachable or runtime-skipped bodies.
 
-**Exit tests:** proposed `tests/compound_assignment.rs`, lexer/parser/semantic units,
+**Implemented coverage:** `tests/compound_assignment.rs`, lexer/parser/semantic units,
 planner units and forged invalid place/op/type/ID checks. Decode one address check,
 saved-value loads/stores, correct scratch types and optional helper index. Execute
 RHS array-element mutation (including the spec's 12-not-102 case), exactly-once

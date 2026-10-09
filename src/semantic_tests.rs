@@ -701,6 +701,283 @@ fn assignments_require_the_binding_type() {
 }
 
 #[test]
+fn compound_assignments_accept_all_arithmetic_operators_and_number_places() {
+    for operator in ["+=", "-=", "*=", "/=", "%="] {
+        assert_valid(&format!(
+            "fn index() -> number {{ return 0; }}
+            fn rhs() -> number {{ return 2; }}
+            fn test(parameter: number, values: number[]) -> void {{
+                let inferred = 1;
+                let annotated: number = 1;
+                parameter {operator} rhs();
+                inferred {operator} parameter + rhs();
+                annotated {operator} -2;
+                values[index()] {operator} rhs();
+                if true {{ let inferred = 2; inferred {operator} 1; }}
+                while false {{ annotated {operator} 1; }}
+            }}"
+        ));
+    }
+}
+
+#[test]
+fn compound_assignments_require_number_targets_and_rhs_without_coercion() {
+    for operator in ["+=", "-=", "*=", "/=", "%="] {
+        for (initial, found) in [
+            ("true", Type::Bool),
+            ("\"text\"", Type::String),
+            ("[]", Type::NumberArray),
+        ] {
+            let statement = format!("value {operator} 1;");
+            let body = format!("let value = {initial}; {statement}");
+
+            assert_body_mismatch(&body, &statement, Type::Number, found);
+
+            for target in ["value", "values[0]"] {
+                let statement = format!("{target} {operator} {initial};");
+                let body = format!("let value = 1; let values = [1]; {statement}");
+
+                assert_body_mismatch(&body, &statement, Type::Number, found);
+            }
+        }
+
+        for target in ["value", "values[0]"] {
+            let statement = format!("{target} {operator} noop();");
+            let source = format!(
+                "fn noop() -> void {{}} fn test() -> void {{
+                    let value = 1; let values = [1]; {statement}
+                }}"
+            );
+
+            assert_error(
+                &source,
+                SemanticError::TypeMismatch {
+                    expected: Type::Number,
+                    found: Type::Void,
+                    span: span(&source, &statement),
+                },
+            );
+        }
+    }
+}
+
+#[test]
+fn compound_assignment_checks_target_base_and_index_before_rhs() {
+    for operator in ["+=", "-=", "*=", "/=", "%="] {
+        for target in ["missing", "missing[also_missing]"] {
+            let statement = format!("{target} {operator} rhs_missing;");
+            let source = format!("fn test() -> void {{ {statement} }}");
+
+            assert_error(
+                &source,
+                SemanticError::UndefinedVariable {
+                    name: "missing".into(),
+                    span: span(&source, &statement),
+                },
+            );
+        }
+
+        for (initial, found) in [
+            ("1", Type::Number),
+            ("true", Type::Bool),
+            ("\"text\"", Type::String),
+        ] {
+            let statement = format!("value[missing] {operator} rhs_missing;");
+            let body = format!("let value = {initial}; {statement}");
+
+            assert_body_mismatch(&body, &statement, Type::NumberArray, found);
+        }
+
+        for (initial, found) in [
+            ("true", Type::Bool),
+            ("\"text\"", Type::String),
+            ("[]", Type::NumberArray),
+        ] {
+            let statement = format!("value {operator} rhs_missing;");
+            let body = format!("let value = {initial}; {statement}");
+
+            assert_body_mismatch(&body, &statement, Type::Number, found);
+
+            let statement = format!("values[{initial}] {operator} rhs_missing;");
+            let body = format!("let values = [1]; {statement}");
+
+            assert_body_mismatch(&body, &statement, Type::Number, found);
+        }
+
+        let statement = format!("values[index_missing] {operator} rhs_missing;");
+        let source = format!("fn test(values: number[]) -> void {{ {statement} }}");
+
+        assert_error(
+            &source,
+            SemanticError::UndefinedVariable {
+                name: "index_missing".into(),
+                span: span(&source, &statement),
+            },
+        );
+    }
+}
+
+#[test]
+fn compound_assignment_checks_unreachable_code_and_does_not_guarantee_return() {
+    for operator in ["+=", "-=", "*=", "/=", "%="] {
+        for body in [
+            format!("return; value {operator} true;"),
+            format!("if false {{ value {operator} true; }}"),
+            format!("while false {{ value {operator} true; }}"),
+        ] {
+            let statement = format!("value {operator} true;");
+            let source = format!("fn test(value: number) -> void {{ {body} }}");
+
+            assert_error(
+                &source,
+                SemanticError::TypeMismatch {
+                    expected: Type::Number,
+                    found: Type::Bool,
+                    span: span(&source, &statement),
+                },
+            );
+        }
+
+        let source = format!("fn test(value: number) -> number {{ value {operator} 1; }}");
+
+        assert_error(
+            &source,
+            SemanticError::MissingReturn {
+                name: "test".into(),
+                span: Span::new(0, source.len()),
+            },
+        );
+    }
+}
+
+#[test]
+fn plain_assignment_keeps_its_existing_target_and_rhs_error_order() {
+    let source = "fn test(value: bool) -> void { value = missing; }";
+
+    assert_error(
+        source,
+        SemanticError::UndefinedVariable {
+            name: "missing".into(),
+            span: span(source, "value = missing;"),
+        },
+    );
+
+    let source = "fn test(values: number[]) -> void { values[true] = missing; }";
+
+    assert_error(
+        source,
+        SemanticError::TypeMismatch {
+            expected: Type::Number,
+            found: Type::Bool,
+            span: span(source, "values[true] = missing;"),
+        },
+    );
+}
+
+#[test]
+fn raw_compound_assignments_reject_every_nonarithmetic_operator() {
+    for op in [
+        BinaryOp::Equal,
+        BinaryOp::NotEqual,
+        BinaryOp::LessThan,
+        BinaryOp::GreaterThan,
+        BinaryOp::LessThanOrEqual,
+        BinaryOp::GreaterThanOrEqual,
+        BinaryOp::And,
+        BinaryOp::Or,
+    ] {
+        let mut program = parse("fn test(value: number) -> void { value += 1; }");
+        let error_span = Span::new(137, 163);
+
+        program.functions[0].body[0] = Statement {
+            kind: StatementKind::CompoundAssignment {
+                target: Expr::Identifier("value".into()),
+                op,
+                value: Expr::Identifier("rhs_missing".into()),
+            },
+            span: error_span,
+        };
+
+        let error = SemanticAnalyzer::new().analyze(&program).unwrap_err();
+
+        assert_eq!(
+            error,
+            SemanticError::InvalidCompoundAssignmentOperator {
+                op,
+                span: error_span,
+            }
+        );
+        assert_eq!(error.span(), Some(error_span));
+    }
+}
+
+#[test]
+fn raw_compound_assignments_reuse_identifier_rooted_place_checks() {
+    for op in [
+        BinaryOp::Add,
+        BinaryOp::Subtract,
+        BinaryOp::Multiply,
+        BinaryOp::Divide,
+        BinaryOp::Remainder,
+    ] {
+        for target in [
+            Expr::Number("1".into()),
+            Expr::Bool(true),
+            Expr::String("text".into()),
+            Expr::Array(vec![]),
+            Expr::Call {
+                func: "make".into(),
+                args: vec![],
+            },
+            Expr::Unary {
+                op: UnaryOp::Negate,
+                expr: Box::new(Expr::Number("1".into())),
+            },
+            Expr::Binary {
+                left: Box::new(Expr::Number("1".into())),
+                op: BinaryOp::Add,
+                right: Box::new(Expr::Number("2".into())),
+            },
+            Expr::Index {
+                expr: Box::new(Expr::Array(vec![Expr::Number("1".into())])),
+                index: Box::new(Expr::Number("0".into())),
+            },
+            Expr::Index {
+                expr: Box::new(Expr::Call {
+                    func: "make".into(),
+                    args: vec![],
+                }),
+                index: Box::new(Expr::Number("0".into())),
+            },
+            Expr::Index {
+                expr: Box::new(Expr::Index {
+                    expr: Box::new(Expr::Identifier("values".into())),
+                    index: Box::new(Expr::Number("0".into())),
+                }),
+                index: Box::new(Expr::Number("0".into())),
+            },
+        ] {
+            let mut program = parse("fn test(values: number[]) -> void { values[0] += 1; }");
+            let error_span = Span::new(137, 163);
+
+            program.functions[0].body[0] = Statement {
+                kind: StatementKind::CompoundAssignment {
+                    target,
+                    op,
+                    value: Expr::Identifier("rhs_missing".into()),
+                },
+                span: error_span,
+            };
+
+            assert_eq!(
+                SemanticAnalyzer::new().analyze(&program).map(|_| ()),
+                Err(SemanticError::InvalidAssignmentTarget { span: error_span })
+            );
+        }
+    }
+}
+
+#[test]
 fn calls_enforce_user_function_and_builtin_argument_counts() {
     for (call, name, expected, found) in [
         ("take();", "take", 2, 0),

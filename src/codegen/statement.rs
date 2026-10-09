@@ -4,7 +4,7 @@ use crate::{
 };
 use wasm_encoder::Instruction;
 
-use super::{CodegenError, control_flow, expect_type, function::BodyEmitter, values};
+use super::{CodegenError, control_flow, expect_type, function::BodyEmitter, place};
 
 pub(super) fn emit_block(
     block: &TypedBlock,
@@ -41,7 +41,13 @@ pub(super) fn emit(
         }
 
         TypedStatementKind::Assignment { target, value } => {
-            values::emit_assignment(target, value, emitter, span)?;
+            place::emit_assignment(target, value, emitter, span)?;
+
+            Ok(false)
+        }
+
+        TypedStatementKind::CompoundAssignment { target, op, value } => {
+            place::emit_compound_assignment(target, op, value, emitter, span)?;
 
             Ok(false)
         }

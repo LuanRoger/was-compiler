@@ -66,6 +66,12 @@ pub enum TokenKind<'a> {
     Slash,
     Percent,
 
+    PlusEqual,
+    MinusEqual,
+    StarEqual,
+    SlashEqual,
+    PercentEqual,
+
     Equal,
     EqualEqual,
     Bang,

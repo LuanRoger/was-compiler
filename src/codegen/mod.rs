@@ -21,6 +21,7 @@ mod layout;
 mod locals;
 mod memory;
 mod numeric;
+mod place;
 mod statement;
 mod temporaries;
 mod validation;

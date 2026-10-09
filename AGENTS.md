@@ -30,6 +30,8 @@ execution engine. Host registration declares imports; it does not install callba
 | [Limitations](docs/limitations.md) | Implemented restrictions versus possible alternatives |
 | [Runtime integration](docs/runtime-integration.md) | CLI, raw execution, imports, explicit marshaling |
 | [Browser guide](docs/browser.md) | Compiler-in-Wasm API, packaging, playground integration |
+| [Extension specification](docs/was_language_extensions_spec.md) | Extension semantics and implemented-versus-proposed scope |
+| [Extension plan](docs/was_language_extensions_plan.md) | Ordered work packages, representation gates, required tests |
 
 ## Compiler pipeline and ownership
 
@@ -60,6 +62,7 @@ bypasses the compiler's optimization/options orchestration.
 | `src/codegen/locals.rs`, `src/codegen/temporaries.rs` | Local-slot and temporary planning |
 | `src/codegen/function.rs` | `BodyEmitter`, scoped initialized bindings, private emission context |
 | `src/codegen/expression.rs`, `src/codegen/statement.rs` | Expression and statement lowering |
+| `src/codegen/place.rs` | Shared checked local/index places, ordinary and compound assignment |
 | `src/codegen/control_flow.rs`, `src/codegen/call.rs`, `src/codegen/values.rs` | Structured control flow, calls, literal values |
 | `src/codegen/memory.rs`, `src/codegen/numeric.rs` | Memory planning/helpers and optional floating remainder helper |
 | `src/codegen/validation.rs`, `src/codegen/mod.rs` | Checked internal boundary and section assembly |
@@ -77,8 +80,8 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
 
 - The planning walker is sequential and structural, not semantic analysis or code
   emission. Keep exhaustive node traversal centralized and policies separate.
-  Locals skip expressions; remainder discovery stops at the first `%` before
-  visiting its children. Successful block-exit hooks are not unwind cleanup.
+  Locals skip expressions; remainder discovery stops at the first `%` expression
+  or `%=` statement before visiting its children. Successful block-exit hooks are not unwind cleanup.
 - `ValidatedProgram` privately borrows the original typed tree, completes layout
   first, then checks/lowers every user function in source order and caches encoded
   bodies. Module assembly consumes that checked state. Do not clone the AST or add
@@ -102,7 +105,8 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   function inference, or whole-program type unification. `number` remains `f64`.
 - Named functions support forward, nested, self-recursive, mutual, and registered
   host calls. Statements include `let`, variable/index assignment, expression
-  statements, `return`, `if`/`else`, and `while`.
+  statements, `return`, `if`/`else`, and `while`. Statement-only `+= -= *= /= %=`
+    accept `number` variables and numeric-array elements, not whole arrays.
 - Expressions support literals, parentheses, unary `-`/`!`, arithmetic
   `+ - * / %`, numeric comparisons, boolean equality and short-circuit `&&`/`||`,
   string equality, numeric-array equality, indexing, and built-in `len(array)`.
@@ -153,12 +157,17 @@ refactors; specify and test any intentional behavior change explicitly.
 
 - Evaluate operands, call arguments, and array elements exactly once, left-to-right.
   Indexed assignment validates the target and bounds **before evaluating the RHS**.
+  Compound assignment additionally reads the old value before RHS effects and
+  writes to the original checked place. Indexed compounds use saved `i32` address
+  and `f64` old-value scratch slots; local compounds retain the old value on the
+  operand stack. `%=` uses the exact existing remainder helper.
 - Logical operators short-circuit at runtime, but both operands, unreachable
   statements, and unselected function bodies still receive static/backend checks.
 - Nonvoid functions require a statically recognized guaranteed return. A loop alone
   is not a guaranteed return, even with a literal `true` condition.
 - Variable IDs are per-function and may be sparse. Local slots place parameters
-  first, then declarations, then array temporaries. Preserve shadowing, scoped
+  first, then declarations, then typed temporaries (array handles and indexed
+  compound addresses/old values). Preserve shadowing, scoped
   initialization restoration, and the current no-reuse temporary policy.
 - Emit imports in registration order and user functions in source order. Deduplicate
   signatures without confusing type indices with function indices. Use the

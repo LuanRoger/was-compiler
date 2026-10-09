@@ -86,6 +86,12 @@ pub enum TypedStatementKind {
         value: TypedExpr,
     },
 
+    CompoundAssignment {
+        target: TypedExpr,
+        op: BinaryOp,
+        value: TypedExpr,
+    },
+
     If {
         cond: Box<TypedExpr>,
         then: TypedBlock,

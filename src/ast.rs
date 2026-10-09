@@ -86,6 +86,12 @@ pub enum StatementKind {
         value: Expr,
     },
 
+    CompoundAssignment {
+        target: Expr,
+        op: BinaryOp,
+        value: Expr,
+    },
+
     If {
         cond: Box<Expr>,
         then: Block,

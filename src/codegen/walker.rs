@@ -37,7 +37,8 @@ pub(super) fn walk_block<V: Visitor>(block: &TypedBlock, visitor: &mut V) -> Con
                 walk_expression(value, visitor)?;
             }
 
-            TypedStatementKind::Assignment { target, value } => {
+            TypedStatementKind::Assignment { target, value }
+            | TypedStatementKind::CompoundAssignment { target, value, .. } => {
                 walk_expression(target, visitor)?;
                 walk_expression(value, visitor)?;
             }

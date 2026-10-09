@@ -1,39 +1,72 @@
 use std::ops::ControlFlow;
 
-use crate::typed_ast::{TypedBlock, TypedExpr, TypedExprKind};
+use crate::typed_ast::{TypedBlock, TypedExpr, TypedExprKind, TypedStatement, TypedStatementKind};
+use wasm_encoder::ValType;
 
 use super::{
     CodegenError,
     walker::{self, Visitor},
 };
 
-pub(super) fn count(block: &TypedBlock) -> Result<u32, CodegenError> {
-    let mut visitor = TemporaryVisitor { count: 0 };
+pub(super) fn plan(block: &TypedBlock) -> Result<Vec<ValType>, CodegenError> {
+    let mut visitor = TemporaryVisitor {
+        count: 0,
+        types: Vec::new(),
+    };
 
     if let ControlFlow::Break(error) = walker::walk_block(block, &mut visitor) {
         return Err(error);
     }
 
-    Ok(visitor.count)
+    Ok(visitor.types)
+}
+
+#[cfg(test)]
+fn count(block: &TypedBlock) -> Result<u32, CodegenError> {
+    super::checked_u32(plan(block)?.len(), "temporary local count")
 }
 
 struct TemporaryVisitor {
     count: u32,
+    types: Vec<ValType>,
+}
+
+impl TemporaryVisitor {
+    fn reserve(&mut self, types: &[ValType]) -> ControlFlow<CodegenError> {
+        let additional = match super::checked_u32(types.len(), "temporary local count") {
+            Ok(count) => count,
+            Err(error) => return ControlFlow::Break(error),
+        };
+        let Some(count) = self.count.checked_add(additional) else {
+            return ControlFlow::Break(CodegenError::LimitExceeded {
+                what: "temporary local count",
+            });
+        };
+
+        self.count = count;
+        self.types.extend_from_slice(types);
+
+        ControlFlow::Continue(())
+    }
 }
 
 impl Visitor for TemporaryVisitor {
     type Break = CodegenError;
 
+    fn enter_statement(&mut self, statement: &TypedStatement) -> ControlFlow<CodegenError> {
+        if let TypedStatementKind::CompoundAssignment { target, .. } = &statement.kind
+            && matches!(target.kind, TypedExprKind::Index { .. })
+        {
+            // Reserve before target/RHS children, matching place lowering.
+            self.reserve(&[ValType::I32, ValType::F64])?;
+        }
+
+        ControlFlow::Continue(())
+    }
+
     fn enter_expression(&mut self, expr: &TypedExpr) -> ControlFlow<CodegenError> {
         if matches!(expr.kind, TypedExprKind::Array(_)) {
-            match self.count.checked_add(1) {
-                Some(count) => self.count = count,
-                None => {
-                    return ControlFlow::Break(CodegenError::LimitExceeded {
-                        what: "temporary local count",
-                    });
-                }
-            }
+            self.reserve(&[ValType::I32])?;
         }
 
         ControlFlow::Continue(())
@@ -165,11 +198,77 @@ mod tests {
     }
 
     #[test]
+    fn compound_scratch_types_follow_preorder_without_reusing_skipped_slots() {
+        let program = Compiler::new()
+            .analyze(
+                "fn test(a: number[], n: number) -> void {
+                let first = [1];
+                n += len([2]);
+                if false { a[len([3]) - 1] *= len([4]); }
+                while false { a[0] /= 2; }
+                return;
+                a[0] %= 3;
+                let last = [5];
+            }",
+            )
+            .unwrap();
+        let original = program.clone();
+
+        assert_eq!(
+            plan(&program.functions[0].body).unwrap(),
+            [
+                ValType::I32, // first array
+                ValType::I32, // local compound RHS array, no local-place scratch
+                ValType::I32,
+                ValType::F64, // skipped indexed place
+                ValType::I32,
+                ValType::I32, // its index and RHS arrays
+                ValType::I32,
+                ValType::F64, // loop place
+                ValType::I32,
+                ValType::F64, // unreachable place
+                ValType::I32, // last array
+            ]
+        );
+        let locals = super::super::locals::LocalLayout::new(&program.functions[0]).unwrap();
+        assert_eq!(locals.types, [ValType::I32, ValType::I32]);
+        assert_eq!(program, original);
+    }
+
+    #[test]
+    fn compound_pair_overflow_aborts_before_target_and_rhs_children() {
+        let block = vec![statement(TypedStatementKind::CompoundAssignment {
+            target: expr(TypedExprKind::Index {
+                expr: Box::new(array()),
+                index: Box::new(array()),
+            }),
+            op: BinaryOp::Add,
+            value: array(),
+        })];
+        let mut visitor = TemporaryVisitor {
+            count: u32::MAX - 1,
+            types: Vec::new(),
+        };
+
+        assert_eq!(
+            walker::walk_block(&block, &mut visitor),
+            ControlFlow::Break(CodegenError::LimitExceeded {
+                what: "temporary local count"
+            })
+        );
+        assert_eq!(visitor.count, u32::MAX - 1);
+        assert!(visitor.types.is_empty());
+    }
+
+    #[test]
     fn overflow_aborts_at_the_array_before_visiting_children() {
         let block = vec![statement(TypedStatementKind::Expression(expr(
             TypedExprKind::Array(vec![array()]),
         )))];
-        let mut visitor = TemporaryVisitor { count: u32::MAX };
+        let mut visitor = TemporaryVisitor {
+            count: u32::MAX,
+            types: Vec::new(),
+        };
 
         assert_eq!(
             walker::walk_block(&block, &mut visitor),

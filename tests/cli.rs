@@ -602,6 +602,47 @@ fn binary_cli_output_is_exactly_raw_library_codegen() {
 }
 
 #[test]
+fn compound_cli_output_matches_library_bytes_and_wat_at_every_level() {
+    let scratch = Scratch::new("compound_binary");
+    let source = "
+        fn main() -> number {
+            let values = [10];
+            values[0] += 2;
+            values[0] -= 1;
+            values[0] *= 3;
+            values[0] /= 2;
+            values[0] %= 5;
+            let n = 10;
+            n += values[0];
+            n -= 1;
+            n *= 3;
+            n /= 2;
+            n %= 5;
+            return n;
+        }
+        fn hidden() -> void { let n = 1; return; n %= 2; }
+    ";
+    let mut compiler = Compiler::new();
+    compiler.set_exports(ExportOptions::Only(vec!["main".into()]));
+    let expected = compiler.compile_source(source).unwrap();
+
+    for flag in ["-O0", "-O1", "-O2", "-O3"] {
+        assert_eq!(
+            scratch.compile(source, &[flag, "--export", "main"]),
+            expected
+        );
+        let wat = success(scratch.cli(
+            &["program.was", flag, "--export", "main", "--emit", "wat"],
+            None,
+        ));
+        assert_eq!(
+            assert_plain_wat(&wat),
+            wasmprinter::print_bytes(&expected).unwrap()
+        );
+    }
+}
+
+#[test]
 fn comments_preserve_raw_cli_and_library_wasm() {
     let scratch = Scratch::new("comments");
     let plain =

@@ -23,8 +23,8 @@ struct Context<'a> {
     locals: LocalLayout,
     initialized: HashSet<VariableId>,
     next_temporary: Cell<u32>,
-    temporary_count: u32,
-    temporary_end: u32,
+    first_temporary: u32,
+    temporary_types: Vec<ValType>,
 }
 
 impl<'a> Context<'a> {
@@ -35,13 +35,12 @@ impl<'a> Context<'a> {
             .ok_or(CodegenError::LimitExceeded {
                 what: "function local count",
             })?;
-        let temporary_count = temporaries::count(&function.body)?;
-        let temporary_end =
-            first_temporary
-                .checked_add(temporary_count)
-                .ok_or(CodegenError::LimitExceeded {
-                    what: "function local count",
-                })?;
+        let temporary_types = temporaries::plan(&function.body)?;
+        first_temporary
+            .checked_add(checked_u32(temporary_types.len(), "temporary local count")?)
+            .ok_or(CodegenError::LimitExceeded {
+                what: "function local count",
+            })?;
 
         Ok(Self {
             name: &function.name,
@@ -50,8 +49,8 @@ impl<'a> Context<'a> {
             locals,
             initialized: function.params.iter().map(|param| param.id).collect(),
             next_temporary: Cell::new(first_temporary),
-            temporary_count,
-            temporary_end,
+            first_temporary,
+            temporary_types,
         })
     }
 
@@ -81,12 +80,15 @@ impl<'a> Context<'a> {
             .expect("string literals interned before emission")
     }
 
-    fn temporary(&self) -> LocalIndex {
+    fn temporary(&self, ty: ValType) -> LocalIndex {
         let index = self.next_temporary.get();
+        let offset = usize::try_from(index - self.first_temporary)
+            .expect("planned temporary index fits usize");
 
-        assert!(
-            index < self.temporary_end,
-            "array temporaries planned before emission"
+        assert_eq!(
+            self.temporary_types.get(offset),
+            Some(&ty),
+            "typed temporaries planned in emission order"
         );
 
         self.next_temporary.set(index + 1);
@@ -139,9 +141,21 @@ impl<'a> BodyEmitter<'a> {
         let context = Context::new(function, module)?;
         let mut locals: Vec<_> = context.locals.types.iter().map(|ty| (1, *ty)).collect();
 
-        if context.temporary_count != 0 {
-            locals.push((context.temporary_count, ValType::I32));
+        let mut temporary_groups: Vec<(u32, ValType)> = Vec::new();
+
+        for ty in &context.temporary_types {
+            if let Some((count, previous)) = temporary_groups.last_mut()
+                && previous == ty
+            {
+                // The total temporary count has already been checked against u32.
+                *count += 1;
+            } else {
+                temporary_groups.push((1, *ty));
+            }
         }
+
+        // Keep declaration groups separate from scratch groups for legacy bytes.
+        locals.extend(temporary_groups);
 
         Ok(Self {
             body: Function::new(locals),
@@ -185,8 +199,8 @@ impl<'a> BodyEmitter<'a> {
         self.context.string(value)
     }
 
-    pub fn temporary(&self) -> LocalIndex {
-        self.context.temporary()
+    pub fn temporary(&self, ty: ValType) -> LocalIndex {
+        self.context.temporary(ty)
     }
 
     pub fn target(
@@ -345,7 +359,7 @@ mod tests {
             let result = emitter.scoped(|emitter| {
                 emitter.initialize(inside);
                 assert_eq!(emitter.resolve(inside, Type::NumberArray, span)?.raw(), 1);
-                assert_eq!(emitter.temporary().raw(), 3);
+                assert_eq!(emitter.temporary(ValType::I32).raw(), 3);
 
                 if fail {
                     Err(CodegenError::InvalidAssignmentTarget {
@@ -392,7 +406,7 @@ mod tests {
                     .raw(),
                 2
             );
-            assert_eq!(emitter.temporary().raw(), 4);
+            assert_eq!(emitter.temporary(ValType::I32).raw(), 4);
         }
     }
 

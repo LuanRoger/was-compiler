@@ -58,6 +58,9 @@ pub enum SemanticError {
     #[error("Assignment target must be a variable or array element at {span:?}")]
     InvalidAssignmentTarget { span: Span },
 
+    #[error("Compound assignment requires an arithmetic operator, found {op:?} at {span:?}")]
+    InvalidCompoundAssignmentOperator { op: BinaryOp, span: Span },
+
     #[error("A void function cannot return a value at {span:?}")]
     UnexpectedReturnValue { span: Span },
 
@@ -78,6 +81,7 @@ impl SemanticError {
             | Self::ArgumentCountMismatch { span, .. }
             | Self::InvalidBinaryOperands { span, .. }
             | Self::InvalidAssignmentTarget { span }
+            | Self::InvalidCompoundAssignmentOperator { span, .. }
             | Self::UnexpectedReturnValue { span }
             | Self::MissingReturn { span, .. } => Some(*span),
         }
@@ -316,6 +320,33 @@ impl SemanticAnalyzer {
                 self.expect_type(target.ty, value.ty, span)?;
 
                 TypedStatementKind::Assignment { target, value }
+            }
+
+            StatementKind::CompoundAssignment { target, op, value } => {
+                let target = self.analyze_assignment_target(target, span)?;
+
+                self.expect_type(Type::Number, target.ty, span)?;
+
+                if !matches!(
+                    op,
+                    BinaryOp::Add
+                        | BinaryOp::Subtract
+                        | BinaryOp::Multiply
+                        | BinaryOp::Divide
+                        | BinaryOp::Remainder
+                ) {
+                    return Err(SemanticError::InvalidCompoundAssignmentOperator { op: *op, span });
+                }
+
+                let value = self.analyze_expr(value, span)?;
+
+                self.expect_type(Type::Number, value.ty, span)?;
+
+                TypedStatementKind::CompoundAssignment {
+                    target,
+                    op: *op,
+                    value,
+                }
             }
 
             StatementKind::If { cond, then, else_ } => {

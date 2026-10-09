@@ -227,8 +227,9 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
         );
 
         let expr = self.parse_expression()?;
+        let compound_op = self.compound_assignment_operator();
 
-        let kind = if self.check(&TokenKind::Equal) {
+        let kind = if self.check(&TokenKind::Equal) || compound_op.is_some() {
             if !starts_with_identifier || !matches!(expr, Expr::Identifier(_) | Expr::Index { .. })
             {
                 return Err(ParseError::InvalidAssignmentTarget {
@@ -239,9 +240,17 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
             self.advance();
 
             let value = self.parse_expression()?;
-            StatementKind::Assignment {
-                target: expr,
-                value,
+
+            match compound_op {
+                Some(op) => StatementKind::CompoundAssignment {
+                    target: expr,
+                    op,
+                    value,
+                },
+                None => StatementKind::Assignment {
+                    target: expr,
+                    value,
+                },
             }
         } else {
             StatementKind::Expression(expr)
@@ -250,6 +259,17 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
         self.expect(TokenKind::Semicolon)?;
 
         Ok(kind)
+    }
+
+    fn compound_assignment_operator(&self) -> Option<BinaryOp> {
+        Some(match &self.peek()?.kind {
+            TokenKind::PlusEqual => BinaryOp::Add,
+            TokenKind::MinusEqual => BinaryOp::Subtract,
+            TokenKind::StarEqual => BinaryOp::Multiply,
+            TokenKind::SlashEqual => BinaryOp::Divide,
+            TokenKind::PercentEqual => BinaryOp::Remainder,
+            _ => return None,
+        })
     }
 
     fn parse_expression(&mut self) -> Result<Expr, ParseError> {
@@ -510,6 +530,12 @@ fn token_name(kind: &TokenKind<'_>) -> &'static str {
         TokenKind::Slash => "/",
         TokenKind::Percent => "%",
 
+        TokenKind::PlusEqual => "+=",
+        TokenKind::MinusEqual => "-=",
+        TokenKind::StarEqual => "*=",
+        TokenKind::SlashEqual => "/=",
+        TokenKind::PercentEqual => "%=",
+
         TokenKind::Equal => "=",
         TokenKind::EqualEqual => "==",
         TokenKind::Bang => "!",
@@ -660,6 +686,133 @@ mod tests {
             statements[0].span,
             Span::new(start, start + "let xs: number[] = [1, 2];".len())
         );
+    }
+
+    #[test]
+    fn parses_all_compound_assignments_with_both_targets_and_original_spans() {
+        for (operator, op) in [
+            ("+=", BinaryOp::Add),
+            ("-=", BinaryOp::Subtract),
+            ("*=", BinaryOp::Multiply),
+            ("/=", BinaryOp::Divide),
+            ("%=", BinaryOp::Remainder),
+        ] {
+            for (target_text, target) in [
+                ("value", identifier("value")),
+                (
+                    "xs[index()]",
+                    Expr::Index {
+                        expr: Box::new(identifier("xs")),
+                        index: Box::new(Expr::Call {
+                            func: "index".into(),
+                            args: vec![],
+                        }),
+                    },
+                ),
+            ] {
+                let statement = format!("{target_text}/*é*/{operator}/*λ*/2 + 3 * 4;");
+                let source = format!("fn main() -> void {{ /*🙂*/{statement} }}");
+                let program = parse(&source).unwrap();
+                let body = &program.functions[0].body;
+                let start = source.find(target_text).unwrap();
+
+                assert_eq!(body.len(), 1);
+                assert_eq!(body[0].span, Span::new(start, start + statement.len()));
+                assert_eq!(
+                    body[0].kind,
+                    StatementKind::CompoundAssignment {
+                        target,
+                        op,
+                        value: binary(
+                            number("2"),
+                            BinaryOp::Add,
+                            binary(number("3"), BinaryOp::Multiply, number("4")),
+                        ),
+                    }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn compound_assignments_reuse_invalid_assignment_target_errors() {
+        for operator in ["+=", "-=", "*=", "/=", "%="] {
+            for target in ["1", "a + b", "call()", "[1]", "(a)", "(xs[0])", "-a", "!a"] {
+                let source = format!("fn main() -> void {{ {target} {operator} missing; }}");
+                let start = "fn main() -> void { ".len();
+
+                assert_eq!(
+                    parse(&source).unwrap_err(),
+                    ParseError::InvalidAssignmentTarget {
+                        span: Span::new(start, start + target.len()),
+                    }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn compound_assignments_report_missing_values_and_semicolons() {
+        for operator in ["+=", "-=", "*=", "/=", "%="] {
+            for (tail, expected, found) in [(";", "expression", ";"), ("1 }", ";", "}")] {
+                let source = format!("fn main() -> void {{ value {operator} {tail}");
+                let position = source.rfind(found).unwrap();
+
+                assert_eq!(
+                    parse(&source).unwrap_err(),
+                    ParseError::UnexpectedToken {
+                        expected,
+                        found,
+                        span: Span::new(position, position + 1),
+                    }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rejects_compound_assignments_in_expressions_and_malformed_places() {
+        for operator in ["+=", "-=", "*=", "/=", "%="] {
+            for body in [
+                format!("let value = x {operator} 1;"),
+                format!("let value {operator} 1;"),
+                format!("return x {operator} 1;"),
+                format!("call(x {operator} 1);"),
+                format!("[x {operator} 1];"),
+                format!("xs[x {operator} 1];"),
+                format!("if x {operator} 1 {{}}"),
+                format!("while x {operator} 1 {{}}"),
+                format!("x {operator} y {operator} 1;"),
+                format!("x = y {operator} 1;"),
+                format!("x {operator} y = 1;"),
+                format!("(x {operator} 1);"),
+                format!("xs[] {operator} 1;"),
+                format!("xs[0][1] {operator} 1;"),
+                format!("make()[0] {operator} 1;"),
+                format!("[1][0] {operator} 1;"),
+                format!("x {operator}= 1;"),
+                format!("x {}/*é*/= 1;", &operator[..1]),
+            ] {
+                let source = format!("fn main() -> void {{ {body} }}");
+
+                assert!(parse(&source).is_err(), "unexpectedly accepted: {source}");
+            }
+        }
+    }
+
+    #[test]
+    fn truncated_compound_assignments_never_panic() {
+        for operator in ["+=", "-=", "*=", "/=", "%="] {
+            let source = format!("fn test() -> void {{ xs[index()] {operator} value() + 1; }}");
+            let tokens = Lexer::new(&source).tokenize();
+
+            for end in 0..tokens.len() - 1 {
+                assert!(
+                    Parser::new(&tokens[..end]).parse_program().is_err(),
+                    "accepted truncated {operator} input at token {end}"
+                );
+            }
+        }
     }
 
     #[test]

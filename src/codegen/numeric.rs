@@ -2,7 +2,7 @@ use std::ops::ControlFlow;
 
 use crate::{
     ast::BinaryOp,
-    typed_ast::{TypedExpr, TypedExprKind, TypedProgram},
+    typed_ast::{TypedExpr, TypedExprKind, TypedProgram, TypedStatement, TypedStatementKind},
 };
 use wasm_encoder::{BlockType, Function, Instruction, ValType};
 
@@ -19,6 +19,20 @@ struct RemainderVisitor;
 
 impl Visitor for RemainderVisitor {
     type Break = ();
+
+    fn enter_statement(&mut self, statement: &TypedStatement) -> ControlFlow<()> {
+        if matches!(
+            statement.kind,
+            TypedStatementKind::CompoundAssignment {
+                op: BinaryOp::Remainder,
+                ..
+            }
+        ) {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    }
 
     fn enter_expression(&mut self, expr: &TypedExpr) -> ControlFlow<()> {
         if matches!(
@@ -268,6 +282,21 @@ mod tests {
                 target: number(),
                 value: remainder(),
             },
+            TypedStatementKind::CompoundAssignment {
+                target: number(),
+                op: BinaryOp::Remainder,
+                value: number(),
+            },
+            TypedStatementKind::CompoundAssignment {
+                target: remainder(),
+                op: BinaryOp::Add,
+                value: number(),
+            },
+            TypedStatementKind::CompoundAssignment {
+                target: number(),
+                op: BinaryOp::Add,
+                value: remainder(),
+            },
             TypedStatementKind::Expression(remainder()),
             TypedStatementKind::Return(Some(remainder())),
             TypedStatementKind::If {
@@ -300,6 +329,35 @@ mod tests {
                 statement(TypedStatementKind::Return(None)),
                 statement(kind),
             ])));
+        }
+    }
+
+    #[test]
+    fn compound_remainder_statement_hook_stops_before_expression_traversal() {
+        for op in [
+            BinaryOp::Add,
+            BinaryOp::Subtract,
+            BinaryOp::Multiply,
+            BinaryOp::Divide,
+            BinaryOp::Remainder,
+        ] {
+            let statement = statement(TypedStatementKind::CompoundAssignment {
+                target: number(),
+                op,
+                value: number(),
+            });
+            assert_eq!(
+                RemainderVisitor.enter_statement(&statement),
+                if op == BinaryOp::Remainder {
+                    ControlFlow::Break(())
+                } else {
+                    ControlFlow::Continue(())
+                }
+            );
+            assert_eq!(
+                needs_remainder(&program(vec![statement])),
+                op == BinaryOp::Remainder
+            );
         }
     }
 

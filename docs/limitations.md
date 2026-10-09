@@ -40,6 +40,14 @@ so a same-named reference requires an outer binding; nested shadowing is allowed
 The binding's type is then fixed. An inferred void call initializer is rejected
 with the existing `SemanticError::InvalidVoidType` for the local.
 
+Compound assignments `+=`, `-=`, `*=`, `/=`, and `%=` are supported as statements
+on `number` variables and identifier-rooted numeric-array elements only. Both the
+target and RHS must have type `number`. They do not produce an expression value,
+concatenate strings, operate on whole arrays, or broaden postfix access. Indexed
+updates check the target once and save its address and old value before RHS
+effects; failure traps before RHS evaluation. `%=` shares exact floating remainder
+behavior with `%`. Captured-binding updates remain future closure work.
+
 | Restriction now | Practical effect | Current alternative | Possible future choice and tradeoff |
 | --- | --- | --- | --- |
 | Only `number`, `bool`, `string`, `number[]`, and `void` exist. Parameters and return types require annotations; every `let` requires an initializer. No function inference, whole-program type unification, promotions, implicit coercions, or source `i32` type. | Local inference does not change the `f64` numeric model or allow later assignments of another type. A boolean cannot stand in for a number, and a numeric value cannot serve as a condition; `void` is not a variable/parameter type. | Use inferred or explicitly annotated locals and explicit helper functions, branches, or registered host conversions with matching signatures. | Explicit conversions or broader inference require separate type-system and error-ordering decisions; neither is implied by local initializer inference. |

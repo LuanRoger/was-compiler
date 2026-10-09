@@ -155,6 +155,7 @@ fn assert_block_spans(ast: &AstBlock, typed: &TypedBlock) {
             ) => assert_block_spans(body, typed_body),
             (AstStatementKind::Let { .. }, StmtKind::Let { .. })
             | (AstStatementKind::Assignment { .. }, StmtKind::Assignment { .. })
+            | (AstStatementKind::CompoundAssignment { .. }, StmtKind::CompoundAssignment { .. })
             | (AstStatementKind::Return(_), StmtKind::Return(_))
             | (AstStatementKind::Expression(_), StmtKind::Expression(_)) => {}
             _ => panic!("statement kind changed: {original:?} became {lowered:?}"),
@@ -813,6 +814,134 @@ fn assignments_control_flow_void_calls_and_bare_returns_are_lowered() {
     assert!(then.is_empty());
     assert!(else_.is_none());
     assert_eq!(body[5].kind, StmtKind::Return(None));
+}
+
+#[test]
+fn compound_assignments_preserve_all_operators_typed_places_calls_and_spans() {
+    for (operator, op) in [
+        ("+=", BinaryOp::Add),
+        ("-=", BinaryOp::Subtract),
+        ("*=", BinaryOp::Multiply),
+        ("/=", BinaryOp::Divide),
+        ("%=", BinaryOp::Remainder),
+    ] {
+        let source = format!(
+            "fn index() -> number {{ return 0; }}
+            fn rhs() -> number {{ return 2; }}
+            fn test(values: number[]) -> void {{
+                let value = 1;
+                /*é*/value {operator} rhs() + 1;
+                values[index()]/*λ*/{operator}/*🙂*/rhs();
+            }}"
+        );
+        let program = parse(&source);
+        let typed = SemanticAnalyzer::new().analyze(&program).unwrap();
+        let body = &typed.functions[2].body;
+
+        assert_block_spans(&program.functions[2].body, body);
+        assert_eq!(body.len(), 3);
+        assert_eq!(
+            body[1].kind,
+            StmtKind::CompoundAssignment {
+                target: identifier(1, "value", Type::Number),
+                op,
+                value: binary(
+                    call(
+                        FunctionRef::User(FunctionId(1)),
+                        "rhs",
+                        vec![],
+                        Type::Number,
+                    ),
+                    BinaryOp::Add,
+                    number("1"),
+                    Type::Number,
+                ),
+            }
+        );
+        assert_eq!(
+            body[2].kind,
+            StmtKind::CompoundAssignment {
+                target: expr(
+                    ExprKind::Index {
+                        expr: Box::new(identifier(0, "values", Type::NumberArray)),
+                        index: Box::new(call(
+                            FunctionRef::User(FunctionId(0)),
+                            "index",
+                            vec![],
+                            Type::Number,
+                        )),
+                    },
+                    Type::Number,
+                ),
+                op,
+                value: call(
+                    FunctionRef::User(FunctionId(1)),
+                    "rhs",
+                    vec![],
+                    Type::Number,
+                ),
+            }
+        );
+    }
+}
+
+#[test]
+fn compound_assignment_shadowing_restores_ids_and_adds_no_bindings() {
+    let program = parse(
+        "fn test(value: number) -> void {
+            if true { let value = 2; value += value; }
+            while false { value -= 1; }
+            value *= 2;
+            value /= 3;
+            value %= 4;
+            let next = value;
+        }",
+    );
+    let typed = SemanticAnalyzer::new().analyze(&program).unwrap();
+    let body = &typed.functions[0].body;
+    let StmtKind::If { then, .. } = &body[0].kind else {
+        panic!("expected if");
+    };
+    let StmtKind::While {
+        body: loop_body, ..
+    } = &body[1].kind
+    else {
+        panic!("expected while");
+    };
+
+    assert_block_spans(&program.functions[0].body, body);
+    assert_eq!(
+        then[1].kind,
+        StmtKind::CompoundAssignment {
+            target: identifier(1, "value", Type::Number),
+            op: BinaryOp::Add,
+            value: identifier(1, "value", Type::Number),
+        }
+    );
+
+    for (statement, op, value) in [
+        (&loop_body[0], BinaryOp::Subtract, "1"),
+        (&body[2], BinaryOp::Multiply, "2"),
+        (&body[3], BinaryOp::Divide, "3"),
+        (&body[4], BinaryOp::Remainder, "4"),
+    ] {
+        assert_eq!(
+            statement.kind,
+            StmtKind::CompoundAssignment {
+                target: identifier(0, "value", Type::Number),
+                op,
+                value: number(value),
+            }
+        );
+    }
+
+    assert_let(
+        &body[5],
+        2,
+        "next",
+        Type::Number,
+        identifier(0, "value", Type::Number),
+    );
 }
 
 #[test]

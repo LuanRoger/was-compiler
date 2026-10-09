@@ -54,7 +54,8 @@ support `cwasm` artifacts.
 
 The compiler emits valid modules containing registered function imports,
 parameters and locals of every nonvoid language type, variable reads and
-assignments, expression statements, returns, user/host function calls, `if`/`else`,
+assignments (including numeric compound updates), expression statements, returns,
+user/host function calls, `if`/`else`,
 and `while`. Strings, numeric arrays, checked array access/assignment, and built-in
 `len` are supported. Empty `void` functions and bare `return;` statements work too.
 Calls can be forward, nested, self-recursive, or mutually recursive; arguments
@@ -126,6 +127,25 @@ fn sum(limit: number) -> number {
 }
 ```
 
+Numeric variables and numeric-array elements support statement-only `+=`, `-=`,
+`*=`, `/=`, and `%=`. The target is evaluated and bounds-checked once, its old value
+is read before the RHS, and the result is written to the original location. RHS
+array mutations do not change that saved old value; target failures trap before
+RHS effects. Both operands must be `number`; strings, booleans, and whole arrays
+cannot be compound-assigned. `%=` uses the same exact remainder semantics as `%`.
+
+```text
+fn main() -> number {
+    let values = [10, 20];
+    values[0] += 2;
+    let total = values[0];
+    total *= 3;
+    total %= 10;
+
+    return total;
+}
+```
+
 It supports `+`, `-`, `*`, `/`, `%`, unary negation, and nested/parenthesized expressions.
 Resolved variable IDs map to per-function Wasm slots, with parameters first and
 locals in declaration order. Reads use `local.get`; initialization and assignment
@@ -148,8 +168,8 @@ Wasm has no `f64.rem`, so `%` calls an optional guest `(f64, f64) -> f64` helper
 It uses exact binary scaled subtraction rather than `a - trunc(a / b) * b`,
 requires no implicit host import or Memory/Global/Data sections, and is appended
 after all user functions and any seven memory helpers. It is included only when
-`%` occurs anywhere in the typed AST, including unexported functions, unreachable
-statements, and runtime-skipped operands. Programs without `%` retain the same
+`%` or `%=` occurs anywhere in the typed AST, including unexported functions,
+unreachable statements, and runtime-skipped code. Programs without either retain the same
 output. The browser compiler uses the same pipeline and remainder semantics.
 
 Numeric comparisons support `==`, `!=`, `<`, `<=`, `>`, and `>=`; booleans support
