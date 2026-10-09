@@ -3,19 +3,17 @@ use crate::{
     tokens::Span,
     typed_ast::{BuiltinFunction, FunctionRef, TypedExpr},
 };
-use wasm_encoder::{Function, Instruction};
 
-use super::{CodegenError, expect_type, expression, function::Context, memory::Helper};
+use super::{CodegenError, expect_type, function::BodyEmitter, memory::Helper};
 
 pub(super) fn emit(
     reference: FunctionRef,
     args: &[TypedExpr],
     return_type: Type,
-    body: &mut Function,
-    context: &Context<'_>,
+    body: &mut BodyEmitter<'_>,
     span: Span,
 ) -> Result<(), CodegenError> {
-    let function = context.name;
+    let function = body.name();
 
     if let FunctionRef::Builtin(BuiltinFunction::Len) = reference {
         if args.len() != 1 {
@@ -30,20 +28,14 @@ pub(super) fn emit(
 
         expect_type(function, Type::Number, return_type, span)?;
         expect_type(function, Type::NumberArray, args[0].ty, span)?;
-        expression::emit(&args[0], body, context, span)?;
+        body.emit_expr(&args[0], span)?;
 
-        body.instruction(&Instruction::Call(context.helper(Helper::ArrayLen)));
+        body.call(body.helper(Helper::ArrayLen));
 
         return Ok(());
     }
 
-    let target = context.module.resolve(reference).ok_or_else(|| {
-        CodegenError::UnknownFunctionReference {
-            function: function.into(),
-            reference,
-            span,
-        }
-    })?;
+    let target = body.target(reference, span)?;
 
     if target.params.len() != args.len() {
         return Err(CodegenError::ArgumentCountMismatch {
@@ -61,35 +53,34 @@ pub(super) fn emit(
 
     for (arg, expected) in args.iter().zip(&target.params) {
         expect_type(function, *expected, arg.ty, span)?;
-        expression::emit(arg, body, context, span)?;
+        body.emit_expr(arg, span)?;
 
         if is_host {
-            normalize_host_value(*expected, body, context);
+            normalize_host_value(*expected, body);
         }
     }
 
-    body.instruction(&Instruction::Call(target.function_index));
+    body.call(target.function_index);
 
     if is_host {
-        normalize_host_value(target.return_type, body, context);
+        normalize_host_value(target.return_type, body);
     }
 
     Ok(())
 }
 
-fn normalize_host_value(ty: Type, body: &mut Function, context: &Context<'_>) {
+fn normalize_host_value(ty: Type, body: &mut BodyEmitter<'_>) {
     match ty {
         Type::Bool => {
-            body.instruction(&Instruction::I32Eqz);
-            body.instruction(&Instruction::I32Eqz);
+            body.normalize_bool();
         }
 
         Type::String => {
-            body.instruction(&Instruction::Call(context.helper(Helper::ValidateString)));
+            body.call(body.helper(Helper::ValidateString));
         }
 
         Type::NumberArray => {
-            body.instruction(&Instruction::Call(context.helper(Helper::ValidateArray)));
+            body.call(body.helper(Helper::ValidateArray));
         }
 
         Type::Number | Type::Void => {}

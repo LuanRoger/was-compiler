@@ -33,6 +33,25 @@ publishing a value, mutate string payloads, or reinterpret strings as arrays.
 Trusted hosts may modify array elements. Exported memory is shared with the host;
 these checks are not an isolation mechanism against a host that violates the ABI.
 
+## Layout ownership and compatibility checks
+
+The compiler's private layout constants live in
+[`src/codegen/abi.rs`](../src/codegen/abi.rs), alongside language-to-Wasm type
+lowering. Descriptor size/offsets, descriptor and numeric-payload alignment,
+element widths, and allocation alignment/minimum size have distinct names even
+where their current values coincide. Memory code owns page sizes and limits.
+`Helper::ALL` in [`memory.rs`](../src/codegen/memory.rs) defines the canonical
+memory-helper order used for indices, layout planning, and module emission.
+
+The optional host adapter [`runtime/abi.cjs`](../runtime/abi.cjs) keeps its own
+private named layout constants. These are implementation definitions, not a new
+configurable ABI or public schema. [`tests/abi.rs`](../tests/abi.rs) pins independent
+literal descriptor bytes and a complete pre-refactor module fixture, compares
+CLI and library output, and exercises guest/host compatibility.
+[`tests/runtime.rs`](../tests/runtime.rs) independently checks host-created bytes,
+copy isolation, and memory-growth view refresh. Expected layouts intentionally do
+not derive from production constants, so matching mistakes cannot hide ABI drift.
+
 ## Ownership and lifetime
 
 - Strings are immutable values. Equal literals share a statically interned

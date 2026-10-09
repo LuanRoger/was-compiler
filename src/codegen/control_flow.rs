@@ -3,40 +3,38 @@ use crate::{
     tokens::Span,
     typed_ast::{TypedBlock, TypedExpr},
 };
-use wasm_encoder::{BlockType, Function, Instruction};
+use wasm_encoder::{BlockType, Instruction};
 
-use super::{CodegenError, expect_type, expression, function::Context, statement};
+use super::{CodegenError, expect_type, function::BodyEmitter, indices::LabelDepth};
 
 pub(super) fn emit_if(
     cond: &TypedExpr,
     then: &TypedBlock,
     else_: Option<&TypedBlock>,
-    body: &mut Function,
-    context: &mut Context<'_>,
+    emitter: &mut BodyEmitter<'_>,
     span: Span,
 ) -> Result<bool, CodegenError> {
-    expect_type(context.name, Type::Bool, cond.ty, span)?;
-    expression::emit(cond, body, context, span)?;
+    expect_type(emitter.name(), Type::Bool, cond.ty, span)?;
+    emitter.emit_expr(cond, span)?;
+    emitter.begin_if(BlockType::Empty);
 
-    body.instruction(&Instruction::If(BlockType::Empty));
-
-    let then_returns = context.scoped(|context| statement::emit_block(then, body, context))?;
+    let then_returns = emitter.scoped(|emitter| emitter.emit_block(then))?;
     let else_returns = match else_ {
         Some(block) => {
-            body.instruction(&Instruction::Else);
+            emitter.otherwise();
 
-            context.scoped(|context| statement::emit_block(block, body, context))?
+            emitter.scoped(|emitter| emitter.emit_block(block))?
         }
 
         None => false,
     };
 
-    body.instruction(&Instruction::End);
+    emitter.end();
 
     let always_returns = then_returns && else_returns;
 
     if always_returns {
-        body.instruction(&Instruction::Unreachable);
+        emitter.instruction(&Instruction::Unreachable);
     }
 
     Ok(always_returns)
@@ -45,25 +43,20 @@ pub(super) fn emit_if(
 pub(super) fn emit_while(
     cond: &TypedExpr,
     block: &TypedBlock,
-    body: &mut Function,
-    context: &mut Context<'_>,
+    emitter: &mut BodyEmitter<'_>,
     span: Span,
 ) -> Result<bool, CodegenError> {
-    expect_type(context.name, Type::Bool, cond.ty, span)?;
+    expect_type(emitter.name(), Type::Bool, cond.ty, span)?;
+    emitter.begin_block();
+    emitter.begin_loop();
+    emitter.emit_expr(cond, span)?;
 
-    body.instruction(&Instruction::Block(BlockType::Empty));
-    body.instruction(&Instruction::Loop(BlockType::Empty));
-
-    expression::emit(cond, body, context, span)?;
-
-    body.instruction(&Instruction::I32Eqz);
-    body.instruction(&Instruction::BrIf(1));
-
-    context.scoped(|context| statement::emit_block(block, body, context))?;
-
-    body.instruction(&Instruction::Br(0));
-    body.instruction(&Instruction::End);
-    body.instruction(&Instruction::End);
+    emitter.instruction(&Instruction::I32Eqz);
+    emitter.branch_if(LabelDepth::LOOP_EXIT);
+    emitter.scoped(|emitter| emitter.emit_block(block))?;
+    emitter.branch(LabelDepth::LOOP_BACK_EDGE);
+    emitter.end();
+    emitter.end();
 
     Ok(false)
 }

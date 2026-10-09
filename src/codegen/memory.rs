@@ -9,9 +9,13 @@ use crate::{
 };
 use wasm_encoder::{BlockType, Function, Instruction, MemArg, ValType};
 
-use super::{CodegenError, abi::Signature};
+use super::{
+    CodegenError,
+    abi::{self, Signature},
+};
 
 pub(super) const PAGE_BYTES: u64 = 65_536;
+const PAGE_ALIGN_LOG2: u32 = PAGE_BYTES.trailing_zeros();
 pub(super) const MAX_PAGES: u64 = 65_535;
 pub(super) const MAX_BYTES: u64 = MAX_PAGES * PAGE_BYTES;
 
@@ -27,42 +31,48 @@ pub(super) enum Helper {
 }
 
 impl Helper {
+    pub(super) const ALL: [Self; 7] = [
+        Self::Alloc,
+        Self::ValidateString,
+        Self::ValidateArray,
+        Self::ArrayAddress,
+        Self::ArrayLen,
+        Self::StringEqual,
+        Self::ArrayEqual,
+    ];
+
     pub(super) fn index(self) -> u32 {
-        match self {
-            Self::Alloc => 0,
-            Self::ValidateString => 1,
-            Self::ValidateArray => 2,
-            Self::ArrayAddress => 3,
-            Self::ArrayLen => 4,
-            Self::StringEqual => 5,
-            Self::ArrayEqual => 6,
+        Self::ALL
+            .iter()
+            .position(|helper| *helper == self)
+            .expect("memory helper registered in canonical order") as u32
+    }
+
+    pub(super) fn signature(self) -> Signature {
+        use ValType::{F64, I32};
+
+        let (params, result) = match self {
+            Self::Alloc => (vec![I32], I32),
+            Self::ValidateString => (vec![I32], I32),
+            Self::ValidateArray => (vec![I32], I32),
+            Self::ArrayAddress => (vec![I32, F64], I32),
+            Self::ArrayLen => (vec![I32], F64),
+            Self::StringEqual => (vec![I32, I32], I32),
+            Self::ArrayEqual => (vec![I32, I32], I32),
+        };
+
+        Signature {
+            params,
+            result: Some(result),
         }
     }
 }
 
 pub(super) fn helpers() -> Vec<(Helper, Signature)> {
-    use ValType::{F64, I32};
-
-    [
-        (Helper::Alloc, vec![I32], I32),
-        (Helper::ValidateString, vec![I32], I32),
-        (Helper::ValidateArray, vec![I32], I32),
-        (Helper::ArrayAddress, vec![I32, F64], I32),
-        (Helper::ArrayLen, vec![I32], F64),
-        (Helper::StringEqual, vec![I32, I32], I32),
-        (Helper::ArrayEqual, vec![I32, I32], I32),
-    ]
-    .into_iter()
-    .map(|(helper, params, result)| {
-        (
-            helper,
-            Signature {
-                params,
-                result: Some(result),
-            },
-        )
-    })
-    .collect()
+    Helper::ALL
+        .into_iter()
+        .map(|helper| (helper, helper.signature()))
+        .collect()
 }
 
 pub struct MemoryPlan {
@@ -74,8 +84,8 @@ pub struct MemoryPlan {
 impl MemoryPlan {
     pub fn new(program: &TypedProgram) -> Result<Option<Self>, CodegenError> {
         let mut plan = Self {
-            data: vec![0; 8],
-            heap_start: 8,
+            data: vec![0; abi::MIN_ADDRESS as usize],
+            heap_start: abi::MIN_ADDRESS,
             strings: HashMap::new(),
         };
         let mut used = false;
@@ -202,7 +212,7 @@ impl MemoryPlan {
             what: "string byte length",
         })?;
         let handle = aligned_offset(self.data.len() as u64)?;
-        let payload = u64::from(handle) + 8;
+        let payload = u64::from(handle) + u64::from(abi::DESCRIPTOR_SIZE);
         let end = payload + u64::from(length);
 
         aligned_offset(end)?;
@@ -231,7 +241,8 @@ fn memory_type(ty: Type) -> bool {
 }
 
 fn aligned_offset(value: u64) -> Result<u32, CodegenError> {
-    let aligned = value.checked_add(7).map(|value| value & !7);
+    let mask = u64::from(abi::ALLOCATION_ALIGNMENT - 1);
+    let aligned = value.checked_add(mask).map(|value| value & !mask);
 
     match aligned {
         Some(aligned) if aligned <= MAX_BYTES => Ok(aligned as u32),
@@ -276,7 +287,7 @@ fn memory_bytes(body: &mut Function) {
         &[
             Instruction::MemorySize(0),
             Instruction::I64ExtendI32U,
-            Instruction::I64Const(16),
+            Instruction::I64Const(i64::from(PAGE_ALIGN_LOG2)),
             Instruction::I64Shl,
         ],
     );
@@ -285,7 +296,7 @@ fn memory_bytes(body: &mut Function) {
 fn header(offset: u64) -> MemArg {
     MemArg {
         offset,
-        align: 2,
+        align: abi::DESCRIPTOR_FIELD_ALIGN_LOG2,
         memory_index: 0,
     }
 }
@@ -301,10 +312,10 @@ fn emit_alloc() -> Function {
             GlobalGet(0),
             I64ExtendI32U,
             LocalTee(1),
-            I64Const(8),
+            I64Const(i64::from(abi::MIN_ADDRESS)),
             I64LtU,
             LocalGet(1),
-            I64Const(7),
+            I64Const(i64::from(abi::ALLOCATION_ALIGNMENT - 1)),
             I64And,
             I64Const(0),
             I64Ne,
@@ -318,14 +329,14 @@ fn emit_alloc() -> Function {
         &[
             LocalGet(0),
             I64ExtendI32U,
-            I64Const(7),
+            I64Const(i64::from(abi::ALLOCATION_ALIGNMENT - 1)),
             I64Add,
-            I64Const(-8),
+            I64Const(-i64::from(abi::ALLOCATION_ALIGNMENT)),
             I64And,
             LocalTee(2),
             I64Eqz,
             If(BlockType::Empty),
-            I64Const(8),
+            I64Const(i64::from(abi::MIN_ALLOCATION_BYTES)),
             LocalSet(2),
             End,
             LocalGet(1),
@@ -344,7 +355,7 @@ fn emit_alloc() -> Function {
             LocalGet(3),
             I64Const((PAGE_BYTES - 1) as i64),
             I64Add,
-            I64Const(16),
+            I64Const(i64::from(PAGE_ALIGN_LOG2)),
             I64ShrU,
             LocalTee(4),
             MemorySize(0),
@@ -388,10 +399,10 @@ fn emit_validate(array: bool) -> Function {
         &mut body,
         &[
             LocalGet(0),
-            I32Const(8),
+            I32Const(abi::MIN_ADDRESS as i32),
             I32LtU,
             LocalGet(0),
-            I32Const(7),
+            I32Const((abi::DESCRIPTOR_ALIGNMENT - 1) as i32),
             I32And,
             I32Const(0),
             I32Ne,
@@ -407,7 +418,7 @@ fn emit_validate(array: bool) -> Function {
             LocalSet(1),
             LocalGet(0),
             I64ExtendI32U,
-            I64Const(8),
+            I64Const(i64::from(abi::DESCRIPTOR_SIZE)),
             I64Add,
             LocalGet(1),
             I64GtU,
@@ -417,7 +428,12 @@ fn emit_validate(array: bool) -> Function {
 
     instructions(
         &mut body,
-        &[LocalGet(0), I32Load(header(0)), I32Const(8), I32LtU],
+        &[
+            LocalGet(0),
+            I32Load(header(abi::DESCRIPTOR_DATA_OFFSET)),
+            I32Const(abi::MIN_ADDRESS as i32),
+            I32LtU,
+        ],
     );
     trap_if(&mut body);
 
@@ -426,8 +442,8 @@ fn emit_validate(array: bool) -> Function {
             &mut body,
             &[
                 LocalGet(0),
-                I32Load(header(0)),
-                I32Const(7),
+                I32Load(header(abi::DESCRIPTOR_DATA_OFFSET)),
+                I32Const((abi::NUMBER_ELEMENT_ALIGNMENT - 1) as i32),
                 I32And,
                 I32Const(0),
                 I32Ne,
@@ -440,12 +456,16 @@ fn emit_validate(array: bool) -> Function {
         &mut body,
         &[
             LocalGet(0),
-            I32Load(header(0)),
+            I32Load(header(abi::DESCRIPTOR_DATA_OFFSET)),
             I64ExtendI32U,
             LocalGet(0),
-            I32Load(header(4)),
+            I32Load(header(abi::DESCRIPTOR_LENGTH_OFFSET)),
             I64ExtendI32U,
-            I64Const(if array { 8 } else { 1 }),
+            I64Const(i64::from(if array {
+                abi::NUMBER_ELEMENT_SIZE
+            } else {
+                abi::STRING_ELEMENT_SIZE
+            })),
             I64Mul,
             I64Add,
             LocalGet(1),
@@ -475,7 +495,7 @@ fn emit_array_address(first_function: u32) -> Function {
             F64Ge,
             LocalGet(1),
             LocalGet(0),
-            I32Load(header(4)),
+            I32Load(header(abi::DESCRIPTOR_LENGTH_OFFSET)),
             F64ConvertI32U,
             F64Lt,
             I32And,
@@ -493,11 +513,11 @@ fn emit_array_address(first_function: u32) -> Function {
         &mut body,
         &[
             LocalGet(0),
-            I32Load(header(0)),
+            I32Load(header(abi::DESCRIPTOR_DATA_OFFSET)),
             I64ExtendI32U,
             LocalGet(1),
             I64TruncF64U,
-            I64Const(8),
+            I64Const(i64::from(abi::NUMBER_ELEMENT_SIZE)),
             I64Mul,
             I64Add,
             I32WrapI64,
@@ -518,7 +538,7 @@ fn emit_array_len(first_function: u32) -> Function {
         &[
             LocalGet(0),
             Call(first_function + Helper::ValidateArray.index()),
-            I32Load(header(4)),
+            I32Load(header(abi::DESCRIPTOR_LENGTH_OFFSET)),
             F64ConvertI32U,
             End,
         ],
@@ -547,20 +567,20 @@ fn emit_string_equal(first_function: u32) -> Function {
             Call(first_function + Helper::ValidateString.index()),
             LocalSet(1),
             LocalGet(0),
-            I32Load(header(4)),
+            I32Load(header(abi::DESCRIPTOR_LENGTH_OFFSET)),
             LocalTee(4),
             LocalGet(1),
-            I32Load(header(4)),
+            I32Load(header(abi::DESCRIPTOR_LENGTH_OFFSET)),
             I32Ne,
             If(BlockType::Empty),
             I32Const(0),
             Return,
             End,
             LocalGet(0),
-            I32Load(header(0)),
+            I32Load(header(abi::DESCRIPTOR_DATA_OFFSET)),
             LocalSet(2),
             LocalGet(1),
-            I32Load(header(0)),
+            I32Load(header(abi::DESCRIPTOR_DATA_OFFSET)),
             LocalSet(3),
             Block(BlockType::Empty),
             Loop(BlockType::Empty),
@@ -601,7 +621,7 @@ fn emit_array_equal(first_function: u32) -> Function {
 
     let element = MemArg {
         offset: 0,
-        align: 3,
+        align: abi::NUMBER_ELEMENT_ALIGN_LOG2,
         memory_index: 0,
     };
     let mut body = Function::new([(4, ValType::I32)]);
@@ -616,20 +636,20 @@ fn emit_array_equal(first_function: u32) -> Function {
             Call(first_function + Helper::ValidateArray.index()),
             LocalSet(1),
             LocalGet(0),
-            I32Load(header(4)),
+            I32Load(header(abi::DESCRIPTOR_LENGTH_OFFSET)),
             LocalTee(4),
             LocalGet(1),
-            I32Load(header(4)),
+            I32Load(header(abi::DESCRIPTOR_LENGTH_OFFSET)),
             I32Ne,
             If(BlockType::Empty),
             I32Const(0),
             Return,
             End,
             LocalGet(0),
-            I32Load(header(0)),
+            I32Load(header(abi::DESCRIPTOR_DATA_OFFSET)),
             LocalSet(2),
             LocalGet(1),
-            I32Load(header(0)),
+            I32Load(header(abi::DESCRIPTOR_DATA_OFFSET)),
             LocalSet(3),
             Block(BlockType::Empty),
             Loop(BlockType::Empty),
@@ -639,13 +659,13 @@ fn emit_array_equal(first_function: u32) -> Function {
             BrIf(1),
             LocalGet(2),
             LocalGet(5),
-            I32Const(8),
+            I32Const(abi::NUMBER_ELEMENT_SIZE as i32),
             I32Mul,
             I32Add,
             F64Load(element),
             LocalGet(3),
             LocalGet(5),
-            I32Const(8),
+            I32Const(abi::NUMBER_ELEMENT_SIZE as i32),
             I32Mul,
             I32Add,
             F64Load(element),
@@ -811,6 +831,66 @@ mod tests {
         assert_eq!(aligned_offset(MAX_BYTES - 7).unwrap(), MAX_BYTES as u32);
         assert!(aligned_offset(MAX_BYTES + 1).is_err());
         assert!(aligned_offset(u64::MAX).is_err());
+    }
+
+    #[test]
+    fn helper_indices_and_signatures_are_fixed() {
+        use ValType::{F64, I32};
+
+        let expected = [
+            (Helper::Alloc, 0, vec![I32], I32),
+            (Helper::ValidateString, 1, vec![I32], I32),
+            (Helper::ValidateArray, 2, vec![I32], I32),
+            (Helper::ArrayAddress, 3, vec![I32, F64], I32),
+            (Helper::ArrayLen, 4, vec![I32], F64),
+            (Helper::StringEqual, 5, vec![I32, I32], I32),
+            (Helper::ArrayEqual, 6, vec![I32, I32], I32),
+        ];
+        let actual = helpers();
+
+        assert_eq!(actual.len(), 7);
+
+        for ((actual_helper, actual_signature), (helper, index, params, result)) in
+            actual.into_iter().zip(expected)
+        {
+            let signature = Signature {
+                params,
+                result: Some(result),
+            };
+
+            assert_eq!(actual_helper, helper);
+            assert_eq!(helper.index(), index);
+            assert_eq!(helper.signature(), signature);
+            assert_eq!(actual_signature, signature);
+        }
+    }
+
+    #[test]
+    fn descriptor_layout_and_constants_are_fixed() {
+        assert_eq!(abi::DESCRIPTOR_SIZE, 8);
+        assert_eq!(abi::DESCRIPTOR_DATA_OFFSET, 0);
+        assert_eq!(abi::DESCRIPTOR_LENGTH_OFFSET, 4);
+        assert_eq!(abi::DESCRIPTOR_ALIGNMENT, 8);
+        assert_eq!(abi::DESCRIPTOR_FIELD_ALIGN_LOG2, 2);
+        assert_eq!(abi::NUMBER_ELEMENT_SIZE, 8);
+        assert_eq!(abi::NUMBER_ELEMENT_ALIGNMENT, 8);
+        assert_eq!(abi::NUMBER_ELEMENT_ALIGN_LOG2, 3);
+        assert_eq!(abi::STRING_ELEMENT_SIZE, 1);
+        assert_eq!(abi::MIN_ADDRESS, 8);
+        assert_eq!(abi::ALLOCATION_ALIGNMENT, 8);
+        assert_eq!(abi::MIN_ALLOCATION_BYTES, 8);
+        assert_eq!(PAGE_BYTES, 65_536);
+        assert_eq!(PAGE_ALIGN_LOG2, 16);
+
+        let program = program(vec![statement(TypedStatementKind::Expression(string("é")))]);
+        let plan = MemoryPlan::new(&program).unwrap().unwrap();
+
+        assert_eq!(plan.string("é"), Some(8));
+        assert_eq!(plan.heap_start, 24);
+        assert_eq!(
+            plan.data,
+            vec![0, 0, 0, 0, 0, 0, 0, 0, 16, 0, 0, 0, 2, 0, 0, 0, 0xc3, 0xa9]
+        );
     }
 
     #[test]

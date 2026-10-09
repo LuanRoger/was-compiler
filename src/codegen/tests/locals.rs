@@ -239,8 +239,8 @@ fn sparse_variable_ids_and_diagnostic_names_do_not_determine_wasm_indices() {
         let local = layout.get(VariableId(id)).expect("mapped variable");
         let copied = local;
 
-        assert_eq!((local.index, local.ty), (index, ty));
-        assert_eq!((copied.index, copied.ty), (index, ty));
+        assert_eq!((local.index.raw(), local.ty), (index, ty));
+        assert_eq!((copied.index.raw(), copied.ty), (index, ty));
     }
 
     assert!(layout.get(VariableId(0)).is_none());
@@ -278,7 +278,7 @@ fn local_layout_collects_and_emits_nested_shadow_bindings_in_preorder() {
         };
         let local = layout.get(*id).expect("shadow binding");
 
-        assert_eq!((local.index, local.ty), (index, ty));
+        assert_eq!((local.index.raw(), local.ty), (index, ty));
     }
 
     fn collect(block: &[TypedStatement], ids: &mut Vec<(VariableId, Type)>) {
@@ -348,7 +348,7 @@ fn local_layout_collects_and_emits_nested_shadow_bindings_in_preorder() {
     for (index, (id, ty)) in ids.into_iter().enumerate() {
         let local = layout.get(id).expect("preorder local slot");
 
-        assert_eq!((local.index, local.ty), (index as u32, ty));
+        assert_eq!((local.index.raw(), local.ty), (index as u32, ty));
     }
 
     let TypedStatementKind::If {

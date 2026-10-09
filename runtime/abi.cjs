@@ -6,6 +6,13 @@ const { TextDecoder, TextEncoder } = require('node:util');
 const MAX_COPY_BYTES = 64 * 1024 * 1024;
 const MAX_CALL_ARGS = 1024;
 const ADDRESS_SPACE = 0x100000000;
+const DESCRIPTOR_SIZE = 8;
+const DESCRIPTOR_DATA_OFFSET = 0;
+const DESCRIPTOR_LENGTH_OFFSET = 4;
+const DESCRIPTOR_ALIGNMENT = 8;
+const NUMBER_ELEMENT_SIZE = 8;
+const STRING_ELEMENT_SIZE = 1;
+const MIN_ADDRESS = 8;
 const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 const encoder = new TextEncoder();
 
@@ -42,7 +49,7 @@ function unsignedHandle(value) {
 }
 
 function range(buffer, offset, bytes, alignment, label) {
-    if (!Number.isSafeInteger(offset) || offset < 8 || offset >= ADDRESS_SPACE) {
+    if (!Number.isSafeInteger(offset) || offset < MIN_ADDRESS || offset >= ADDRESS_SPACE) {
         throw new RangeError(`${label} must be an unsigned address at least 8`);
     }
     if (offset % alignment !== 0) {
@@ -58,15 +65,15 @@ function readDescriptor(memory, handle, width) {
     if (!(memory instanceof WebAssembly.Memory)) {
         throw new TypeError('descriptor-v1 requires an exported WebAssembly.Memory named memory');
     }
-    if (width !== 1 && width !== 8) {
+    if (width !== STRING_ELEMENT_SIZE && width !== NUMBER_ELEMENT_SIZE) {
         throw new TypeError('descriptor element width must be 1 or 8');
     }
     const buffer = memory.buffer;
     const address = unsignedHandle(handle);
-    range(buffer, address, 8, 8, 'descriptor');
+    range(buffer, address, DESCRIPTOR_SIZE, DESCRIPTOR_ALIGNMENT, 'descriptor');
     const view = new DataView(buffer);
-    const data = view.getUint32(address, true);
-    const length = view.getUint32(address + 4, true);
+    const data = view.getUint32(address + DESCRIPTOR_DATA_OFFSET, true);
+    const length = view.getUint32(address + DESCRIPTOR_LENGTH_OFFSET, true);
     const bytes = length * width;
     range(buffer, data, bytes, width, 'descriptor payload');
     copySize(bytes);
@@ -89,7 +96,7 @@ function validateNative(type, value, label = 'value') {
             break;
         case 'number[]':
             if (Array.isArray(value)) {
-                copySize(value.length * 8);
+                copySize(value.length * NUMBER_ELEMENT_SIZE);
                 for (let i = 0; i < value.length; i++) {
                     if (typeof value[i] !== 'number') {
                         throw new TypeError(`${label}[${i}] must be number`);
@@ -126,20 +133,20 @@ function createAbi(getInstance) {
         if (type === 'bool') return value ? 1 : 0;
         const exports = memoryExports();
         const payload = type === 'string' ? encoder.encode(value) : value;
-        const width = type === 'string' ? 1 : 8;
+        const width = type === 'string' ? STRING_ELEMENT_SIZE : NUMBER_ELEMENT_SIZE;
         const bytes = copySize(payload.length * width);
-        const handle = unsignedHandle(exports.__alloc(8 + bytes));
+        const handle = unsignedHandle(exports.__alloc(DESCRIPTOR_SIZE + bytes));
         const buffer = exports.memory.buffer;
-        range(buffer, handle, 8 + bytes, 8, 'allocator result');
+        range(buffer, handle, DESCRIPTOR_SIZE + bytes, DESCRIPTOR_ALIGNMENT, 'allocator result');
         const view = new DataView(buffer);
-        const data = handle + 8;
-        view.setUint32(handle, data, true);
-        view.setUint32(handle + 4, payload.length, true);
-        if (width === 1) {
+        const data = handle + DESCRIPTOR_SIZE;
+        view.setUint32(handle + DESCRIPTOR_DATA_OFFSET, data, true);
+        view.setUint32(handle + DESCRIPTOR_LENGTH_OFFSET, payload.length, true);
+        if (width === STRING_ELEMENT_SIZE) {
             new Uint8Array(buffer, data, bytes).set(payload);
         } else {
             for (let i = 0; i < payload.length; i++) {
-                view.setFloat64(data + i * 8, payload[i], true);
+                view.setFloat64(data + i * NUMBER_ELEMENT_SIZE, payload[i], true);
             }
         }
         return handle;
@@ -159,13 +166,15 @@ function createAbi(getInstance) {
         if (type !== 'string' && type !== 'number[]') {
             throw new TypeError(`unsupported ABI type ${JSON.stringify(type)}`);
         }
-        const descriptor = readDescriptor(memoryExports().memory, value, type === 'string' ? 1 : 8);
+        const descriptor = readDescriptor(
+            memoryExports().memory, value,
+            type === 'string' ? STRING_ELEMENT_SIZE : NUMBER_ELEMENT_SIZE);
         if (type === 'string') {
             return decoder.decode(new Uint8Array(descriptor.buffer, descriptor.data, descriptor.bytes));
         }
         const result = new Array(descriptor.length);
         for (let i = 0; i < result.length; i++) {
-            result[i] = descriptor.view.getFloat64(descriptor.data + i * 8, true);
+            result[i] = descriptor.view.getFloat64(descriptor.data + i * NUMBER_ELEMENT_SIZE, true);
         }
         return result;
     }

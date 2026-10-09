@@ -3,17 +3,16 @@ use crate::{
     tokens::Span,
     typed_ast::{TypedExpr, TypedExprKind},
 };
-use wasm_encoder::{BlockType, Function, Instruction, MemArg, ValType};
+use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
 
-use super::{CodegenError, call, expect_type, function::Context, memory::Helper, values};
+use super::{CodegenError, abi, call, expect_type, function::BodyEmitter, memory::Helper, values};
 
 pub(super) fn emit(
     expr: &TypedExpr,
-    body: &mut Function,
-    context: &Context<'_>,
+    body: &mut BodyEmitter<'_>,
     span: Span,
 ) -> Result<(), CodegenError> {
-    let function = context.name;
+    let function = body.name();
 
     match &expr.kind {
         TypedExprKind::Number(literal) => {
@@ -35,9 +34,9 @@ pub(super) fn emit(
         }
 
         TypedExprKind::Identifier { id, .. } => {
-            let index = context.resolve(*id, expr.ty, span)?;
+            let index = body.resolve(*id, expr.ty, span)?;
 
-            body.instruction(&Instruction::LocalGet(index));
+            body.local_get(index);
 
             Ok(())
         }
@@ -51,7 +50,7 @@ pub(super) fn emit(
             expect_type(function, ty, expr.ty, span)?;
             expect_type(function, ty, operand.ty, span)?;
 
-            emit(operand, body, context, span)?;
+            body.emit_expr(operand, span)?;
 
             body.instruction(&instruction);
 
@@ -92,27 +91,27 @@ pub(super) fn emit(
             expect_type(function, operand_type, right.ty, span)?;
 
             if matches!(op, BinaryOp::And | BinaryOp::Or) {
-                emit(left, body, context, span)?;
+                body.emit_expr(left, span)?;
 
-                body.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+                body.begin_if(BlockType::Result(ValType::I32));
 
                 if *op == BinaryOp::And {
-                    emit(right, body, context, span)?;
-                    normalize_bool(body);
+                    body.emit_expr(right, span)?;
+                    body.normalize_bool();
                 } else {
                     body.instruction(&Instruction::I32Const(1));
                 }
 
-                body.instruction(&Instruction::Else);
+                body.otherwise();
 
                 if *op == BinaryOp::Or {
-                    emit(right, body, context, span)?;
-                    normalize_bool(body);
+                    body.emit_expr(right, span)?;
+                    body.normalize_bool();
                 } else {
                     body.instruction(&Instruction::I32Const(0));
                 }
 
-                body.instruction(&Instruction::End);
+                body.end();
 
                 return Ok(());
             }
@@ -124,10 +123,10 @@ pub(super) fn emit(
                     Helper::ArrayEqual
                 };
 
-                emit(left, body, context, span)?;
-                emit(right, body, context, span)?;
+                body.emit_expr(left, span)?;
+                body.emit_expr(right, span)?;
 
-                body.instruction(&Instruction::Call(context.helper(helper)));
+                body.call(body.helper(helper));
 
                 if *op == BinaryOp::NotEqual {
                     body.instruction(&Instruction::I32Eqz);
@@ -136,28 +135,27 @@ pub(super) fn emit(
                 return Ok(());
             }
 
-            let instruction =
-                binary_instruction(op, operand_type, context).map_err(|operator| {
-                    CodegenError::UnsupportedOperator {
-                        function: function.into(),
-                        operator,
-                        span,
-                    }
-                })?;
+            let instruction = binary_instruction(op, operand_type, body).map_err(|operator| {
+                CodegenError::UnsupportedOperator {
+                    function: function.into(),
+                    operator,
+                    span,
+                }
+            })?;
 
             let normalize_operands =
                 matches!(op, BinaryOp::Equal | BinaryOp::NotEqual) && operand_type == Type::Bool;
 
-            emit(left, body, context, span)?;
+            body.emit_expr(left, span)?;
 
             if normalize_operands {
-                normalize_bool(body);
+                body.normalize_bool();
             }
 
-            emit(right, body, context, span)?;
+            body.emit_expr(right, span)?;
 
             if normalize_operands {
-                normalize_bool(body);
+                body.normalize_bool();
             }
 
             body.instruction(&instruction);
@@ -165,14 +163,12 @@ pub(super) fn emit(
             Ok(())
         }
 
-        TypedExprKind::Call { func, args, .. } => {
-            call::emit(*func, args, expr.ty, body, context, span)
-        }
+        TypedExprKind::Call { func, args, .. } => call::emit(*func, args, expr.ty, body, span),
 
         TypedExprKind::String(value) => {
             expect_type(function, Type::String, expr.ty, span)?;
 
-            body.instruction(&Instruction::I32Const(context.string(value) as i32));
+            body.instruction(&Instruction::I32Const(body.string(value) as i32));
 
             Ok(())
         }
@@ -180,16 +176,16 @@ pub(super) fn emit(
         TypedExprKind::Array(elements) => {
             expect_type(function, Type::NumberArray, expr.ty, span)?;
 
-            values::emit_array(elements, body, context, span)
+            values::emit_array(elements, body, span)
         }
 
         TypedExprKind::Index { expr: base, index } => {
-            values::expect_index_types(base, index, expr.ty, context, span)?;
-            values::emit_address(base, index, body, context, span)?;
+            values::expect_index_types(base, index, expr.ty, body, span)?;
+            values::emit_address(base, index, body, span)?;
 
             body.instruction(&Instruction::F64Load(MemArg {
                 offset: 0,
-                align: 3,
+                align: abi::NUMBER_ELEMENT_ALIGN_LOG2,
                 memory_index: 0,
             }));
 
@@ -201,14 +197,14 @@ pub(super) fn emit(
 fn binary_instruction(
     op: &BinaryOp,
     operand_type: Type,
-    context: &Context<'_>,
+    body: &BodyEmitter<'_>,
 ) -> Result<Instruction<'static>, &'static str> {
     match op {
         BinaryOp::Add => Ok(Instruction::F64Add),
         BinaryOp::Subtract => Ok(Instruction::F64Sub),
         BinaryOp::Multiply => Ok(Instruction::F64Mul),
         BinaryOp::Divide => Ok(Instruction::F64Div),
-        BinaryOp::Remainder => Ok(Instruction::Call(context.remainder())),
+        BinaryOp::Remainder => Ok(Instruction::Call(body.remainder().raw())),
 
         BinaryOp::Equal => match operand_type {
             Type::Number => Ok(Instruction::F64Eq),
@@ -230,11 +226,6 @@ fn binary_instruction(
         BinaryOp::And => Err("&&"),
         BinaryOp::Or => Err("||"),
     }
-}
-
-fn normalize_bool(body: &mut Function) {
-    body.instruction(&Instruction::I32Eqz);
-    body.instruction(&Instruction::I32Eqz);
 }
 
 fn number(literal: &str, function: &str, span: Span) -> Result<f64, CodegenError> {

@@ -3,6 +3,19 @@ use wasm_encoder::ValType;
 
 use super::{CodegenError, checked_u32};
 
+pub(super) const DESCRIPTOR_SIZE: u32 = 8;
+pub(super) const DESCRIPTOR_DATA_OFFSET: u64 = 0;
+pub(super) const DESCRIPTOR_LENGTH_OFFSET: u64 = 4;
+pub(super) const DESCRIPTOR_ALIGNMENT: u32 = 8;
+pub(super) const DESCRIPTOR_FIELD_ALIGN_LOG2: u32 = 2;
+pub(super) const NUMBER_ELEMENT_SIZE: u32 = 8;
+pub(super) const NUMBER_ELEMENT_ALIGNMENT: u32 = 8;
+pub(super) const NUMBER_ELEMENT_ALIGN_LOG2: u32 = NUMBER_ELEMENT_ALIGNMENT.trailing_zeros();
+pub(super) const STRING_ELEMENT_SIZE: u32 = 1;
+pub(super) const MIN_ADDRESS: u32 = 8;
+pub(super) const ALLOCATION_ALIGNMENT: u32 = 8;
+pub(super) const MIN_ALLOCATION_BYTES: u32 = 8;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) struct Signature {
     pub params: Vec<ValType>,

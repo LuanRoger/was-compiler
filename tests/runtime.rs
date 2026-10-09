@@ -660,6 +660,143 @@ fn node_abi_descriptor_alignment_ranges_utf8_and_copy_limits() {
 
 #[test]
 #[ignore = "requires Node.js"]
+fn node_abi_host_golden_descriptors_and_payloads() {
+    script(
+        &Module::new().finish(),
+        r#"
+        const {createAbi} = require('./runtime/abi.cjs');
+        const cases = [
+            ['string', '', [], 0],
+            ['string', 'hé 🦀', [0x68, 0xc3, 0xa9, 0x20, 0xf0, 0x9f, 0xa6, 0x80], 8],
+            ['string', 'A\u0000B', [0x41, 0, 0x42], 3],
+            ['number[]', [], [], 0],
+            ['number[]', [1, -2.5, -0], [
+                0, 0, 0, 0, 0, 0, 0xf0, 0x3f,
+                0, 0, 0, 0, 0, 0, 4, 0xc0,
+                0, 0, 0, 0, 0, 0, 0, 0x80
+            ], 3]
+        ];
+        for (const [type, value, payload, length] of cases) {
+            const memory = new WebAssembly.Memory({initial: 1});
+            const allocations = [];
+            const abi = createAbi(() => ({exports: {memory, __alloc(size) {
+                allocations.push(size);
+                return 8;
+            }}}));
+            new Uint8Array(memory.buffer).fill(0xa5);
+            const handle = abi.encode(type, value);
+            assert.equal(handle, 8);
+            assert.deepEqual(allocations, [8 + payload.length]);
+            assert.deepEqual(Array.from(new Uint8Array(memory.buffer, 8, 8 + payload.length)),
+                [16, 0, 0, 0, length, 0, 0, 0, ...payload]);
+            assert.deepEqual(Array.from(new Uint8Array(memory.buffer, 0, 8)), new Array(8).fill(0xa5));
+            assert.equal(new Uint8Array(memory.buffer)[16 + payload.length], 0xa5);
+            new Uint8Array(memory.buffer).fill(0xa5);
+            new Uint8Array(memory.buffer, 8, 8).set([32, 0, 0, 0, length, 0, 0, 0]);
+            new Uint8Array(memory.buffer, 32, payload.length).set(payload);
+            assert.deepEqual(abi.decode(type, 8), value);
+        }
+    "#,
+    );
+}
+
+#[test]
+#[ignore = "requires Node.js"]
+fn node_abi_host_boolean_conversions_without_memory() {
+    script(
+        &Module::new().finish(),
+        r#"
+        const {createAbi} = require('./runtime/abi.cjs');
+        const abi = createAbi(() => { throw Error('unexpected memory access'); });
+        assert.equal(abi.encode('bool', false), 0);
+        assert.equal(abi.encode('bool', true), 1);
+        assert.equal(abi.decode('bool', 0), false);
+        assert.equal(abi.decode('bool', -0), false);
+        assert.equal(abi.decode('bool', 1), true);
+        for (const value of [0, 1, 'true', null, undefined]) {
+            assert.throws(() => abi.encode('bool', value, 'flag'), {
+                name: 'TypeError', message: 'flag must be bool'
+            });
+        }
+        for (const value of [false, true, 2, -1, NaN, '1', null, undefined]) {
+            assert.throws(() => abi.decode('bool', value, 'flag'), {
+                name: 'TypeError', message: 'flag must be ABI bool (0 or 1)'
+            });
+        }
+    "#,
+    );
+}
+
+#[test]
+#[ignore = "requires Node.js"]
+fn node_abi_host_copies_and_memory_growth_refresh() {
+    script(
+        &Module::new().finish(),
+        r#"
+        const {createAbi} = require('./runtime/abi.cjs');
+        const memory = new WebAssembly.Memory({initial: 1, maximum: 4});
+        let heap = 8;
+        let growOnAllocate = false;
+        const abi = createAbi(() => ({exports: {memory, __alloc(size) {
+            if (growOnAllocate) {
+                memory.grow(1);
+                growOnAllocate = false;
+            }
+            const handle = heap;
+            heap += Math.ceil(size / 8) * 8;
+            return handle;
+        }}}));
+        const input = [1, -2.5, -0, NaN, Infinity, -Infinity];
+        const handle = abi.encode('number[]', input);
+        input[0] = 99;
+        const first = abi.decode('number[]', handle);
+        const second = abi.decode('number[]', handle);
+        assert(Array.isArray(first));
+        assert.notEqual(first, input);
+        assert.notEqual(first, second);
+        assert.deepEqual(first, [1, -2.5, -0, NaN, Infinity, -Infinity]);
+        first[1] = 77;
+        assert.equal(second[1], -2.5);
+        assert.equal(abi.decode('number[]', handle)[1], -2.5);
+        const oldView = new DataView(memory.buffer);
+        const data = oldView.getUint32(handle, true);
+        oldView.setFloat64(data, 42, true);
+        assert.equal(first[0], 1);
+        assert.equal(second[0], 1);
+        assert.equal(input[0], 99);
+        assert.equal(abi.decode('number[]', handle)[0], 42);
+        const textHandle = abi.encode('string', 'hé\u0000🦀');
+        const text = abi.decode('string', textHandle);
+        const textData = new DataView(memory.buffer).getUint32(textHandle, true);
+        new Uint8Array(memory.buffer)[textData] = 0x48;
+        assert.equal(text, 'hé\u0000🦀');
+        assert.equal(abi.decode('string', textHandle), 'Hé\u0000🦀');
+        const before = memory.buffer;
+        memory.grow(1);
+        assert.notEqual(memory.buffer, before);
+        assert.equal(before.byteLength, 0);
+        assert.throws(() => oldView.getFloat64(data, true), TypeError);
+        new DataView(memory.buffer).setFloat64(data, 43, true);
+        assert.equal(abi.decode('number[]', handle)[0], 43);
+        assert.equal(abi.decode('string', textHandle), 'Hé\u0000🦀');
+        assert.equal(first[0], 1);
+        assert.equal(second[0], 1);
+        for (const [type, value] of [['number[]', [7, -0]], ['string', '🦀\u0000']]) {
+            const before = memory.buffer;
+            growOnAllocate = true;
+            const grownHandle = abi.encode(type, value);
+            assert.notEqual(memory.buffer, before);
+            assert.equal(before.byteLength, 0);
+            assert.deepEqual(abi.decode(type, grownHandle), value);
+            assert.equal(abi.decode('number[]', handle)[0], 43);
+            assert.equal(abi.decode('string', textHandle), 'Hé\u0000🦀');
+        }
+    "#,
+    );
+}
+
+#[test]
+#[ignore = "requires Node.js"]
 fn node_start_callbacks_and_raw_memory_imports_and_exports() {
     use wasm_encoder::{
         EntityType, ExportKind, ExportSection, ImportSection, MemorySection, MemoryType,

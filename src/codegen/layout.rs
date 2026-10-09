@@ -10,18 +10,19 @@ use super::{
     CodegenError,
     abi::{self, Signature},
     checked_u32,
+    indices::{FunctionIndex, TypeIndex},
     memory::{self, MemoryPlan},
     numeric,
 };
 
 pub(super) struct UserFunctionPlan {
-    pub type_index: u32,
-    pub function_index: u32,
+    pub type_index: TypeIndex,
+    pub function_index: FunctionIndex,
     pub exported: bool,
 }
 
 pub(super) struct CallTarget {
-    pub function_index: u32,
+    pub function_index: FunctionIndex,
     pub params: Vec<Type>,
     pub return_type: Type,
 }
@@ -29,12 +30,12 @@ pub(super) struct CallTarget {
 pub(super) struct MemoryLayout {
     pub plan: MemoryPlan,
     pub helpers: Vec<UserFunctionPlan>,
-    pub first_function: u32,
+    pub first_function: FunctionIndex,
 }
 
 pub(super) struct Layout {
     pub signatures: Vec<Signature>,
-    pub host_type_indices: Vec<u32>,
+    pub host_type_indices: Vec<TypeIndex>,
     pub users: Vec<UserFunctionPlan>,
     pub memory: Option<MemoryLayout>,
     pub remainder: Option<UserFunctionPlan>,
@@ -92,7 +93,7 @@ impl Layout {
 
             layout.host_type_indices.push(type_index);
             layout.callees.push(CallTarget {
-                function_index: checked_u32(expected, "host function index")?,
+                function_index: FunctionIndex::new(checked_u32(expected, "host function index")?),
                 params: host.params.clone(),
                 return_type: host.return_type,
             });
@@ -127,6 +128,8 @@ impl Layout {
                 .ok_or(CodegenError::LimitExceeded {
                     what: "function index",
                 })?;
+
+            let function_index = FunctionIndex::new(function_index);
 
             layout.users.push(UserFunctionPlan {
                 type_index,
@@ -185,7 +188,7 @@ impl Layout {
             for (helper, signature) in helpers {
                 plans.push(UserFunctionPlan {
                     type_index: layout.intern(signature, &mut type_indices)?,
-                    function_index: first_runtime + helper.index(),
+                    function_index: FunctionIndex::new(first_runtime + helper.index()),
                     exported: false,
                 });
             }
@@ -193,7 +196,7 @@ impl Layout {
             layout.memory = Some(MemoryLayout {
                 plan,
                 helpers: plans,
-                first_function: first_runtime,
+                first_function: FunctionIndex::new(first_runtime),
             });
         }
 
@@ -221,7 +224,7 @@ impl Layout {
 
             layout.remainder = Some(UserFunctionPlan {
                 type_index: layout.intern(signature, &mut type_indices)?,
-                function_index,
+                function_index: FunctionIndex::new(function_index),
                 exported: false,
             });
         }
@@ -246,13 +249,13 @@ impl Layout {
     fn intern(
         &mut self,
         signature: Signature,
-        type_indices: &mut HashMap<Signature, u32>,
-    ) -> Result<u32, CodegenError> {
+        type_indices: &mut HashMap<Signature, TypeIndex>,
+    ) -> Result<TypeIndex, CodegenError> {
         if let Some(index) = type_indices.get(&signature) {
             return Ok(*index);
         }
 
-        let index = checked_u32(self.signatures.len(), "function type index")?;
+        let index = TypeIndex::new(checked_u32(self.signatures.len(), "function type index")?);
 
         type_indices.insert(signature.clone(), index);
         self.signatures.push(signature);

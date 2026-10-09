@@ -1,0 +1,37 @@
+fn text() -> string {
+    return "héllo 🦀";
+}
+
+fn empty() -> string {
+    return "";
+}
+
+fn same_text(value: string) -> bool {
+    return value == text();
+}
+
+fn values() -> number[] {
+    let result: number[] = [1, -0, 2.5];
+    result[1] = result[0] % 1;
+    return result;
+}
+
+fn count(value: number[]) -> number {
+    return len(value);
+}
+
+fn same_values(left: number[], right: number[]) -> bool {
+    return left == right;
+}
+
+fn through_host(value: number[]) -> number[] {
+    return echo_array(value);
+}
+
+fn host_text(value: string) -> string {
+    return echo_string(value);
+}
+
+fn host_bool(value: bool) -> bool {
+    return echo_bool(value);
+}

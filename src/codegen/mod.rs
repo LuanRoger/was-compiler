@@ -16,6 +16,7 @@ mod call;
 mod control_flow;
 mod expression;
 mod function;
+mod indices;
 mod layout;
 mod locals;
 mod memory;
@@ -212,7 +213,11 @@ pub fn compile_with_exports(
     let mut imports = ImportSection::new();
 
     for (host, type_index) in program.host_functions.iter().zip(&layout.host_type_indices) {
-        imports.import(&host.module, &host.field, EntityType::Function(*type_index));
+        imports.import(
+            &host.module,
+            &host.field,
+            EntityType::Function(type_index.raw()),
+        );
     }
 
     let mut functions = FunctionSection::new();
@@ -222,10 +227,10 @@ pub fn compile_with_exports(
     for (user, plan) in program.functions.iter().zip(&layout.users) {
         let body = function::emit(user, &layout)?;
 
-        functions.function(plan.type_index);
+        functions.function(plan.type_index.raw());
 
         if plan.exported {
-            exports.export(&user.name, ExportKind::Func, plan.function_index);
+            exports.export(&user.name, ExportKind::Func, plan.function_index.raw());
         }
 
         code.function(&body);
@@ -236,9 +241,9 @@ pub fn compile_with_exports(
     let mut data = DataSection::new();
 
     if let Some(memory) = &layout.memory {
-        for ((helper, _), plan) in memory::helpers().into_iter().zip(&memory.helpers) {
-            functions.function(plan.type_index);
-            code.function(&memory::emit(helper, memory.first_function));
+        for (helper, plan) in memory::Helper::ALL.into_iter().zip(&memory.helpers) {
+            functions.function(plan.type_index.raw());
+            code.function(&memory::emit(helper, memory.first_function.raw()));
         }
 
         memories.memory(MemoryType {
@@ -259,7 +264,14 @@ pub fn compile_with_exports(
             &ConstExpr::i32_const(memory.plan.heap_start as i32),
         );
         exports.export("memory", ExportKind::Memory, 0);
-        exports.export("__alloc", ExportKind::Func, memory.first_function);
+        exports.export(
+            "__alloc",
+            ExportKind::Func,
+            memory
+                .first_function
+                .offset(memory::Helper::Alloc.index())
+                .raw(),
+        );
         data.active(
             0,
             &ConstExpr::i32_const(0),
@@ -268,7 +280,7 @@ pub fn compile_with_exports(
     }
 
     if let Some(remainder) = &layout.remainder {
-        functions.function(remainder.type_index);
+        functions.function(remainder.type_index.raw());
         code.function(&numeric::emit_remainder());
     }
 

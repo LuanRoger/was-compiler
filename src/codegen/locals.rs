@@ -7,11 +7,11 @@ use crate::{
 };
 use wasm_encoder::ValType;
 
-use super::{CodegenError, abi, checked_u32};
+use super::{CodegenError, abi, checked_u32, indices::LocalIndex};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Local {
-    pub index: u32,
+    pub index: LocalIndex,
     pub ty: Type,
 }
 
@@ -92,7 +92,7 @@ impl LocalLayout {
         function: &str,
         span: Span,
     ) -> Result<(), CodegenError> {
-        let index = checked_u32(self.bindings.len(), "function local index")?;
+        let index = LocalIndex::new(checked_u32(self.bindings.len(), "function local index")?);
 
         match self.bindings.entry(id) {
             Entry::Occupied(_) => Err(CodegenError::DuplicateVariableId {

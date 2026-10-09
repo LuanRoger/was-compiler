@@ -1,0 +1,49 @@
+fn main(value: number) -> number {
+    let total: number = marker(value);
+    let values: number[] = [marker(1), len([marker(2), marker(3)])];
+    let i: number = 0;
+
+    while i < 2 {
+        let j: number = 0;
+
+        while j < 2 {
+            if signal(i == 0 && j == 0 || i == 1) {
+                let total: number = marker(values[j]);
+                values[j] = total + len([marker(4), values[j]]);
+            } else {
+                values[j] = values[j] + 1;
+            }
+
+            total = total + values[j];
+            j = j + 1;
+        }
+
+        i = i + 1;
+    }
+
+    return total + forward(2) + len([marker(5), marker(6)]);
+}
+
+fn forward(value: number) -> number {
+    return even(value);
+}
+
+fn even(value: number) -> number {
+    if value <= 0 {
+        return 1;
+    } else {
+        return odd(value - 1);
+    }
+}
+
+fn odd(value: number) -> number {
+    if value <= 0 {
+        return 0;
+    } else {
+        return even(value - 1);
+    }
+}
+
+fn enabled(value: bool) -> bool {
+    return value && signal(false) || value == signal(true);
+}
