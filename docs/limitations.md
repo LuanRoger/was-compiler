@@ -2,8 +2,7 @@
 
 This document separates existing restrictions, workarounds available today, and
 possible future designs. Future choices are **not implemented features or delivery
-promises**. Maintainability work is covered separately in
-[refactoring.md](refactoring.md); neither document proposes code optimization.
+promises**. This document does not propose code optimization.
 
 ## Status and scope
 
@@ -172,19 +171,24 @@ Evidence: [tokens.rs](../src/tokens.rs), [typed_ast.rs](../src/typed_ast.rs),
   renderer tests. Columns count Unicode scalar characters; excerpt tabs expand
   to four spaces, not terminal tab stops. Grapheme/display-width alignment is not
   modeled. Fix/recompile incrementally and treat the highlighted statement as
-  context, not an expression-precise location. A common error-location accessor
-  remains a refactor opportunity; precise expression spans/recovery are separate
-  enhancements.
+  context, not an expression-precise location. Stage errors expose a common
+  `span() -> Option<Span>` accessor, delegated by `CompileError`; accessors return
+  raw byte offsets and the renderer alone clamps presentation. Unlocated errors
+  remain `None`. Precise expression spans/recovery are separate enhancements.
 - `TypedProgram` and its nodes/IDs/type annotations are public and mutable.
   `Compiler::analyze` creates a checked program, including an owned host-import
   snapshot, but callers can forge inconsistent input before `compile`. The
   backend checks many malformed IDs, scopes, types, calls, and literals; this is
   not a guarantee that every arbitrary public typed tree produces a recoverable
-  error. Planning/emission still contain `expect`/`assert` invariants for memory,
-  interned strings, and temporary slots. Prefer analyze-then-compile without
-  unchecked edits. A validated construction boundary can improve this contract;
-  it must preserve existing diagnostic precedence and support deliberate
-  malformed-input tests.
+  error. A private [checked constructor](../src/codegen/validation.rs) now borrows
+  the tree, completes layout, and lowers all user bodies through existing backend
+  checks before module assembly can proceed. It preserves first-error order and
+  caches the bodies rather than running a second independent validator. This is
+  an internal boundary, not a public checked-AST API or complete source-semantic
+  revalidation. Planning/lowering still contain `expect`/`assert` invariants for
+  memory, interned strings, and temporary slots. Prefer analyze-then-compile
+  without unchecked edits. Optional public checked construction and stronger
+  arbitrary-input guarantees need separate API and validation decisions.
 - Compile errors return no partially emitted module. This does not make runtime
   traps transactional or protect host callbacks from application-level errors.
 

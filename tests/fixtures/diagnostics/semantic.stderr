@@ -1,0 +1,4 @@
+semantic.was:3:2: semantic error: Undefined function 'missing' at Span { start: 54, end: 64 }
+  |
+3 |     missing();
+  |     ^^^^^^^^^^

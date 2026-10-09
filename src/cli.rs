@@ -158,12 +158,7 @@ fn parse(args: impl Iterator<Item = OsString>) -> Result<Options, clap::Error> {
         },
     };
 
-    if output_format(&options) == Format::Wasm
-        && options
-            .output
-            .as_deref()
-            .is_none_or(|path| path == Path::new("-"))
-    {
+    if output_format(&options) == Format::Wasm && output_file(options.output.as_deref()).is_none() {
         return Err(Arguments::command().error(
             ErrorKind::MissingRequiredArgument,
             "binary Wasm requires -o with a filesystem path; use --emit wat for stdout",
@@ -181,6 +176,10 @@ fn output_format(options: &Options) -> Format {
             Format::Wat
         }
     })
+}
+
+fn output_file(output: Option<&Path>) -> Option<&Path> {
+    output.filter(|path| *path != Path::new("-"))
 }
 
 fn compile(options: Options) -> Result<(), String> {
@@ -210,8 +209,8 @@ fn compile(options: Options) -> Result<(), String> {
             .into_bytes(),
     };
 
-    match options.output.as_deref() {
-        Some(output) if output != Path::new("-") => {
+    match output_file(options.output.as_deref()) {
+        Some(output) => {
             if let (Ok(input), Ok(output)) = (options.source.canonicalize(), output.canonicalize())
                 && input == output
             {
@@ -223,7 +222,7 @@ fn compile(options: Options) -> Result<(), String> {
             write_artifact(output, &bytes)
                 .map_err(|error| format!("{}: output I/O error: {error}", output.display()))
         }
-        _ => io::stdout()
+        None => io::stdout()
             .lock()
             .write_all(&bytes)
             .map_err(|error| format!("stdout: I/O error: {error}")),
@@ -313,6 +312,10 @@ fn write_artifact(path: &Path, bytes: &[u8]) -> io::Result<()> {
         "could not reserve a temporary output file",
     ))
 }
+
+#[cfg(test)]
+#[path = "cli_contract_tests.rs"]
+mod contract_tests;
 
 #[cfg(test)]
 mod tests {

@@ -1,0 +1,1 @@
+fn main() -> number { return 1; }

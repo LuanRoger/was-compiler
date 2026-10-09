@@ -1,0 +1,4 @@
+parse.was:2:18: parse error: Unexpected token ; (expected expression) at Span { start: 37, end: 38 }
+  |
+2 |     let n: number = ;
+  |                     ^

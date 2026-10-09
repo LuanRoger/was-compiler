@@ -228,5 +228,4 @@ The Node runner exits `1` for failures and reports these stages:
 A same-thread timer cannot interrupt a synchronous nonterminating guest. Run
 untrusted or potentially unbounded work under worker/process or engine resource
 controls. Neither traps nor host exceptions roll back prior effects. See
-[limitations.md](limitations.md) for current workarounds and future choices, and
-[refactoring.md](refactoring.md) for maintainability work unrelated to optimization.
+[limitations.md](limitations.md) for current workarounds and future choices.

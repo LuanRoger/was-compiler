@@ -65,6 +65,25 @@ pub enum SemanticError {
     MissingReturn { name: String, span: Span },
 }
 
+impl SemanticError {
+    pub fn span(&self) -> Option<Span> {
+        match self {
+            Self::DuplicateFunction { span, .. }
+            | Self::DuplicateVariable { span, .. }
+            | Self::UndefinedVariable { span, .. }
+            | Self::UndefinedFunction { span, .. }
+            | Self::NotCallable { span, .. }
+            | Self::InvalidVoidType { span, .. }
+            | Self::TypeMismatch { span, .. }
+            | Self::ArgumentCountMismatch { span, .. }
+            | Self::InvalidBinaryOperands { span, .. }
+            | Self::InvalidAssignmentTarget { span }
+            | Self::UnexpectedReturnValue { span }
+            | Self::MissingReturn { span, .. } => Some(*span),
+        }
+    }
+}
+
 struct FunctionSignature {
     reference: FunctionRef,
     params: Vec<Type>,

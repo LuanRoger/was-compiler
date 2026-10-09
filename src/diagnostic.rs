@@ -1,15 +1,13 @@
-use crate::{
-    CodegenError, CompileError, parser::ParseError, semantic::SemanticError, tokens::Span,
-};
+use crate::CompileError;
 
 pub fn render(path: &str, source: &str, error: &CompileError) -> String {
-    let (stage, span) = match error {
-        CompileError::Parse(error) => ("parse", Some(parse_span(error))),
-        CompileError::Semantic(error) => ("semantic", Some(semantic_span(error))),
-        CompileError::Codegen(error) => ("code generation", codegen_span(error)),
+    let stage = match error {
+        CompileError::Parse(_) => "parse",
+        CompileError::Semantic(_) => "semantic",
+        CompileError::Codegen(_) => "code generation",
     };
 
-    let Some(span) = span else {
+    let Some(span) = error.span() else {
         return format!("{path}: {stage} error: {error}");
     };
 
@@ -58,56 +56,12 @@ fn boundary(source: &str, offset: usize) -> usize {
     offset
 }
 
-fn parse_span(error: &ParseError) -> Span {
-    match error {
-        ParseError::UnexpectedToken { span, .. } | ParseError::InvalidAssignmentTarget { span } => {
-            *span
-        }
-    }
-}
-
-fn semantic_span(error: &SemanticError) -> Span {
-    match error {
-        SemanticError::DuplicateFunction { span, .. }
-        | SemanticError::DuplicateVariable { span, .. }
-        | SemanticError::UndefinedVariable { span, .. }
-        | SemanticError::UndefinedFunction { span, .. }
-        | SemanticError::NotCallable { span, .. }
-        | SemanticError::InvalidVoidType { span, .. }
-        | SemanticError::TypeMismatch { span, .. }
-        | SemanticError::ArgumentCountMismatch { span, .. }
-        | SemanticError::InvalidBinaryOperands { span, .. }
-        | SemanticError::InvalidAssignmentTarget { span }
-        | SemanticError::UnexpectedReturnValue { span }
-        | SemanticError::MissingReturn { span, .. } => *span,
-    }
-}
-
-fn codegen_span(error: &CodegenError) -> Option<Span> {
-    match error {
-        CodegenError::UnsupportedStatement { span, .. }
-        | CodegenError::UnsupportedExpression { span, .. }
-        | CodegenError::UnsupportedOperator { span, .. }
-        | CodegenError::InvalidNumberLiteral { span, .. }
-        | CodegenError::NumberLiteralOutOfRange { span, .. }
-        | CodegenError::TypeMismatch { span, .. }
-        | CodegenError::UnknownFunctionReference { span, .. }
-        | CodegenError::ArgumentCountMismatch { span, .. }
-        | CodegenError::UnsupportedBuiltin { span, .. }
-        | CodegenError::DuplicateVariableId { span, .. }
-        | CodegenError::UnknownVariable { span, .. }
-        | CodegenError::UninitializedVariable { span, .. }
-        | CodegenError::UnsupportedLocalType { span, .. }
-        | CodegenError::InvalidAssignmentTarget { span, .. }
-        | CodegenError::UnexpectedReturnValue { span, .. } => Some(*span),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Compiler;
+    use crate::{
+        CodegenError, Compiler, parser::ParseError, semantic::SemanticError, tokens::Span,
+    };
 
     #[test]
     fn compiler_stages_have_locations_and_source_excerpts() {

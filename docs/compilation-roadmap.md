@@ -20,8 +20,9 @@ Source
   → TypedProgram
   → Optimization stage (currently a no-op at every level)
   → ABI and module layout
-  → Function-body emission
-  → wasm_encoder sections
+  → Function-body validation/lowering
+  → Internal ValidatedProgram (borrowed AST + layout + checked bodies)
+  → wasm_encoder section assembly
   → WebAssembly bytes
 ```
 
@@ -43,7 +44,8 @@ The compiler emits bytes. The embedding application decides whether to write a
 | `src/compiler.rs` | Compiler options, host/export configuration, and pipeline orchestration; stage-specific errors. |
 | `src/exports.rs` | User-export policy (`All`, `None`, or explicit source names), separate from optimization presets. |
 | `src/cli.rs` | Parse arguments, load a required source file, register hosts, and publish plain WAT/raw binary Wasm. |
-| `src/diagnostic.rs` | Shared library renderer for CLI/browser source locations/excerpts and stage errors without changing core error types. |
+| `src/diagnostic.rs` | Shared CLI/browser renderer consuming stage-owned `span()` access through `CompileError`, preserving messages, source excerpts, and located/unlocated presentation. |
+| `tests/diagnostics.rs`, `src/cli_contract_tests.rs` | Exhaustive span access/delegation, exact pre-refactor diagnostic text, and CLI format/destination/configuration mappings. |
 | `runtime/index.cjs`, `runtime/abi.cjs`, `runtime/run.cjs` | Instantiate raw binaries, offer explicit ABI conversions, and expose a raw-call Node runner. |
 | `tests/cli.rs`, `tests/runtime.rs` | Exercise source-file/raw-binary/provider integration separately from backend tests. |
 | `src/optimization.rs` | O0–O3 level configuration and a typed-AST optimization boundary; no passes implemented yet. |
@@ -52,12 +54,14 @@ The compiler emits bytes. The embedding application decides whether to write a
 | `src/typed_ast.rs` | Typed expressions, resolved references, and owned import metadata. |
 | `src/codegen/abi.rs` | Central language-type → Wasm-type mapping and function signatures. |
 | `src/codegen/layout.rs` | Deduplicate signatures, assign indices, and build the complete typed callee table before body emission. |
+| `src/codegen/validation.rs` | Borrow the typed AST, complete layout and existing body checks in diagnostic order, and retain checked bodies behind a private construction boundary. |
+| `src/codegen/validation_tests.rs` | Compare checked and former compilation sequences for valid bytes, multiply-invalid diagnostics, and immutable host/export snapshots. |
 | `src/codegen/call.rs` | Validate resolved call references/signatures, emit user/host calls and built-in `len`, normalize host booleans, and validate memory handles. |
 | `src/codegen/function.rs` | Per-function emission context, scoped initialized-binding checks, return-path checks, and function termination. |
 | `src/codegen/control_flow.rs` | Emit structured branches and loops, preserve scope boundaries, and track guaranteed returns. |
 | `src/codegen/locals.rs` | Map typed variable IDs to dense Wasm slots and declare value/handle local types. |
 | `src/codegen/temporaries.rs` | Preallocate independent array-construction scratch slots, including nested and unreachable expressions. |
-| `src/codegen/mod.rs` | Assemble Type, Import, Function, optional Memory/Global, Export, Code, and optional Data sections in order. |
+| `src/codegen/mod.rs` | Validate raw typed input through the private checked constructor, then assemble Type, Import, Function, optional Memory/Global, Export, Code, and optional Data sections from checked state. |
 | `src/codegen/tests.rs` | Inspect and validate emitted modules with `wasmparser`. |
 | `src/codegen/expression.rs` | Emit scalar literals, variable reads, arithmetic/comparisons, short-circuit boolean operators, and user/host calls. |
 | `src/codegen/statement.rs` | Emit blocks, scalar declarations/assignments, expression cleanup, returns, and delegate control flow. |
@@ -431,8 +435,7 @@ symbol tables.
 M0–M9 are implemented; this is not a claim that every language/runtime feature is
 complete. [Limitations and alternatives](limitations.md) records unsupported
 features, ownership/resource policies, raw-call/ABI constraints, and current
-workarounds versus possible future designs. [Refactoring](refactoring.md) proposes
-incremental, behavior-preserving maintainability work without optimization passes.
+workarounds versus possible future designs.
 
 ## Testing strategy
 

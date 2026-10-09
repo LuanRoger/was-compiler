@@ -23,6 +23,7 @@ mod memory;
 mod numeric;
 mod statement;
 mod temporaries;
+mod validation;
 mod values;
 mod walker;
 
@@ -189,6 +190,38 @@ pub enum CodegenError {
     LimitExceeded { what: &'static str },
 }
 
+impl CodegenError {
+    pub fn span(&self) -> Option<Span> {
+        match self {
+            Self::UnsupportedStatement { span, .. }
+            | Self::UnsupportedExpression { span, .. }
+            | Self::UnsupportedOperator { span, .. }
+            | Self::InvalidNumberLiteral { span, .. }
+            | Self::NumberLiteralOutOfRange { span, .. }
+            | Self::TypeMismatch { span, .. }
+            | Self::UnknownFunctionReference { span, .. }
+            | Self::ArgumentCountMismatch { span, .. }
+            | Self::UnsupportedBuiltin { span, .. }
+            | Self::DuplicateVariableId { span, .. }
+            | Self::UnknownVariable { span, .. }
+            | Self::UninitializedVariable { span, .. }
+            | Self::UnsupportedLocalType { span, .. }
+            | Self::InvalidAssignmentTarget { span, .. }
+            | Self::UnexpectedReturnValue { span, .. } => Some(*span),
+
+            Self::InvalidFunctionId { .. }
+            | Self::InvalidHostFunctionId { .. }
+            | Self::DuplicateExportName { .. }
+            | Self::UnknownExport { .. }
+            | Self::DuplicateExportSelection { .. }
+            | Self::UnsupportedAbiType { .. }
+            | Self::VoidParameter { .. }
+            | Self::MissingReturnValue { .. }
+            | Self::LimitExceeded { .. } => None,
+        }
+    }
+}
+
 pub fn compile(program: &TypedProgram) -> Result<Vec<u8>, CodegenError> {
     compile_with_exports(program, &ExportOptions::All)
 }
@@ -197,11 +230,14 @@ pub fn compile_with_exports(
     program: &TypedProgram,
     exports: &ExportOptions,
 ) -> Result<Vec<u8>, CodegenError> {
-    let layout = match exports {
-        ExportOptions::All => layout::Layout::new(program),
-        _ => layout::Layout::with_exports(program, exports),
-    }?;
+    let validated = validation::ValidatedProgram::new(program, exports)?;
 
+    Ok(assemble(&validated))
+}
+
+fn assemble(validated: &validation::ValidatedProgram<'_>) -> Vec<u8> {
+    let program = validated.program();
+    let layout = validated.layout();
     let mut types = TypeSection::new();
 
     for signature in &layout.signatures {
@@ -225,16 +261,19 @@ pub fn compile_with_exports(
     let mut exports = ExportSection::new();
     let mut code = CodeSection::new();
 
-    for (user, plan) in program.functions.iter().zip(&layout.users) {
-        let body = function::emit(user, &layout)?;
-
+    for ((user, plan), body) in program
+        .functions
+        .iter()
+        .zip(&layout.users)
+        .zip(validated.bodies())
+    {
         functions.function(plan.type_index.raw());
 
         if plan.exported {
             exports.export(&user.name, ExportKind::Func, plan.function_index.raw());
         }
 
-        code.function(&body);
+        code.function(body);
     }
 
     let mut memories = MemorySection::new();
@@ -303,7 +342,7 @@ pub fn compile_with_exports(
         module.section(&data);
     }
 
-    Ok(module.finish())
+    module.finish()
 }
 
 fn expect_type(

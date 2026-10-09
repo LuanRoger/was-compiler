@@ -20,6 +20,16 @@ pub enum ParseError {
     InvalidAssignmentTarget { span: Span },
 }
 
+impl ParseError {
+    pub fn span(&self) -> Option<Span> {
+        match self {
+            Self::UnexpectedToken { span, .. } | Self::InvalidAssignmentTarget { span } => {
+                Some(*span)
+            }
+        }
+    }
+}
+
 pub struct Parser<'tokens, 'source> {
     tokens: &'tokens [Token<'source>],
     current: usize,

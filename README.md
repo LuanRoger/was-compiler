@@ -22,8 +22,7 @@ The Node harness uses built-in modules only and requires no npm installation.
   export selection, raw Wasm calls, explicit marshaling, and diagnostic stages.
 - [Limitations and alternatives](docs/limitations.md): current restrictions,
   available workarounds, and possible future solutions with tradeoffs.
-- [Refactoring plan](docs/refactoring.md): prioritized maintainability work,
-  explicitly excluding optimization work.
+
 
 ## Compile in the browser
 

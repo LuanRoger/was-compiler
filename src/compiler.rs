@@ -9,6 +9,7 @@ use crate::{
     optimization::{self, OptimizationLevel},
     parser::{ParseError, Parser},
     semantic::{SemanticAnalyzer, SemanticError},
+    tokens::Span,
     typed_ast::TypedProgram,
 };
 
@@ -22,6 +23,16 @@ pub enum CompileError {
 
     #[error(transparent)]
     Codegen(#[from] CodegenError),
+}
+
+impl CompileError {
+    pub fn span(&self) -> Option<Span> {
+        match self {
+            Self::Parse(error) => error.span(),
+            Self::Semantic(error) => error.span(),
+            Self::Codegen(error) => error.span(),
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
