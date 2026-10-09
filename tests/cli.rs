@@ -602,6 +602,24 @@ fn binary_cli_output_is_exactly_raw_library_codegen() {
 }
 
 #[test]
+fn comments_preserve_raw_cli_and_library_wasm() {
+    let scratch = Scratch::new("comments");
+    let plain =
+        "fn main() -> number { return 84 / 2; } fn text() -> string { return \"// /* */ é🦀\"; }";
+    let commented = concat!(
+        "// leading comment\n",
+        "/* multiline\n/* nested opener is text */fn/**/main()/* signature */->number{\n",
+        "// stops at CR\rreturn/* left */84 / /* divisor */2;// stops at LF\n",
+        "}\nfn text()->string{return \"// /* */ é🦀\";}// EOF",
+    );
+    let expected = raw_wasm(plain);
+    assert_eq!(raw_wasm(commented), expected);
+    assert_eq!(scratch.compile(plain, &[]), expected);
+    assert_eq!(scratch.compile(commented, &[]), expected);
+    scratch.assert_entries(&["program.was", "program.wasm"]);
+}
+
+#[test]
 fn export_selection_preserves_source_order_bodies_and_memory_abi() {
     let scratch = Scratch::new("memory_exports");
     let all = decode(&scratch.compile(MEMORY_SOURCE, &[]));
@@ -862,6 +880,28 @@ fn located_diagnostics_show_absolute_file_paths_phases_and_source_carets() {
         assert!(stderr.starts_with(&location));
         scratch.assert_entries(&["broken source.was"]);
     }
+}
+
+#[test]
+fn unterminated_block_comment_reports_original_location_and_preserves_output() {
+    let scratch = Scratch::new("unterminated_comment");
+    let source = "// heading\r\nfn main() -> void {\r\n    /* é🦀 */ /* unterminated\nstill open";
+    let input = scratch.write("program.was", source);
+    let sentinel = b"existing artifact";
+    let output = scratch.write("program.wasm", sentinel);
+    let stderr = failure(
+        scratch.cli(&["program.was", "-o", "program.wasm"], None),
+        1,
+        &[
+            "program.was:3:14: parse error:",
+            "3 |     /* é🦀 */ /* unterminated",
+            " |              ^",
+        ],
+    );
+    assert!(stderr.starts_with("program.was:3:14: parse error:"));
+    assert_eq!(fs::read(input).unwrap(), source.as_bytes());
+    assert_eq!(fs::read(output).unwrap(), sentinel);
+    scratch.assert_entries(&["program.was", "program.wasm"]);
 }
 
 #[test]

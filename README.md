@@ -60,6 +60,25 @@ and `while`. Strings, numeric arrays, checked array access/assignment, and built
 Calls can be forward, nested, self-recursive, or mutually recursive; arguments
 are evaluated left-to-right.
 
+`//` line comments run to LF, CR, or end of file. `/* ... */` block comments can
+span lines and end at the first `*/`; they do not nest. Both are skipped between
+tokens anywhere whitespace can appear. Comment delimiters inside string literals
+remain text. Comments separate tokens rather than joining identifier fragments or
+operator bytes: `foo/* note */bar` is two identifiers, not `foobar`.
+
+```text
+fn main() -> number {
+    // A line comment
+    return 6 /* A block comment
+                spanning lines */ * 7;
+}
+```
+
+The lexer skips comments directly, preserving original UTF-8 byte spans without
+source preprocessing. An unterminated block comment produces an `Invalid` token
+from the opening slash to EOF, followed by `Eof`, and is reported through existing
+parser errors; it does not introduce a new error stage.
+
 ```text
 fn factorial(value: number) -> number {
     if value <= 1 {

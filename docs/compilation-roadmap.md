@@ -430,6 +430,25 @@ symbol tables.
   helper; exercise its emitted modules as well as native compilation. No
   optimization transformations were added.
 
+## Implemented lexical extension: comments
+
+The lexer skips `//` line comments through LF, CR, or EOF and multiline
+`/* ... */` block comments through the first `*/` (no nesting). Comments are
+trivia between tokens anywhere whitespace can appear; delimiters inside strings
+remain text. They separate tokens rather than joining identifier fragments or
+operator bytes.
+
+Skipping occurs in the lexer, not through source preprocessing, preserving
+original UTF-8 byte spans. An unterminated block produces an `Invalid` token from
+the opening slash to EOF, followed by `Eof`, and is reported by existing parser
+errors. This extension adds no error stage and changes no AST, codegen, or ABI
+contract.
+
+Acceptance covers LF/CR/EOF line endings, multiline and non-nesting block
+comments, adjacency to tokens, string delimiters, token separation, original byte
+spans, and unterminated-block parser errors. Comments do not add a numbered
+backend milestone.
+
 ## Remaining work
 
 M0–M9 are implemented; this is not a claim that every language/runtime feature is

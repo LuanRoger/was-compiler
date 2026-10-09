@@ -129,6 +129,24 @@ async function main() {
         assert.doesNotMatch(wat, /was-compiler\.interface/);
     });
 
+    test('comments preserve bytes across optimization levels and execute without changing strings or division', compiler => {
+        const plain = 'fn main() -> number { return 84 / 2; } fn text() -> string { return "// /* */ é🦀"; }';
+        const commented = '// leading comment\n'
+            + '/* multiline\n/* nested opener is text */fn/**/main()/* signature */->number{\n'
+            + '// stops at CR\rreturn/* left */84 / /* divisor */2;// stops at LF\n'
+            + '}\nfn text()->string{return "// /* */ é🦀";}// EOF';
+        const expected = compile(compiler, plain).bytes;
+        for (const level of [0, 1, 2, 3]) {
+            compiler.setOptimizationLevel(level);
+            assert.deepEqual(compile(compiler, plain).bytes, expected);
+            const { bytes, module } = compile(compiler, commented);
+            assert.deepEqual(bytes, expected);
+            const instance = new WebAssembly.Instance(module);
+            assert.equal(instance.exports.main(), 42);
+            assert.equal(readDescriptor(instance, 'string', instance.exports.text()), '// /* */ é🦀');
+        }
+    });
+
     test('remainder arithmetic, IEEE-754 inputs, host order, and guest-only memory', compiler => {
         const source = `
             fn remainder(left: number, right: number) -> number { return left % right; }
@@ -335,6 +353,16 @@ async function main() {
                 assert.equal(instantiate(compiler, SIMPLE_SOURCE).exports.main(), 42);
                 assert.match(compiler.compileWat(SIMPLE_SOURCE), /\(export "main"/);
             }
+        }
+    });
+
+    test('unterminated block comments retain original locations and compilation recovers', compiler => {
+        const source = '// heading\r\nfn main() -> void {\r\n    /* é🦀 */ /* unterminated\nstill open';
+        for (const method of ['compile', 'compileWat']) {
+            fails(() => compiler[method](source), /^<browser>:3:14: parse error:/);
+            fails(() => compiler[method](source), /3 \|     \/\* é🦀 \*\/ \/\* unterminated\n.*\| {14}\^/);
+            assert.equal(instantiate(compiler, SIMPLE_SOURCE).exports.main(), 42);
+            assert.match(compiler.compileWat(SIMPLE_SOURCE), /\(export "main"/);
         }
     });
 

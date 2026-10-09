@@ -103,8 +103,10 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   string equality, numeric-array equality, indexing, and built-in `len(array)`.
 - Strings are immutable raw UTF-8 values. Numeric arrays have fixed lengths and
   mutable shared storage; every evaluated array literal allocates fresh storage.
-- No `for`, `foreach`, `break`, `continue`, comments, string escapes, exponent
-  literals, `.5`, `1.`, string concatenation/indexing/`len`, or general postfix
+- `//` line comments and non-nesting `/* ... */` block comments are supported
+  between tokens anywhere whitespace can appear; delimiters inside strings remain text.
+- No `for`, `foreach`, `break`, `continue`, string escapes, exponent literals,
+  `.5`, `1.`, string concatenation/indexing/`len`, or general postfix
   chaining. Source indexing starts from an identifier.
 - No other array element types, modules, closures, generics, free, or garbage
   collection. Consult the limitations document before claiming support.
@@ -115,6 +117,18 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
 
 These are deliberate semantics, not implementation accidents. Preserve them in
 refactors; specify and test any intentional behavior change explicitly.
+
+### Lexical trivia and source spans
+
+- `//` comments run to LF, CR, or EOF. `/* ... */` comments may span lines and end
+  at the **first** `*/`; nested opening delimiters are ordinary comment text.
+- Skip comments in the lexer between tokens wherever whitespace can appear, never
+  through source preprocessing. Preserve original UTF-8 byte spans. Delimiters
+  inside string literals remain text; comments separate tokens and never join
+  identifier fragments or operator bytes.
+- An unterminated block comment emits `Invalid` spanning the opening slash to EOF,
+  followed by `Eof`. Report it via existing parser errors, without a new error
+  stage. Comments change no AST, codegen, or ABI contract.
 
 ### Evaluation, scopes, and module layout
 

@@ -174,10 +174,29 @@
                      | "?"
 
 
-<ws> ::= <whitespace_character>*
+<ws> ::= <trivia>*
 
-<ws1> ::= <whitespace_character>+
+<ws1> ::= <trivia>+
+
+<trivia> ::= <whitespace_character>
+           | <line_comment>
+           | <block_comment>
 
 <whitespace_character> ::= " "
                          | "\n"
                          | "\t"
+
+<line_comment> ::= "//" [^\r\n]* ( "\n" | "\r" | <eof> )
+
+<block_comment> ::= "/*" <block_comment_part>* "*"+ "/"
+
+<block_comment_part> ::= [^*]
+                       | "*"+ [^*/]
+
+# Lexical notes: <eof> is a zero-width end-of-input assertion, not source text.
+# Block-comment parts cannot consume "*/", so the first "*/" closes the comment;
+# "/*" inside a block comment is ordinary content (no nesting).
+# Comments are trivia only between tokens; delimiters in strings remain text.
+# Skipping comments preserves byte spans and never joins identifier/operator bytes.
+# An unterminated block emits Invalid from the opening slash to EOF, then Eof;
+# existing parser errors report it, with no new error stage.

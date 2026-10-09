@@ -52,7 +52,9 @@ impl<'a> Lexer<'a> {
     }
 
     pub fn next_token(&mut self) -> Token<'a> {
-        self.skip_whitespace();
+        if let Some(token) = self.skip_trivia() {
+            return token;
+        }
 
         self.start = self.current;
 
@@ -86,6 +88,51 @@ impl<'a> Lexer<'a> {
         {
             self.advance();
         }
+    }
+
+    fn skip_trivia(&mut self) -> Option<Token<'a>> {
+        loop {
+            self.skip_whitespace();
+
+            match self.source_bytes[self.current..] {
+                [b'/', b'/', ..] => {
+                    self.advance();
+                    self.advance();
+
+                    while self
+                        .source_iter
+                        .peek()
+                        .is_some_and(|&&char| !matches!(char, b'\n' | b'\r'))
+                    {
+                        self.advance();
+                    }
+                }
+
+                [b'/', b'*', ..] => {
+                    self.start = self.current;
+                    self.advance();
+                    self.advance();
+
+                    if !self.skip_block_comment() {
+                        return Some(self.make_token(TokenKind::Invalid));
+                    }
+                }
+
+                _ => return None,
+            }
+        }
+    }
+
+    fn skip_block_comment(&mut self) -> bool {
+        while let Some(&char) = self.advance() {
+            if char == b'*' && self.source_iter.peek().is_some_and(|&&next| next == b'/') {
+                self.advance();
+
+                return true;
+            }
+        }
+
+        false
     }
 
     pub fn make_token(&mut self, token_kind: TokenKind<'a>) -> Token<'a> {
@@ -231,6 +278,137 @@ mod tests {
             .into_iter()
             .map(|token| token.kind)
             .collect()
+    }
+
+    #[test]
+    fn skips_line_comments_through_lf_cr_crlf_or_eof() {
+        for ending in ["\n", "\r", "\r\n"] {
+            let source = format!("1// \" /* ignored é */{ending}2// EOF");
+            let tokens = Lexer::new(&source).tokenize();
+            let second_start = "1// \" /* ignored é */".len() + ending.len();
+
+            assert_eq!(tokens.len(), 3);
+            assert_eq!(tokens[0].kind, TokenKind::NumberLiteral("1".into()));
+            assert_eq!(tokens[0].span, Span::new(0, 1));
+            assert_eq!(tokens[1].kind, TokenKind::NumberLiteral("2".into()));
+            assert_eq!(tokens[1].span, Span::new(second_start, second_start + 1));
+            assert_eq!(tokens[2].kind, TokenKind::Eof);
+            assert_eq!(tokens[2].span, Span::new(source.len(), source.len()));
+        }
+    }
+
+    #[test]
+    fn skips_adjacent_and_multiline_block_comments() {
+        assert_eq!(
+            kinds("/**//***/ /* \" // ignored\n é */true/* trailing */"),
+            vec![TokenKind::True, TokenKind::Eof]
+        );
+
+        for source in ["// EOF", "/**/", "/* multi\nline */ // EOF"] {
+            let tokens = Lexer::new(source).tokenize();
+
+            assert_eq!(tokens.len(), 1);
+            assert_eq!(tokens[0].kind, TokenKind::Eof);
+            assert_eq!(tokens[0].span, Span::new(source.len(), source.len()));
+        }
+    }
+
+    #[test]
+    fn block_comments_close_at_the_first_delimiter_without_nesting() {
+        assert_eq!(
+            kinds("/* outer /* inner */true */"),
+            vec![
+                TokenKind::True,
+                TokenKind::Star,
+                TokenKind::Slash,
+                TokenKind::Eof
+            ]
+        );
+    }
+
+    #[test]
+    fn comments_separate_identifier_number_and_operator_fragments() {
+        assert_eq!(
+            kinds("fo/**/o 1/**/2 =/**/= &/**/& -/**/>"),
+            vec![
+                TokenKind::Identifier("fo".into()),
+                TokenKind::Identifier("o".into()),
+                TokenKind::NumberLiteral("1".into()),
+                TokenKind::NumberLiteral("2".into()),
+                TokenKind::Equal,
+                TokenKind::Equal,
+                TokenKind::Invalid,
+                TokenKind::Invalid,
+                TokenKind::Minus,
+                TokenKind::Greater,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn comment_delimiters_inside_strings_remain_literal_text() {
+        assert_eq!(
+            kinds("\"https://example.test/* text */\"/* ignored */\"// /* */\""),
+            vec![
+                TokenKind::StringLiteral("https://example.test/* text */".into()),
+                TokenKind::StringLiteral("// /* */".into()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn preserves_division_and_star_tokens_around_comments() {
+        assert_eq!(
+            kinds("6/2 8/ /* divide */ 4 / * / /**/ /"),
+            vec![
+                TokenKind::NumberLiteral("6".into()),
+                TokenKind::Slash,
+                TokenKind::NumberLiteral("2".into()),
+                TokenKind::NumberLiteral("8".into()),
+                TokenKind::Slash,
+                TokenKind::NumberLiteral("4".into()),
+                TokenKind::Slash,
+                TokenKind::Star,
+                TokenKind::Slash,
+                TokenKind::Slash,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_unterminated_block_comments_with_original_byte_spans() {
+        for comment in ["/*", "/*/", "/* unfinished", "/* trailing *", "/* é\n/*"] {
+            let source = format!("true /* prior */\r\n{comment}");
+            let tokens = Lexer::new(&source).tokenize();
+            let start = "true /* prior */\r\n".len();
+
+            assert_eq!(tokens.len(), 3);
+            assert_eq!(tokens[0].kind, TokenKind::True);
+            assert_eq!(tokens[0].span, Span::new(0, 4));
+            assert_eq!(tokens[1].kind, TokenKind::Invalid);
+            assert_eq!(tokens[1].span, Span::new(start, source.len()));
+            assert_eq!(tokens[2].kind, TokenKind::Eof);
+            assert_eq!(tokens[2].span, Span::new(source.len(), source.len()));
+        }
+    }
+
+    #[test]
+    fn preserves_utf8_byte_spans_after_comments() {
+        let mut lexer = Lexer::new("/*é*/\"λ\"//🙂\r\n+");
+        let text = lexer.next_token();
+        let plus = lexer.next_token();
+        let eof = lexer.next_token();
+
+        assert_eq!(text.kind, TokenKind::StringLiteral("λ".into()));
+        assert_eq!(text.span, Span::new(6, 10));
+        assert_eq!(plus.kind, TokenKind::Plus);
+        assert_eq!(plus.span, Span::new(18, 19));
+        assert_eq!(eof.kind, TokenKind::Eof);
+        assert_eq!(eof.span, Span::new(19, 19));
+        assert_eq!(lexer.next_token().span, eof.span);
     }
 
     #[test]
