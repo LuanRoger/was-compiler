@@ -1,11 +1,12 @@
 use crate::{
     ast::Type,
+    flow::Flow,
     tokens::Span,
-    typed_ast::{TypedBlock, TypedExpr},
+    typed_ast::{LoopId, TypedBlock, TypedExpr},
 };
 use wasm_encoder::{BlockType, Instruction};
 
-use super::{CodegenError, expect_type, function::BodyEmitter, indices::LabelDepth};
+use super::{CodegenError, expect_type, function::BodyEmitter};
 
 pub(super) fn emit_if(
     cond: &TypedExpr,
@@ -13,50 +14,62 @@ pub(super) fn emit_if(
     else_: Option<&TypedBlock>,
     emitter: &mut BodyEmitter<'_>,
     span: Span,
-) -> Result<bool, CodegenError> {
+) -> Result<Flow, CodegenError> {
     expect_type(emitter.name(), Type::Bool, cond.ty, span)?;
-    emitter.emit_expr(cond, span)?;
-    emitter.begin_if(BlockType::Empty);
 
-    let then_returns = emitter.scoped(|emitter| emitter.emit_block(then))?;
-    let else_returns = match else_ {
-        Some(block) => {
-            emitter.otherwise();
+    emitter.structured(|emitter| {
+        emitter.emit_expr(cond, span)?;
+        emitter.begin_if(BlockType::Empty)?;
 
-            emitter.scoped(|emitter| emitter.emit_block(block))?
+        let then_flow = emitter.scoped(|emitter| emitter.emit_block(then))?;
+        let else_flow = match else_ {
+            Some(block) => {
+                emitter.otherwise();
+
+                emitter.scoped(|emitter| emitter.emit_block(block))?
+            }
+
+            None => Flow::FALLTHROUGH,
+        };
+
+        emitter.end();
+
+        let flow = then_flow.join(else_flow);
+
+        if flow.always_returns() {
+            emitter.instruction(&Instruction::Unreachable);
         }
 
-        None => false,
-    };
-
-    emitter.end();
-
-    let always_returns = then_returns && else_returns;
-
-    if always_returns {
-        emitter.instruction(&Instruction::Unreachable);
-    }
-
-    Ok(always_returns)
+        Ok(flow)
+    })
 }
 
 pub(super) fn emit_while(
+    id: LoopId,
     cond: &TypedExpr,
     block: &TypedBlock,
     emitter: &mut BodyEmitter<'_>,
     span: Span,
-) -> Result<bool, CodegenError> {
+) -> Result<Flow, CodegenError> {
     expect_type(emitter.name(), Type::Bool, cond.ty, span)?;
-    emitter.begin_block();
-    emitter.begin_loop();
-    emitter.emit_expr(cond, span)?;
 
-    emitter.instruction(&Instruction::I32Eqz);
-    emitter.branch_if(LabelDepth::LOOP_EXIT);
-    emitter.scoped(|emitter| emitter.emit_block(block))?;
-    emitter.branch(LabelDepth::LOOP_BACK_EDGE);
-    emitter.end();
-    emitter.end();
+    emitter.scoped(|emitter| {
+        emitter.register_loop(id, span)?;
 
-    Ok(false)
+        let break_label = emitter.begin_block()?;
+        let continue_label = emitter.begin_loop()?;
+
+        emitter.enter_loop(id, break_label, continue_label);
+        emitter.emit_expr(cond, span)?;
+        emitter.instruction(&Instruction::I32Eqz);
+        emitter.branch_if(break_label)?;
+
+        let flow = emitter.emit_block(block)?;
+
+        emitter.branch(continue_label)?;
+        emitter.end();
+        emitter.end();
+
+        Ok(flow.while_loop())
+    })
 }

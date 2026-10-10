@@ -7,7 +7,7 @@ use crate::{
     optimization::OptimizationLevel,
     tokens::Span,
     typed_ast::{
-        BuiltinFunction, FunctionId, FunctionRef, TypedExpr, TypedExprKind, TypedFunction,
+        BuiltinFunction, FunctionId, FunctionRef, LoopId, TypedExpr, TypedExprKind, TypedFunction,
         TypedParam, TypedProgram, TypedStatement, TypedStatementKind, VariableId,
     },
 };
@@ -410,6 +410,7 @@ fn conditional(
 fn while_loop(cond: TypedExpr, body: Vec<TypedStatement>, span: Span) -> TypedStatement {
     TypedStatement {
         kind: TypedStatementKind::While {
+            id: LoopId(span.start()),
             cond: Box::new(cond),
             body,
         },
@@ -451,5 +452,6 @@ mod control_flow;
 mod expressions;
 mod layout;
 mod locals;
+mod loop_control;
 mod malformed;
 mod runtime;

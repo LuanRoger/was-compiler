@@ -643,6 +643,68 @@ fn compound_cli_output_matches_library_bytes_and_wat_at_every_level() {
 }
 
 #[test]
+fn loop_transfers_match_library_binary_and_wat_at_every_level() {
+    let scratch = Scratch::new("loop_control");
+    let source = "
+        fn main() -> number {
+            let i = 0;
+            let total = 0;
+            while i < 10 {
+                i += 1;
+                if i == 3 { continue; }
+                if i == 7 { break; }
+                total += i;
+            }
+            return total;
+        }
+        fn hidden() -> void { while false { return; break; continue; } }
+    ";
+    let mut compiler = Compiler::new();
+    compiler.set_exports(ExportOptions::Only(vec!["main".into()]));
+    let expected = compiler.compile_source(source).unwrap();
+
+    for flag in ["-O0", "-O1", "-O2", "-O3"] {
+        assert_eq!(
+            scratch.compile(source, &[flag, "--export", "main"]),
+            expected
+        );
+        let wat = success(scratch.cli(
+            &["program.was", flag, "--export", "main", "--emit", "wat"],
+            None,
+        ));
+        assert_eq!(
+            assert_plain_wat(&wat),
+            wasmprinter::print_bytes(&expected).unwrap()
+        );
+    }
+}
+
+#[test]
+fn invalid_loop_transfers_report_locations_without_replacing_output() {
+    let scratch = Scratch::new("invalid_loop_control");
+    scratch.write("program.wasm", b"existing output");
+    for (keyword, message) in [
+        ("break", "Break is only allowed inside a loop"),
+        ("continue", "Continue is only allowed inside a loop"),
+    ] {
+        scratch.write(
+            "program.was",
+            format!("fn main() -> void {{\n    {keyword};\n}}"),
+        );
+        failure(
+            scratch.cli(&["program.was", "-o", "program.wasm"], None),
+            1,
+            &["program.was:2:5", "semantic error", message],
+        );
+        assert_eq!(
+            fs::read(scratch.0.join("program.wasm")).unwrap(),
+            b"existing output"
+        );
+    }
+    scratch.assert_entries(&["program.was", "program.wasm"]);
+}
+
+#[test]
 fn comments_preserve_raw_cli_and_library_wasm() {
     let scratch = Scratch::new("comments");
     let plain =

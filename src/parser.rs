@@ -151,6 +151,18 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
             Some(TokenKind::Let) => self.parse_let()?,
             Some(TokenKind::If) => self.parse_if()?,
             Some(TokenKind::While) => self.parse_while()?,
+            Some(TokenKind::Break) => {
+                self.advance();
+                self.expect(TokenKind::Semicolon)?;
+
+                StatementKind::Break
+            }
+            Some(TokenKind::Continue) => {
+                self.advance();
+                self.expect(TokenKind::Semicolon)?;
+
+                StatementKind::Continue
+            }
             Some(TokenKind::Return) => self.parse_return()?,
             _ => self.parse_expression_statement()?,
         };
@@ -497,6 +509,8 @@ fn token_name(kind: &TokenKind<'_>) -> &'static str {
         TokenKind::If => "if",
         TokenKind::Else => "else",
         TokenKind::While => "while",
+        TokenKind::Break => "break",
+        TokenKind::Continue => "continue",
         TokenKind::Return => "return",
 
         TokenKind::True => "true",
@@ -885,6 +899,98 @@ mod tests {
                     span: Span::new(start, start + found.len()),
                 }
             );
+        }
+    }
+
+    #[test]
+    fn parses_bare_loop_transfers_with_original_spans() {
+        let source = "fn main() -> void { /* é */ while true { if false { break /* λ */; } else { continue; } } break; continue; }";
+        let program = parse(source).unwrap();
+        let statements = &program.functions[0].body;
+        let StatementKind::While { body, .. } = &statements[0].kind else {
+            panic!("expected while");
+        };
+        let StatementKind::If {
+            then,
+            else_: Some(otherwise),
+            ..
+        } = &body[0].kind
+        else {
+            panic!("expected if/else");
+        };
+
+        for (statement, text, kind) in [
+            (&then[0], "break /* λ */;", StatementKind::Break),
+            (&otherwise[0], "continue;", StatementKind::Continue),
+            (&statements[1], "break;", StatementKind::Break),
+        ] {
+            let start = source.find(text).unwrap();
+
+            assert_eq!(statement.kind, kind);
+            assert_eq!(statement.span, Span::new(start, start + text.len()));
+        }
+
+        let start = source.rfind("continue;").unwrap();
+
+        assert_eq!(statements[2].kind, StatementKind::Continue);
+        assert_eq!(
+            statements[2].span,
+            Span::new(start, start + "continue;".len())
+        );
+    }
+
+    #[test]
+    fn rejects_loop_transfer_values_labels_and_missing_semicolons() {
+        for (statement, found, text) in [
+            ("break 1;", "number literal", "1"),
+            ("break true;", "true", "true"),
+            ("break label;", "identifier", "label"),
+            ("break (1);", "(", "("),
+            ("continue 1;", "number literal", "1"),
+            ("continue label;", "identifier", "label"),
+            ("break", "}", "}"),
+            ("continue", "}", "}"),
+        ] {
+            let source = format!("fn main() -> void {{ while true {{ {statement} }} }}");
+            let statement_start = source.find(statement).unwrap();
+            let start = statement_start + source[statement_start..].find(text).unwrap();
+            let width = text.len();
+
+            assert_eq!(
+                parse(&source),
+                Err(ParseError::UnexpectedToken {
+                    expected: ";",
+                    found,
+                    span: Span::new(start, start + width),
+                }),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn loop_transfer_keywords_are_not_expressions_or_names() {
+        for source in [
+            "fn break() -> void {}",
+            "fn continue() -> void {}",
+            "fn main(break: number) -> void {}",
+            "fn main() -> void { let continue = 1; }",
+            "fn main() -> number { return break; }",
+            "fn main() -> void { let x = continue; }",
+            "fn main() -> void { while break {} }",
+            "fn main() -> void { use_value(continue); }",
+            "fn main() -> void { while true { label: break; } }",
+            "fn main() -> void { while true { break: label; } }",
+        ] {
+            assert!(parse(source).is_err(), "{source}");
+        }
+
+        for keyword in ["break", "continue"] {
+            let source = format!("fn main() -> void {{ while true {{ {keyword}; }} }}");
+
+            for end in 0..source.len() {
+                let _ = parse(&source[..end]);
+            }
         }
     }
 

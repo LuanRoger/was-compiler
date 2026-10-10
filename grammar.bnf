@@ -30,6 +30,8 @@
               | <compound_assignment>
               | <if_statement>
               | <while_statement>
+              | <break_statement>
+              | <continue_statement>
               | <return_statement>
               | <expression_statement>
 
@@ -63,6 +65,14 @@
 
 <while_statement> ::= "while" <ws1> <expression>
                       <ws> <block>
+
+
+<break_statement> ::= "break" <ws> ";"
+
+<continue_statement> ::= "continue" <ws> ";"
+
+# Loop transfers are statement-only, without labels or values, and target the
+# nearest enclosing while in the same function. Both words are reserved keywords.
 
 
 <return_statement> ::= "return" <ws> ";"

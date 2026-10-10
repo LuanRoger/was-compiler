@@ -272,6 +272,8 @@ impl<'a> Lexer<'a> {
             "if" => self.make_token(TokenKind::If),
             "else" => self.make_token(TokenKind::Else),
             "while" => self.make_token(TokenKind::While),
+            "break" => self.make_token(TokenKind::Break),
+            "continue" => self.make_token(TokenKind::Continue),
             "number" => self.make_token(TokenKind::Number),
             "bool" => self.make_token(TokenKind::Bool),
             "true" => self.make_token(TokenKind::True),
@@ -574,6 +576,43 @@ mod tests {
                 TokenKind::Eof,
             ]
         ));
+    }
+
+    #[test]
+    fn loop_control_keywords_preserve_boundaries_and_utf8_spans() {
+        let source = "/* é */break/* λ */;continue; break1 continued _break Break Continue \"break continue\" bre/*x*/ak";
+        let tokens = Lexer::new(source).tokenize();
+
+        assert_eq!(tokens[0].kind, TokenKind::Break);
+        assert_eq!(tokens[2].kind, TokenKind::Continue);
+
+        for (index, text) in [(0, "break"), (2, "continue")] {
+            let start = source.find(text).unwrap();
+
+            assert_eq!(tokens[index].span, Span::new(start, start + text.len()));
+        }
+
+        assert_eq!(
+            tokens
+                .into_iter()
+                .map(|token| token.kind)
+                .collect::<Vec<_>>(),
+            vec![
+                TokenKind::Break,
+                TokenKind::Semicolon,
+                TokenKind::Continue,
+                TokenKind::Semicolon,
+                TokenKind::Identifier("break1".into()),
+                TokenKind::Identifier("continued".into()),
+                TokenKind::Identifier("_break".into()),
+                TokenKind::Identifier("Break".into()),
+                TokenKind::Identifier("Continue".into()),
+                TokenKind::StringLiteral("break continue".into()),
+                TokenKind::Identifier("bre".into()),
+                TokenKind::Identifier("ak".into()),
+                TokenKind::Eof,
+            ]
+        );
     }
 
     #[test]

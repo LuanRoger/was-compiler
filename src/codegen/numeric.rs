@@ -315,10 +315,12 @@ mod tests {
                 else_: Some(vec![statement(TypedStatementKind::Expression(remainder()))]),
             },
             TypedStatementKind::While {
+                id: crate::typed_ast::LoopId(0),
                 cond: Box::new(remainder()),
                 body: vec![],
             },
             TypedStatementKind::While {
+                id: crate::typed_ast::LoopId(0),
                 cond: Box::new(expr(TypedExprKind::Bool(false))),
                 body: vec![statement(TypedStatementKind::Expression(remainder()))],
             },

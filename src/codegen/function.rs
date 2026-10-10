@@ -2,8 +2,9 @@ use std::{cell::Cell, collections::HashSet};
 
 use crate::{
     ast::Type,
+    flow::Flow,
     tokens::Span,
-    typed_ast::{FunctionRef, TypedBlock, TypedExpr, TypedFunction, VariableId},
+    typed_ast::{FunctionRef, LoopId, TypedBlock, TypedExpr, TypedFunction, VariableId},
 };
 use wasm_encoder::{BlockType, Function, Instruction, ValType};
 
@@ -131,9 +132,23 @@ impl<'a> Context<'a> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct LabelId(usize);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct LoopContext {
+    id: LoopId,
+    pub break_label: LabelId,
+    pub continue_label: LabelId,
+}
+
 pub(super) struct BodyEmitter<'a> {
     body: Function,
     context: Context<'a>,
+    labels: Vec<LabelId>,
+    next_label: usize,
+    loops: Vec<LoopContext>,
+    seen_loops: HashSet<LoopId>,
 }
 
 impl<'a> BodyEmitter<'a> {
@@ -160,6 +175,10 @@ impl<'a> BodyEmitter<'a> {
         Ok(Self {
             body: Function::new(locals),
             context,
+            labels: Vec::new(),
+            next_label: 0,
+            loops: Vec::new(),
+            seen_loops: HashSet::new(),
         })
     }
 
@@ -244,11 +263,58 @@ impl<'a> BodyEmitter<'a> {
         emit: impl FnOnce(&mut Self) -> Result<T, CodegenError>,
     ) -> Result<T, CodegenError> {
         let initialized = self.context.initialized.clone();
-        let result = emit(self);
+        let result = self.structured(emit);
 
         self.context.initialized = initialized;
 
         result
+    }
+
+    pub(super) fn structured<T>(
+        &mut self,
+        emit: impl FnOnce(&mut Self) -> Result<T, CodegenError>,
+    ) -> Result<T, CodegenError> {
+        let labels = self.labels.len();
+        let loops = self.loops.len();
+        let result = emit(self);
+
+        self.labels.truncate(labels);
+        self.loops.truncate(loops);
+        // Identities remain consumed: labels are unique and loop IDs are function-wide.
+
+        result
+    }
+
+    pub fn register_loop(&mut self, id: LoopId, span: Span) -> Result<(), CodegenError> {
+        if !self.seen_loops.insert(id) {
+            return Err(CodegenError::DuplicateLoopId {
+                function: self.name().into(),
+                id,
+                span,
+            });
+        }
+
+        Ok(())
+    }
+
+    pub fn enter_loop(&mut self, id: LoopId, break_label: LabelId, continue_label: LabelId) {
+        self.loops.push(LoopContext {
+            id,
+            break_label,
+            continue_label,
+        });
+    }
+
+    pub fn loop_context(&self, target: LoopId, span: Span) -> Result<LoopContext, CodegenError> {
+        self.loops
+            .last()
+            .copied()
+            .filter(|context| context.id == target)
+            .ok_or_else(|| CodegenError::InvalidLoopTarget {
+                function: self.name().into(),
+                target,
+                span,
+            })
     }
 
     pub fn normalize_bool(&mut self) {
@@ -256,39 +322,73 @@ impl<'a> BodyEmitter<'a> {
         self.instruction(&Instruction::I32Eqz);
     }
 
-    pub fn begin_if(&mut self, block_type: BlockType) {
-        self.instruction(&Instruction::If(block_type));
+    fn begin_label(&mut self, instruction: &Instruction<'_>) -> Result<LabelId, CodegenError> {
+        let label = LabelId(self.next_label);
+        self.next_label = self
+            .next_label
+            .checked_add(1)
+            .ok_or(CodegenError::LimitExceeded {
+                what: "function label identity count",
+            })?;
+        checked_u32(self.labels.len(), "function label nesting")?;
+
+        self.labels.push(label);
+        self.instruction(instruction);
+
+        Ok(label)
+    }
+
+    pub fn begin_if(&mut self, block_type: BlockType) -> Result<LabelId, CodegenError> {
+        self.begin_label(&Instruction::If(block_type))
     }
 
     pub fn otherwise(&mut self) {
         self.instruction(&Instruction::Else);
     }
 
-    pub fn begin_block(&mut self) {
-        self.instruction(&Instruction::Block(BlockType::Empty));
+    pub fn begin_block(&mut self) -> Result<LabelId, CodegenError> {
+        self.begin_label(&Instruction::Block(BlockType::Empty))
     }
 
-    pub fn begin_loop(&mut self) {
-        self.instruction(&Instruction::Loop(BlockType::Empty));
+    pub fn begin_loop(&mut self) -> Result<LabelId, CodegenError> {
+        self.begin_label(&Instruction::Loop(BlockType::Empty))
     }
 
     pub fn end(&mut self) {
+        self.labels.pop();
         self.instruction(&Instruction::End);
     }
 
-    pub fn branch(&mut self, depth: LabelDepth) {
-        self.instruction(&Instruction::Br(depth.raw()));
+    fn label_depth(&self, target: LabelId) -> Result<LabelDepth, CodegenError> {
+        let depth = self
+            .labels
+            .iter()
+            .rev()
+            .position(|label| *label == target)
+            .expect("branch targets an active emitter label");
+
+        Ok(LabelDepth::new(checked_u32(depth, "branch label depth")?))
     }
 
-    pub fn branch_if(&mut self, depth: LabelDepth) {
+    pub fn branch(&mut self, target: LabelId) -> Result<(), CodegenError> {
+        let depth = self.label_depth(target)?;
+        self.instruction(&Instruction::Br(depth.raw()));
+
+        Ok(())
+    }
+
+    pub fn branch_if(&mut self, target: LabelId) -> Result<(), CodegenError> {
+        let depth = self.label_depth(target)?;
         self.instruction(&Instruction::BrIf(depth.raw()));
+
+        Ok(())
     }
 
     pub fn emit_expr(&mut self, expr: &TypedExpr, span: Span) -> Result<(), CodegenError> {
-        expression::emit(expr, self, span)
+        self.structured(|emitter| expression::emit(expr, emitter, span))
     }
 
-    pub fn emit_block(&mut self, block: &TypedBlock) -> Result<bool, CodegenError> {
+    pub fn emit_block(&mut self, block: &TypedBlock) -> Result<Flow, CodegenError> {
         statement::emit_block(block, self)
     }
 }
@@ -311,9 +411,9 @@ pub(super) fn emit(function: &TypedFunction, module: &Layout) -> Result<Function
         }
     }
 
-    let always_returns = emitter.emit_block(&function.body)?;
+    let flow = emitter.emit_block(&function.body)?;
 
-    if function.return_type != Type::Void && !always_returns {
+    if function.return_type != Type::Void && !flow.always_returns() {
         return Err(CodegenError::MissingReturnValue {
             function: function.name.clone(),
             return_type: function.return_type,
@@ -408,6 +508,163 @@ mod tests {
             );
             assert_eq!(emitter.temporary(ValType::I32).raw(), 4);
         }
+    }
+
+    #[test]
+    fn loop_scopes_restore_labels_loops_and_bindings_after_success_and_nested_errors() {
+        let program = Compiler::new()
+            .analyze("fn test(param: number) -> void { while true { let inside: number = 1; if true { inside; } } }")
+            .unwrap();
+        let layout = Layout::new(&program).unwrap();
+        let function = &program.functions[0];
+        let TypedStatementKind::While { id, body, .. } = &function.body[0].kind else {
+            panic!("expected loop");
+        };
+        let TypedStatementKind::Let { id: inside, .. } = body[0].kind else {
+            panic!("expected loop local");
+        };
+        let span = Span::new(40, 60);
+
+        for fail in [false, true] {
+            let mut statement = function.body[0].clone();
+            if fail {
+                let TypedStatementKind::While { body, .. } = &mut statement.kind else {
+                    unreachable!();
+                };
+                let TypedStatementKind::If { then, .. } = &mut body[1].kind else {
+                    unreachable!();
+                };
+                then.push(crate::typed_ast::TypedStatement {
+                    kind: TypedStatementKind::Break {
+                        target: LoopId(999),
+                    },
+                    span,
+                });
+            }
+
+            let mut emitter = BodyEmitter::new(function, &layout).unwrap();
+            let exit = emitter.begin_block().unwrap();
+            let back = emitter.begin_loop().unwrap();
+            emitter.enter_loop(LoopId(5000), exit, back);
+            let labels = emitter.labels.clone();
+            let loops = emitter.loops.clone();
+            let next_label = emitter.next_label;
+
+            let result = emitter.emit_block(&vec![statement]);
+            if fail {
+                assert_eq!(
+                    result,
+                    Err(CodegenError::InvalidLoopTarget {
+                        function: "test".into(),
+                        target: LoopId(999),
+                        span,
+                    })
+                );
+            } else {
+                assert_eq!(result, Ok(Flow::FALLTHROUGH));
+            }
+            assert_eq!(emitter.labels, labels);
+            assert_eq!(emitter.loops, loops);
+            assert!(emitter.next_label > next_label);
+            assert_eq!(emitter.label_depth(exit).unwrap().raw(), 1);
+            assert_eq!(emitter.label_depth(back).unwrap().raw(), 0);
+            assert_eq!(
+                emitter.loop_context(*id, span),
+                Err(CodegenError::InvalidLoopTarget {
+                    function: "test".into(),
+                    target: *id,
+                    span,
+                })
+            );
+            assert_eq!(
+                emitter.resolve(inside, Type::Number, span),
+                Err(CodegenError::UninitializedVariable {
+                    function: "test".into(),
+                    id: inside,
+                    span,
+                })
+            );
+            assert_eq!(
+                emitter
+                    .resolve(function.params[0].id, Type::Number, span)
+                    .unwrap()
+                    .raw(),
+                0
+            );
+            assert_eq!(
+                emitter
+                    .loop_context(LoopId(5000), span)
+                    .unwrap()
+                    .continue_label,
+                back
+            );
+        }
+    }
+
+    #[test]
+    fn short_circuit_condition_errors_restore_nested_expression_labels_and_loop_context() {
+        let program = Compiler::new()
+            .analyze("fn test() -> void { while false && (true || false) {} }")
+            .unwrap();
+        let layout = Layout::new(&program).unwrap();
+        let mut statement = program.functions[0].body[0].clone();
+        let TypedStatementKind::While { cond, .. } = &mut statement.kind else {
+            panic!("expected loop");
+        };
+        let crate::typed_ast::TypedExprKind::Binary { right, .. } = &mut cond.kind else {
+            panic!("expected and");
+        };
+        let crate::typed_ast::TypedExprKind::Binary { right, .. } = &mut right.kind else {
+            panic!("expected or");
+        };
+        right.kind = crate::typed_ast::TypedExprKind::Identifier {
+            id: VariableId(999),
+            name: "missing".into(),
+        };
+        let span = statement.span;
+        let mut emitter = BodyEmitter::new(&program.functions[0], &layout).unwrap();
+        let label = emitter.begin_block().unwrap();
+
+        assert_eq!(
+            emitter.emit_block(&vec![statement]),
+            Err(CodegenError::UnknownVariable {
+                function: "test".into(),
+                id: VariableId(999),
+                span,
+            })
+        );
+        assert_eq!(emitter.labels, vec![label]);
+        assert!(emitter.loops.is_empty());
+        assert_eq!(emitter.next_label, 5);
+        assert_eq!(emitter.label_depth(label).unwrap().raw(), 0);
+    }
+
+    #[test]
+    fn every_structured_label_has_a_unique_identity_and_dynamic_depth() {
+        let program = Compiler::new().analyze("fn test() -> void {}").unwrap();
+        let layout = Layout::new(&program).unwrap();
+        let mut emitter = BodyEmitter::new(&program.functions[0], &layout).unwrap();
+        let block = emitter.begin_block().unwrap();
+        let loop_ = emitter.begin_loop().unwrap();
+        let if_ = emitter.begin_if(BlockType::Empty).unwrap();
+        let nested = emitter.begin_block().unwrap();
+        let labels = [block, loop_, if_, nested];
+
+        for (index, label) in labels.iter().enumerate() {
+            assert!(!labels[..index].contains(label));
+            assert_eq!(
+                emitter.label_depth(*label).unwrap().raw(),
+                u32::try_from(3 - index).unwrap()
+            );
+        }
+
+        emitter.end();
+        emitter.end();
+        let next_if = emitter.begin_if(BlockType::Result(ValType::I32)).unwrap();
+        assert!(!labels.contains(&next_if));
+        assert_eq!(emitter.label_depth(block).unwrap().raw(), 2);
+        assert_eq!(emitter.label_depth(loop_).unwrap().raw(), 1);
+        assert_eq!(emitter.label_depth(next_if).unwrap().raw(), 0);
     }
 
     #[test]

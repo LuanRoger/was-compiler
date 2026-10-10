@@ -1,18 +1,19 @@
 # WAS Language Extensions — Unified Design and Implementation Specification
 
-**Status:** Design baseline with the 13 approved decisions and implementation clarifications (compound assignments/WP1 implemented; remaining extensions proposed)
+**Status:** Design baseline with the 13 approved decisions and implementation clarifications (compound assignments/WP1 and while transfers/WP2 implemented; remaining extensions proposed)
 **Version:** 0.3 — 9 October 2026 (implementation clarification update)  
 **Target:** Core WebAssembly, initially the MVP-compatible instruction set already used by `was-compiler`, with optional optimizations gated by Wasm features.  
 **Repository:** https://github.com/LuanRoger/was-compiler
 
-> **Normative language.** **MUST**, **SHOULD**, and **MAY** describe requirements, strong recommendations, and optional implementation choices. This document establishes a coherent *proposed* semantic model. Decisions tagged **Open decision** need confirmation before being frozen as language guarantees. Except for implemented compound assignments (§4), extension examples are proposed `.was` syntax, not claims about the present compiler.
+> **Normative language.** **MUST**, **SHOULD**, and **MAY** describe requirements, strong recommendations, and optional implementation choices. This document establishes a coherent *proposed* semantic model. Decisions tagged **Open decision** need confirmation before being frozen as language guarantees. Except for implemented compound assignments (§4) and bare `while` transfers (§7/WP2), extension examples are proposed `.was` syntax, not claims about the present compiler.
 
 The [concrete implementation plan](was_language_extensions_plan.md) maps this
 specification to ordered work packages, repository files, acceptance tests, and
 validation gates. This revision retains the approved v0.2 direction, including
 shared mutable captures and local-only closures; it clarifies implementation
 safety and corrects the current-language baseline. Compound assignments (§4/WP1)
-are now implemented; the remaining work packages are still proposed.
+and bare `while` transfers (§7/WP2) are implemented; the remaining work packages
+are still proposed.
 
 ## 1. Goals and non-goals
 
@@ -40,10 +41,9 @@ are now implemented; the remaining work packages are still proposed.
 
 The current compiler supports `fn` with required parameter/return annotations,
 annotated `let name: type = value;` and inferred `let name = value;` declarations,
-reassignment, numeric compound assignments, `if`, `while`, `return`, named calls,
-and `number`, `bool`, `string`, `number[]`, and `void`. Every local requires an
-initializer and retains a fixed
-type. `//` line comments and non-nesting `/* ... */` block comments are implemented.
+reassignment, numeric compound assignments, `if`, `while`, bare `break;` /
+`continue;`, `return`, named calls, and `number`, `bool`, `string`, `number[]`, and
+`void`. Every local requires an initializer and retains a fixed type. `//` line comments and non-nesting `/* ... */` block comments are implemented.
 Use the local implementation and tests, alongside README and grammar, as evidence
 of the existing-language baseline rather than assuming a public copy is current.
 
@@ -62,7 +62,7 @@ output and diagnostics; the extensions below do not imply optimization passes.
 
 **Compatibility requirements:**
 
-- Existing valid programs MUST remain valid wherever possible, except standalone `_` bindings are intentionally reserved and must be rejected.
+- Existing valid programs MUST remain valid wherever possible, except new keywords intentionally reserve previously usable names. `break` and `continue` are now reserved source/host-language names; existing bindings/functions using them must be renamed. Standalone `_` bindings are intentionally reserved when their extension arrives. Host import module/field names remain unaffected.
 - `let` MUST remain assignable under this extension set (no implicit switch to Rust-like immutable `let`).
 - Any optimization MUST preserve observable `f64` numerical semantics unless a separately documented opt-in mode is introduced.
 - Host imports/exports MUST retain their current raw ABI. Functions with `range` parameters/results cannot be raw-exported or imported until a host ABI is defined; callable types in function signatures are not supported in v1.
@@ -339,6 +339,13 @@ block break_target {
 - WASM SIMD or loop fusion are future optimizations, not guarantees introduced by `for` syntax.
 
 ## 7. Feature specification: `break`, `continue`, and infinite `loop`
+
+**Implementation status:** WP2 implements only bare `break;` and `continue;` in
+`while`, including nested branches/loops, function-local target resolution, and
+static/backend rejection outside loops. Typed while nodes carry a per-function
+`LoopId` and transfers carry resolved targets. Value-bearing breaks, labels,
+`for`, and statement/value `loop` remain proposed. Transfers never count as a
+function return; a while alone still requires a fallback return in nonvoid functions.
 
 ### 7.1 Syntax
 

@@ -1,5 +1,6 @@
 use crate::{
     ast::Type,
+    flow::Flow,
     typed_ast::{TypedBlock, TypedStatement, TypedStatementKind},
 };
 use wasm_encoder::Instruction;
@@ -9,22 +10,22 @@ use super::{CodegenError, control_flow, expect_type, function::BodyEmitter, plac
 pub(super) fn emit_block(
     block: &TypedBlock,
     emitter: &mut BodyEmitter<'_>,
-) -> Result<bool, CodegenError> {
-    let mut always_returns = false;
+) -> Result<Flow, CodegenError> {
+    let mut flow = Flow::FALLTHROUGH;
 
     for statement in block {
-        let returns = emit(statement, emitter)?;
+        let next = emit(statement, emitter)?;
 
-        always_returns |= returns;
+        flow = flow.then(next);
     }
 
-    Ok(always_returns)
+    Ok(flow)
 }
 
 pub(super) fn emit(
     statement: &TypedStatement,
     emitter: &mut BodyEmitter<'_>,
-) -> Result<bool, CodegenError> {
+) -> Result<Flow, CodegenError> {
     let function = emitter.name();
     let span = statement.span;
 
@@ -37,19 +38,19 @@ pub(super) fn emit(
             emitter.local_set(index);
             emitter.initialize(*id);
 
-            Ok(false)
+            Ok(Flow::FALLTHROUGH)
         }
 
         TypedStatementKind::Assignment { target, value } => {
             place::emit_assignment(target, value, emitter, span)?;
 
-            Ok(false)
+            Ok(Flow::FALLTHROUGH)
         }
 
         TypedStatementKind::CompoundAssignment { target, op, value } => {
             place::emit_compound_assignment(target, op, value, emitter, span)?;
 
-            Ok(false)
+            Ok(Flow::FALLTHROUGH)
         }
 
         TypedStatementKind::Expression(expr) => {
@@ -59,7 +60,7 @@ pub(super) fn emit(
                 emitter.instruction(&Instruction::Drop);
             }
 
-            Ok(false)
+            Ok(Flow::FALLTHROUGH)
         }
 
         TypedStatementKind::Return(value) => {
@@ -83,15 +84,31 @@ pub(super) fn emit(
 
             emitter.instruction(&Instruction::Return);
 
-            Ok(true)
+            Ok(Flow::RETURN)
         }
 
         TypedStatementKind::If { cond, then, else_ } => {
             control_flow::emit_if(cond, then, else_.as_ref(), emitter, span)
         }
 
-        TypedStatementKind::While { cond, body: block } => {
-            control_flow::emit_while(cond, block, emitter, span)
+        TypedStatementKind::While {
+            id,
+            cond,
+            body: block,
+        } => control_flow::emit_while(*id, cond, block, emitter, span),
+
+        TypedStatementKind::Break { target } => {
+            let context = emitter.loop_context(*target, span)?;
+            emitter.branch(context.break_label)?;
+
+            Ok(Flow::BREAK)
+        }
+
+        TypedStatementKind::Continue { target } => {
+            let context = emitter.loop_context(*target, span)?;
+            emitter.branch(context.continue_label)?;
+
+            Ok(Flow::CONTINUE)
         }
     }
 }

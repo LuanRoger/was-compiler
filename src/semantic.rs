@@ -4,10 +4,11 @@ use thiserror::Error;
 
 use crate::{
     ast::{BinaryOp, Block, Expr, Function, Program, Statement, StatementKind, Type, UnaryOp},
+    flow::Flow,
     host::HostFunctions,
     tokens::Span,
     typed_ast::{
-        BuiltinFunction, FunctionId, FunctionRef, TypedBlock, TypedExpr, TypedExprKind,
+        BuiltinFunction, FunctionId, FunctionRef, LoopId, TypedBlock, TypedExpr, TypedExprKind,
         TypedFunction, TypedParam, TypedProgram, TypedStatement, TypedStatementKind, VariableId,
     },
 };
@@ -61,6 +62,12 @@ pub enum SemanticError {
     #[error("Compound assignment requires an arithmetic operator, found {op:?} at {span:?}")]
     InvalidCompoundAssignmentOperator { op: BinaryOp, span: Span },
 
+    #[error("Break is only allowed inside a loop at {span:?}")]
+    BreakOutsideLoop { span: Span },
+
+    #[error("Continue is only allowed inside a loop at {span:?}")]
+    ContinueOutsideLoop { span: Span },
+
     #[error("A void function cannot return a value at {span:?}")]
     UnexpectedReturnValue { span: Span },
 
@@ -82,6 +89,8 @@ impl SemanticError {
             | Self::InvalidBinaryOperands { span, .. }
             | Self::InvalidAssignmentTarget { span }
             | Self::InvalidCompoundAssignmentOperator { span, .. }
+            | Self::BreakOutsideLoop { span }
+            | Self::ContinueOutsideLoop { span }
             | Self::UnexpectedReturnValue { span }
             | Self::MissingReturn { span, .. } => Some(*span),
         }
@@ -106,6 +115,8 @@ pub struct SemanticAnalyzer {
     functions: HashMap<String, FunctionSignature>,
     scopes: Vec<HashMap<String, VariableBinding>>,
     next_variable_id: usize,
+    loops: Vec<LoopId>,
+    next_loop_id: usize,
 }
 
 impl SemanticAnalyzer {
@@ -124,6 +135,8 @@ impl SemanticAnalyzer {
         self.functions.clear();
         self.scopes.clear();
         self.next_variable_id = 0;
+        self.loops.clear();
+        self.next_loop_id = 0;
 
         self.functions.insert(
             "len".into(),
@@ -148,6 +161,7 @@ impl SemanticAnalyzer {
         let result = self.analyze_program(program);
 
         self.scopes.clear();
+        self.loops.clear();
 
         result
     }
@@ -194,12 +208,15 @@ impl SemanticAnalyzer {
         id: FunctionId,
     ) -> Result<TypedFunction, SemanticError> {
         self.next_variable_id = 0;
+        self.next_loop_id = 0;
+        self.loops.clear();
 
         self.scopes.push(HashMap::new());
 
         let result = self.analyze_function_body(function, id);
 
         self.scopes.pop();
+        self.loops.clear();
 
         result
     }
@@ -222,9 +239,9 @@ impl SemanticAnalyzer {
             });
         }
 
-        let (body, always_returns) = self.analyze_block(&function.body, function.return_type)?;
+        let (body, flow) = self.analyze_block(&function.body, function.return_type)?;
 
-        if function.return_type != Type::Void && !always_returns {
+        if function.return_type != Type::Void && !flow.always_returns() {
             return Err(SemanticError::MissingReturn {
                 name: function.name.clone(),
                 span: function.span,
@@ -245,26 +262,26 @@ impl SemanticAnalyzer {
         &mut self,
         block: &Block,
         return_type: Type,
-    ) -> Result<(TypedBlock, bool), SemanticError> {
+    ) -> Result<(TypedBlock, Flow), SemanticError> {
         let mut statements = Vec::with_capacity(block.len());
-        let mut always_returns = false;
+        let mut flow = Flow::FALLTHROUGH;
 
         for statement in block {
-            let (statement, returns) = self.analyze_statement(statement, return_type)?;
+            let (statement, next) = self.analyze_statement(statement, return_type)?;
 
             statements.push(statement);
 
-            always_returns |= returns;
+            flow = flow.then(next);
         }
 
-        Ok((statements, always_returns))
+        Ok((statements, flow))
     }
 
     fn analyze_scoped_block(
         &mut self,
         block: &Block,
         return_type: Type,
-    ) -> Result<(TypedBlock, bool), SemanticError> {
+    ) -> Result<(TypedBlock, Flow), SemanticError> {
         self.scopes.push(HashMap::new());
 
         let result = self.analyze_block(block, return_type);
@@ -278,9 +295,9 @@ impl SemanticAnalyzer {
         &mut self,
         statement: &Statement,
         return_type: Type,
-    ) -> Result<(TypedStatement, bool), SemanticError> {
+    ) -> Result<(TypedStatement, Flow), SemanticError> {
         let span = statement.span;
-        let mut always_returns = false;
+        let mut flow = Flow::FALLTHROUGH;
 
         let kind = match &statement.kind {
             StatementKind::Let { name, ty, value } => {
@@ -354,18 +371,18 @@ impl SemanticAnalyzer {
 
                 self.expect_type(Type::Bool, cond.ty, span)?;
 
-                let (then, then_returns) = self.analyze_scoped_block(then, return_type)?;
-                let (else_, else_returns) = match else_ {
+                let (then, then_flow) = self.analyze_scoped_block(then, return_type)?;
+                let (else_, else_flow) = match else_ {
                     Some(block) => {
-                        let (block, returns) = self.analyze_scoped_block(block, return_type)?;
+                        let (block, flow) = self.analyze_scoped_block(block, return_type)?;
 
-                        (Some(block), returns)
+                        (Some(block), flow)
                     }
 
-                    None => (None, false),
+                    None => (None, Flow::FALLTHROUGH),
                 };
 
-                always_returns = then_returns && else_returns;
+                flow = then_flow.join(else_flow);
 
                 TypedStatementKind::If { cond, then, else_ }
             }
@@ -375,9 +392,44 @@ impl SemanticAnalyzer {
 
                 self.expect_type(Type::Bool, cond.ty, span)?;
 
-                let (body, _) = self.analyze_scoped_block(body, return_type)?;
+                let id = LoopId(self.next_loop_id);
 
-                TypedStatementKind::While { cond, body }
+                self.next_loop_id += 1;
+                self.loops.push(id);
+
+                let result = self.analyze_scoped_block(body, return_type);
+
+                self.loops.pop();
+
+                let (body, body_flow) = result?;
+
+                flow = body_flow.while_loop();
+
+                TypedStatementKind::While { id, cond, body }
+            }
+
+            StatementKind::Break => {
+                let target = self
+                    .loops
+                    .last()
+                    .copied()
+                    .ok_or(SemanticError::BreakOutsideLoop { span })?;
+
+                flow = Flow::BREAK;
+
+                TypedStatementKind::Break { target }
+            }
+
+            StatementKind::Continue => {
+                let target = self
+                    .loops
+                    .last()
+                    .copied()
+                    .ok_or(SemanticError::ContinueOutsideLoop { span })?;
+
+                flow = Flow::CONTINUE;
+
+                TypedStatementKind::Continue { target }
             }
 
             StatementKind::Return(value) => {
@@ -401,7 +453,7 @@ impl SemanticAnalyzer {
                     }
                 };
 
-                always_returns = true;
+                flow = Flow::RETURN;
 
                 TypedStatementKind::Return(value)
             }
@@ -411,7 +463,7 @@ impl SemanticAnalyzer {
             }
         };
 
-        Ok((TypedStatement { kind, span }, always_returns))
+        Ok((TypedStatement { kind, span }, flow))
     }
 
     fn analyze_assignment_target(

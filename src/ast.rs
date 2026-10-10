@@ -103,6 +103,8 @@ pub enum StatementKind {
         body: Block,
     },
 
+    Break,
+    Continue,
     Return(Option<Expr>),
     Expression(Expr),
 }

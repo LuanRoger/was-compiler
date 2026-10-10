@@ -58,13 +58,14 @@ The compiler emits bytes. The embedding application decides whether to write a
 | `src/optimization.rs` | O0–O3 level configuration and a typed-AST optimization boundary; no passes implemented yet. |
 | `src/host.rs` | Ordered host declarations, language-visible names, import names, signatures, and registration validation. |
 | `src/semantic.rs` | Resolve and type-check user, host, and built-in calls; produce the typed AST. |
-| `src/typed_ast.rs` | Typed expressions, resolved references, and owned import metadata. |
+| `src/typed_ast.rs` | Typed expressions, resolved function/variable/loop references, and owned import metadata. |
+| `src/flow.rs` | Private completion sets shared by semantic and backend summaries; distinguish normal completion, return, and loop transfers without pruning checks. |
 | `src/codegen/abi.rs` | Central language-type → Wasm-type mapping and function signatures. |
 | `src/codegen/layout.rs` | Deduplicate signatures, assign indices, and build the complete typed callee table before body emission. |
 | `src/codegen/validation.rs` | Borrow the typed AST, complete layout and existing body checks in diagnostic order, and retain checked bodies behind a private construction boundary. |
 | `src/codegen/validation_tests.rs` | Compare checked and former compilation sequences for valid bytes, multiply-invalid diagnostics, and immutable host/export snapshots. |
 | `src/codegen/call.rs` | Validate resolved call references/signatures, emit user/host calls and built-in `len`, normalize host booleans, and validate memory handles. |
-| `src/codegen/function.rs` | Per-function emission context, scoped initialized-binding checks, return-path checks, and function termination. |
+| `src/codegen/function.rs` | Per-function emission context, scoped initialized bindings, unique labels/loop contexts, return-path checks, and function termination. |
 | `src/codegen/control_flow.rs` | Emit structured branches and loops, preserve scope boundaries, and track guaranteed returns. |
 | `src/codegen/locals.rs` | Map typed variable IDs to dense Wasm slots and declare value/handle local types. |
 | `src/codegen/temporaries.rs` | Preallocate ordered typed scratch slots for array construction and indexed compounds, including nested and unreachable expressions. |
@@ -514,8 +515,43 @@ traps, memory growth, numerical special values, and optimization/export parity.
 
 See the [extension specification](was_language_extensions_spec.md) and
 [implementation plan](was_language_extensions_plan.md) for later work packages;
-WP2 (`break` / `continue` in `while`) is next. Closure-dependent captured scalar
-mutation and array-binding rebinding tests belong to WP11, not this milestone.
+Closure-dependent captured scalar mutation and array-binding rebinding tests
+belong to WP11, not this milestone.
+
+## Implemented language extension: while loop transfers (WP2)
+
+`break;` exits the nearest enclosing while and `continue;` reevaluates its
+condition, including under nested branches and loops. Transfers cannot cross
+function boundaries. They require semicolons and do not accept values or labels;
+`for` and statement/value `loop` remain future work. These two keywords now reserve
+previously usable source and host-language names; rename existing bindings or
+functions using them. Host import module/field names remain unaffected.
+
+The raw statement enum gains unit `Break` / `Continue` variants. The typed API
+adds per-function `LoopId`, `While.id`, and `Break { target }` /
+`Continue { target }`; public constructors and matches must be updated. Semantic
+IDs are assigned in source preorder. Checked lowering accepts sparse unique IDs
+but rejects duplicate IDs and unknown, inactive, outer-instead-of-inner, or
+cross-function targets at their statement spans.
+
+Private `Flow` completion sets separate return from loop transfers. Sequence only
+fallthrough paths in summaries, but analyze and emit all statements, including
+ones skipped by transfers. A while conservatively may complete normally; even
+`while true` is not a guaranteed function return. Return statements after transfers
+do not turn those transfers into guaranteed returns.
+
+`BodyEmitter` tracks unique identities for every structured label, including
+short-circuit expression ifs, and calculates relative `LabelDepth` from the active
+stack. Break targets the exit block; continue targets the loop condition. Scope,
+label, and loop contexts restore on errors. No new Wasm feature, helper, memory,
+ABI, optimizer, or execution-fuel mechanism is introduced. Legacy loop bytes and
+diagnostic fixtures remain unchanged.
+
+Acceptance covers syntax and spans, keyword host validation, per-function nearest
+targets, flow composition, forged IDs, cleanup, independent decoded branch depths,
+validator checks, recursion, condition effects, skipped calls/traps, numeric-array
+scratch planning, optimization/export/import-snapshot parity, and CLI/browser
+behavior. WP3 (tail blocks, `if` expressions, and internal `Never`) is next.
 
 ## Remaining work
 

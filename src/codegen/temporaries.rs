@@ -167,6 +167,7 @@ mod tests {
             ),
             (
                 TypedStatementKind::While {
+                    id: crate::typed_ast::LoopId(0),
                     cond: Box::new(array()),
                     body: vec![statement(TypedStatementKind::Expression(array()))],
                 },

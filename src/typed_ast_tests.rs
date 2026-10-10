@@ -5,9 +5,9 @@ use crate::{
     parser::Parser,
     tokens::Span,
     typed_ast::{
-        BuiltinFunction, FunctionId, FunctionRef, TypedBlock, TypedExpr, TypedExprKind as ExprKind,
-        TypedFunction, TypedParam, TypedProgram, TypedStatement, TypedStatementKind as StmtKind,
-        VariableId,
+        BuiltinFunction, FunctionId, FunctionRef, LoopId, TypedBlock, TypedExpr,
+        TypedExprKind as ExprKind, TypedFunction, TypedParam, TypedProgram, TypedStatement,
+        TypedStatementKind as StmtKind, VariableId,
     },
 };
 
@@ -156,6 +156,8 @@ fn assert_block_spans(ast: &AstBlock, typed: &TypedBlock) {
             (AstStatementKind::Let { .. }, StmtKind::Let { .. })
             | (AstStatementKind::Assignment { .. }, StmtKind::Assignment { .. })
             | (AstStatementKind::CompoundAssignment { .. }, StmtKind::CompoundAssignment { .. })
+            | (AstStatementKind::Break, StmtKind::Break { .. })
+            | (AstStatementKind::Continue, StmtKind::Continue { .. })
             | (AstStatementKind::Return(_), StmtKind::Return(_))
             | (AstStatementKind::Expression(_), StmtKind::Expression(_)) => {}
             _ => panic!("statement kind changed: {original:?} became {lowered:?}"),
@@ -712,6 +714,145 @@ fn variable_ids_put_parameters_first_never_reuse_scopes_and_reset_per_function()
 }
 
 #[test]
+fn loop_ids_follow_source_preorder_and_transfers_target_the_nearest_loop() {
+    let source = "fn first(flag: bool) -> void {
+        let value = 1;
+        while flag {
+            if flag {
+                break;
+                while false { continue; break; }
+            } else {
+                while true { if flag { continue; } else { break; } }
+            }
+            continue;
+            break;
+        }
+        if flag { while false { break; } } else { while false { continue; } }
+        return;
+        while false { break; }
+    }
+    fn second() -> void { while true { continue; } }";
+    let parsed = parse(source);
+    let typed = SemanticAnalyzer::new().analyze(&parsed).unwrap();
+
+    for (original, lowered) in parsed.functions.iter().zip(&typed.functions) {
+        assert_block_spans(&original.body, &lowered.body);
+    }
+
+    let StmtKind::While { id, cond, body } = &typed.functions[0].body[1].kind else {
+        panic!("expected outer while");
+    };
+
+    assert_eq!(*id, LoopId(0));
+    assert_eq!(**cond, identifier(0, "flag", Type::Bool));
+
+    let StmtKind::If {
+        then,
+        else_: Some(otherwise),
+        ..
+    } = &body[0].kind
+    else {
+        panic!("expected nested conditional");
+    };
+
+    assert_eq!(then[0].kind, StmtKind::Break { target: LoopId(0) });
+
+    let StmtKind::While {
+        id, body: inner, ..
+    } = &then[1].kind
+    else {
+        panic!("expected unreachable nested while");
+    };
+
+    assert_eq!(*id, LoopId(1));
+    assert_eq!(inner[0].kind, StmtKind::Continue { target: LoopId(1) });
+    assert_eq!(inner[1].kind, StmtKind::Break { target: LoopId(1) });
+
+    let StmtKind::While {
+        id, body: inner, ..
+    } = &otherwise[0].kind
+    else {
+        panic!("expected else while");
+    };
+    let StmtKind::If {
+        then,
+        else_: Some(otherwise),
+        ..
+    } = &inner[0].kind
+    else {
+        panic!("expected inner conditional");
+    };
+
+    assert_eq!(*id, LoopId(2));
+    assert_eq!(then[0].kind, StmtKind::Continue { target: LoopId(2) });
+    assert_eq!(otherwise[0].kind, StmtKind::Break { target: LoopId(2) });
+    assert_eq!(body[1].kind, StmtKind::Continue { target: LoopId(0) });
+    assert_eq!(body[2].kind, StmtKind::Break { target: LoopId(0) });
+
+    let StmtKind::If {
+        then,
+        else_: Some(otherwise),
+        ..
+    } = &typed.functions[0].body[2].kind
+    else {
+        panic!("expected sibling-loop conditional");
+    };
+
+    for (statement, expected, is_break) in [
+        (&then[0], LoopId(3), true),
+        (&otherwise[0], LoopId(4), false),
+        (&typed.functions[0].body[4], LoopId(5), true),
+        (&typed.functions[1].body[0], LoopId(0), false),
+    ] {
+        let StmtKind::While { id, body, .. } = &statement.kind else {
+            panic!("expected while");
+        };
+
+        assert_eq!(*id, expected);
+        assert_eq!(
+            body[0].kind,
+            if is_break {
+                StmtKind::Break { target: expected }
+            } else {
+                StmtKind::Continue { target: expected }
+            }
+        );
+    }
+
+    let mut variable_ids = Vec::new();
+
+    collect_let_ids(&typed.functions[0].body, &mut variable_ids);
+    assert_eq!(variable_ids, vec![VariableId(1)]);
+    assert_eq!(typed, typed.clone());
+}
+
+#[test]
+fn loop_body_shadowing_restores_bindings_after_unreachable_transfers() {
+    let typed = analyze(
+        "fn test(value: number) -> number { while false { let value = value; continue; value = 2; break; } return value; }",
+    );
+    let StmtKind::While { id, body, .. } = &typed.functions[0].body[0].kind else {
+        panic!("expected while");
+    };
+
+    assert_eq!(*id, LoopId(0));
+    assert_let(
+        &body[0],
+        1,
+        "value",
+        Type::Number,
+        identifier(0, "value", Type::Number),
+    );
+    assert_eq!(body[1].kind, StmtKind::Continue { target: LoopId(0) });
+    assert_assignment(&body[2], identifier(1, "value", Type::Number), number("2"));
+    assert_eq!(body[3].kind, StmtKind::Break { target: LoopId(0) });
+    assert_eq!(
+        *returned(&typed.functions[0].body[1]),
+        identifier(0, "value", Type::Number)
+    );
+}
+
+#[test]
 fn assignments_control_flow_void_calls_and_bare_returns_are_lowered() {
     let typed = analyze(
         "fn noop() -> void { return; }
@@ -787,6 +928,7 @@ fn assignments_control_flow_void_calls_and_bare_returns_are_lowered() {
     );
 
     let StmtKind::While {
+        id,
         cond,
         body: loop_body,
     } = &body[3].kind
@@ -794,6 +936,7 @@ fn assignments_control_flow_void_calls_and_bare_returns_are_lowered() {
         panic!("expected while");
     };
 
+    assert_eq!(*id, LoopId(0));
     assert_eq!(**cond, expr(ExprKind::Bool(false), Type::Bool));
     assert_eq!(loop_body.len(), 1);
     assert_assignment(

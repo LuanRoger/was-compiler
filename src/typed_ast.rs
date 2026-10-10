@@ -10,6 +10,9 @@ pub struct FunctionId(pub usize);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct VariableId(pub usize);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct LoopId(pub usize);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuiltinFunction {
     Len,
@@ -99,10 +102,17 @@ pub enum TypedStatementKind {
     },
 
     While {
+        id: LoopId,
         cond: Box<TypedExpr>,
         body: TypedBlock,
     },
 
+    Break {
+        target: LoopId,
+    },
+    Continue {
+        target: LoopId,
+    },
     Return(Option<TypedExpr>),
     Expression(TypedExpr),
 }

@@ -75,6 +75,8 @@ impl HostFunctions {
                 | "if"
                 | "else"
                 | "while"
+                | "break"
+                | "continue"
                 | "return"
                 | "true"
                 | "false"
@@ -167,7 +169,7 @@ mod tests {
 
         for name in [
             "fn", "let", "if", "else", "while", "return", "true", "false", "number", "bool",
-            "string", "void", "len",
+            "string", "void", "len", "break", "continue",
         ] {
             assert_eq!(
                 functions.register(name, "env", "run", vec![], Type::Void),
@@ -197,6 +199,34 @@ mod tests {
             functions.register("_next2", "env", "run", vec![], Type::Void),
             Ok(HostFunctionId(1))
         );
+    }
+
+    #[test]
+    fn loop_keywords_reserve_only_language_names_not_import_names() {
+        let mut functions = HostFunctions::new();
+
+        for name in ["break", "continue"] {
+            assert_eq!(
+                functions.register(name, "env", "run", vec![], Type::Void),
+                Err(HostRegistrationError::ReservedName { name: name.into() })
+            );
+        }
+
+        for (index, (name, module, field)) in [
+            ("break1", "break", "continue"),
+            ("continued", "continue", "break"),
+            ("Break", "module with spaces/λ", "field:with,delimiters"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert_eq!(
+                functions.register(name, module, field, vec![], Type::Void),
+                Ok(HostFunctionId(index))
+            );
+            assert_eq!(functions.functions()[index].module, module);
+            assert_eq!(functions.functions()[index].field, field);
+        }
     }
 
     #[test]

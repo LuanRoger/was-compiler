@@ -3,7 +3,7 @@ use crate::{
     ast::{BinaryOp, Type, UnaryOp},
     host::HostFunctionId,
     tokens::Span,
-    typed_ast::{FunctionRef, VariableId},
+    typed_ast::{FunctionRef, LoopId, VariableId},
 };
 
 fn expr(kind: TypedExprKind) -> TypedExpr {
@@ -76,6 +76,7 @@ fn fixture() -> TypedBlock {
                 else_: Some(vec![statement(
                     5,
                     TypedStatementKind::While {
+                        id: LoopId(91),
                         cond: Box::new(expr(TypedExprKind::Bool(true))),
                         body: vec![statement(
                             6,
@@ -309,6 +310,29 @@ fn compound_walk_visits_target_then_rhs_and_respects_skip_and_break_hooks() {
     };
     assert_eq!(walk_block(&block, &mut recorder), ControlFlow::Continue(()));
     assert_eq!(recorder.events, ["block+1", "statement:1", "block-1"]);
+}
+
+#[test]
+fn loop_transfers_are_structural_leaves_without_pruning_later_children() {
+    let block = vec![
+        statement(1, TypedStatementKind::Break { target: LoopId(91) }),
+        statement(2, TypedStatementKind::Continue { target: LoopId(91) }),
+        statement(3, TypedStatementKind::Expression(identifier("after"))),
+    ];
+
+    for skip_expressions in [false, true] {
+        let mut recorder = Recorder {
+            skip_expressions,
+            ..Recorder::default()
+        };
+        assert_eq!(walk_block(&block, &mut recorder), ControlFlow::Continue(()));
+        let mut expected = vec!["block+3", "statement:1", "statement:2", "statement:3"];
+        if !skip_expressions {
+            expected.push("identifier:after");
+        }
+        expected.push("block-3");
+        assert_eq!(recorder.events, expected);
+    }
 }
 
 #[test]

@@ -528,6 +528,7 @@ fn assert_forged_error(expr: TypedExpr, expected: CodegenError, span: Span) {
                 },
                 5 => TypedStatement {
                     kind: TypedStatementKind::While {
+                        id: was_compiler::typed_ast::LoopId(0),
                         cond: Box::new(value(Type::Bool)),
                         body: vec![statement],
                     },

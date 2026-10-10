@@ -52,10 +52,12 @@ pub(super) fn walk_block<V: Visitor>(block: &TypedBlock, visitor: &mut V) -> Con
                 }
             }
 
-            TypedStatementKind::While { cond, body } => {
+            TypedStatementKind::While { cond, body, .. } => {
                 walk_expression(cond, visitor)?;
                 walk_block(body, visitor)?;
             }
+
+            TypedStatementKind::Break { .. } | TypedStatementKind::Continue { .. } => {}
 
             TypedStatementKind::Return(value) => {
                 if let Some(value) = value {

@@ -2,7 +2,7 @@ use crate::{
     ast::Type,
     exports::ExportOptions,
     tokens::Span,
-    typed_ast::{BuiltinFunction, FunctionRef, TypedProgram, VariableId},
+    typed_ast::{BuiltinFunction, FunctionRef, LoopId, TypedProgram, VariableId},
 };
 use thiserror::Error;
 use wasm_encoder::{
@@ -153,6 +153,22 @@ pub enum CodegenError {
         span: Span,
     },
 
+    #[error("duplicate loop ID {id:?} in function `{function}` at {span:?}")]
+    DuplicateLoopId {
+        function: String,
+        id: LoopId,
+        span: Span,
+    },
+
+    #[error(
+        "loop control target {target:?} is not the innermost active loop in function `{function}` at {span:?}"
+    )]
+    InvalidLoopTarget {
+        function: String,
+        target: LoopId,
+        span: Span,
+    },
+
     #[error("unknown variable ID {id:?} in function `{function}` at {span:?}")]
     UnknownVariable {
         function: String,
@@ -204,6 +220,8 @@ impl CodegenError {
             | Self::ArgumentCountMismatch { span, .. }
             | Self::UnsupportedBuiltin { span, .. }
             | Self::DuplicateVariableId { span, .. }
+            | Self::DuplicateLoopId { span, .. }
+            | Self::InvalidLoopTarget { span, .. }
             | Self::UnknownVariable { span, .. }
             | Self::UninitializedVariable { span, .. }
             | Self::UnsupportedLocalType { span, .. }

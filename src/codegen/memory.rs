@@ -704,6 +704,7 @@ mod tests {
     #[test]
     fn strings_are_interned_in_preorder_with_byte_lengths() {
         let program = program(vec![statement(TypedStatementKind::While {
+            id: crate::typed_ast::LoopId(0),
             cond: Box::new(string("é")),
             body: vec![statement(TypedStatementKind::If {
                 cond: Box::new(string("")),

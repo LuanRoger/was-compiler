@@ -1471,6 +1471,225 @@ fn void_calls_are_rejected_in_all_typed_value_contexts() {
 }
 
 #[test]
+fn loop_transfers_require_an_enclosing_loop_even_in_unreachable_or_hidden_code() {
+    for keyword in ["break", "continue"] {
+        let statement = format!("{keyword};");
+
+        for body in [
+            statement.clone(),
+            format!("return; {statement}"),
+            format!("if false {{ {statement} }}"),
+            format!("if true {{ return; }} else {{ {statement} }}"),
+            format!("while false {{}} {statement}"),
+            format!("while true {{ break; }} {statement}"),
+        ] {
+            let source = format!("fn test() -> void {{ /* é */ {body} }}");
+            let error_span = span(&source, &statement);
+            let expected = match keyword {
+                "break" => SemanticError::BreakOutsideLoop { span: error_span },
+                _ => SemanticError::ContinueOutsideLoop { span: error_span },
+            };
+
+            assert_eq!(expected.span(), Some(error_span));
+            assert_error(&source, expected);
+        }
+
+        let source = format!(
+            "fn main() -> void {{ while true {{ helper(); break; }} }} fn helper() -> void {{ {statement} }}"
+        );
+        let error_span = span(&source, &statement);
+        let expected = match keyword {
+            "break" => SemanticError::BreakOutsideLoop { span: error_span },
+            _ => SemanticError::ContinueOutsideLoop { span: error_span },
+        };
+
+        assert_error(&source, expected);
+    }
+}
+
+#[test]
+fn loop_transfers_are_not_function_returns_and_whiles_stay_conservative() {
+    for body in [
+        "while true { break; }",
+        "while true { continue; }",
+        "while true { break; return 1; }",
+        "while true { continue; return 1; }",
+        "while true { if true { break; } else { return 1; } return 2; }",
+        "while true { if true { continue; } else { return 1; } }",
+        "if true { return 1; } else { while true { break; return 2; } }",
+        "while true { while false { continue; } break; return 1; }",
+    ] {
+        let source = format!("fn test() -> number {{ {body} }}");
+
+        assert_error(
+            &source,
+            SemanticError::MissingReturn {
+                name: "test".into(),
+                span: span(&source, &source),
+            },
+        );
+        assert_valid(&format!("fn test() -> number {{ {body} return 3; }}"));
+    }
+
+    assert_valid(
+        "fn test() -> number { if true { while true { break; } return 1; } else { while false { continue; } return 2; } }",
+    );
+}
+
+#[test]
+fn loop_transfers_do_not_prune_static_checks_or_bindings() {
+    for keyword in ["break", "continue", "return"] {
+        let body = format!("while false {{ {keyword}; let bad: number = false; }}");
+
+        assert_body_mismatch(&body, "let bad: number = false;", Type::Number, Type::Bool);
+
+        let source = format!("fn test() -> void {{ while true {{ {keyword}; missing; }} }}");
+
+        assert_error(
+            &source,
+            SemanticError::UndefinedVariable {
+                name: "missing".into(),
+                span: span(&source, "missing;"),
+            },
+        );
+        assert_valid(&format!(
+            "fn test() -> void {{ while false {{ {keyword}; let value = 1; value = 2; }} }}"
+        ));
+    }
+
+    let source = "fn test() -> void { while true { break; return 1; } }";
+
+    assert_error(
+        source,
+        SemanticError::UnexpectedReturnValue {
+            span: span(source, "return 1;"),
+        },
+    );
+
+    let source = "fn test() -> void { while true { let hidden = 1; continue; } hidden; }";
+
+    assert_error(
+        source,
+        SemanticError::UndefinedVariable {
+            name: "hidden".into(),
+            span: span(source, "hidden;"),
+        },
+    );
+}
+
+#[test]
+fn semantic_flow_composes_only_reachable_outcomes_without_pruning_the_tree() {
+    for (body, expected) in [
+        ("break; return 1;", Flow::BREAK),
+        ("continue; return 1;", Flow::CONTINUE),
+        ("return 1; break; continue;", Flow::RETURN),
+        (
+            "if true { break; } else { continue; } return 1;",
+            Flow::BREAK.join(Flow::CONTINUE),
+        ),
+        (
+            "if true { break; } return 1;",
+            Flow::BREAK.join(Flow::RETURN),
+        ),
+        (
+            "if true { continue; } else { return 1; } return 2;",
+            Flow::CONTINUE.join(Flow::RETURN),
+        ),
+        ("if true { return 1; } return 2;", Flow::RETURN),
+        ("while true { break; return 1; }", Flow::FALLTHROUGH),
+        ("while true { continue; return 1; }", Flow::FALLTHROUGH),
+        (
+            "while true { if true { break; } else { return 1; } }",
+            Flow::FALLTHROUGH.join(Flow::RETURN),
+        ),
+        ("while true { continue; } return 1;", Flow::RETURN),
+    ] {
+        let program = parse(&format!("fn test() -> number {{ {body} }}"));
+        let mut analyzer = SemanticAnalyzer::new();
+
+        analyzer.scopes.push(HashMap::new());
+        analyzer.loops.push(LoopId(0));
+        analyzer.next_loop_id = 1;
+
+        let (typed, flow) = analyzer
+            .analyze_block(&program.functions[0].body, Type::Number)
+            .unwrap();
+
+        assert_eq!(flow, expected, "{body}");
+        assert_eq!(typed.len(), program.functions[0].body.len(), "{body}");
+        assert_eq!(analyzer.loops, vec![LoopId(0)], "{body}");
+    }
+}
+
+#[test]
+fn nested_loop_errors_restore_the_enclosing_loop_and_scope() {
+    let program = parse(
+        "fn test() -> void { while true { let inner = 1; if false { while true { missing; } } } }",
+    );
+    let mut analyzer = SemanticAnalyzer::new();
+
+    analyzer.scopes.push(HashMap::new());
+    analyzer
+        .declare_variable("outer", Type::Bool, Span::new(0, 0))
+        .unwrap();
+    analyzer.loops.push(LoopId(41));
+    analyzer.next_loop_id = 42;
+
+    assert!(
+        analyzer
+            .analyze_statement(&program.functions[0].body[0], Type::Void)
+            .is_err()
+    );
+    assert_eq!(analyzer.loops, vec![LoopId(41)]);
+    assert_eq!(analyzer.scopes.len(), 1);
+    assert!(analyzer.lookup_variable("inner").is_none());
+    assert_eq!(analyzer.lookup_variable("outer").unwrap().ty, Type::Bool);
+
+    let transfer = Statement {
+        kind: StatementKind::Continue,
+        span: Span::new(2, 11),
+    };
+    let (typed, flow) = analyzer.analyze_statement(&transfer, Type::Void).unwrap();
+
+    assert_eq!(
+        typed.kind,
+        TypedStatementKind::Continue { target: LoopId(41) }
+    );
+    assert_eq!(flow, Flow::CONTINUE);
+}
+
+#[test]
+fn loop_context_is_clean_after_success_failure_and_analyzer_reuse() {
+    let mut analyzer = SemanticAnalyzer::new();
+    let valid = parse("fn test() -> void { while true { if true { continue; } break; } }");
+
+    for invalid in [
+        "fn test() -> void { while true { while false { missing; } } }",
+        "fn test() -> void { while 1 { break; } }",
+        "fn test() -> number { while true { continue; } }",
+        "fn test() -> void { while true { let inner = 1; inner = false; } }",
+    ] {
+        assert!(analyzer.analyze(&parse(invalid)).is_err());
+        assert!(analyzer.loops.is_empty());
+        assert!(analyzer.scopes.is_empty());
+
+        for keyword in ["break", "continue"] {
+            let source = format!("fn test() -> void {{ {keyword}; }}");
+
+            assert!(analyzer.analyze(&parse(&source)).is_err());
+            let typed = analyzer.analyze(&valid).unwrap();
+
+            assert!(matches!(
+                typed.functions[0].body[0].kind,
+                TypedStatementKind::While { id: LoopId(0), .. }
+            ));
+            assert!(analyzer.loops.is_empty());
+            assert!(analyzer.scopes.is_empty());
+        }
+    }
+}
+
+#[test]
 fn nonvoid_functions_require_a_return_on_every_path() {
     for annotation in ["number", "bool", "string", "number[]"] {
         let source = format!("fn test() -> {annotation} {{}}");

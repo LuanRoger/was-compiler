@@ -1,6 +1,6 @@
 # WAS language extensions implementation plan
 
-**Status:** WP1 implemented; WP2–WP12 proposed; WP13 requires separate authorization.
+**Status:** WP1–WP2 implemented; WP3–WP12 proposed; WP13 requires separate authorization.
 **Baseline:** Extension specification v0.3.
 
 Follow the [agent guide](../AGENTS.md), [extension specification](was_language_extensions_spec.md),
@@ -10,18 +10,20 @@ The spec defines behavior; this plan defines incremental work. References use nu
 ## 1. Implemented baseline and compatibility envelope
 
 Comments, local initializer inference, exact `%`, and export selection are implemented prerequisites.
-WP1 adds numeric compound assignments; the baseline implementation notes below
-reflect that completed package.
+WP1 adds numeric compound assignments; WP2 adds bare while transfers and flow/label
+tracking. The baseline implementation notes below reflect those completed packages.
 
 Evidence: `src/lexer.rs`, `src/parser.rs`, `src/semantic.rs`, `src/codegen/numeric.rs`, `src/cli.rs`,
 `tests/comments.rs`, `tests/inference.rs`, `tests/remainder.rs`, `tests/emitter.rs`,
-and `tests/compound_assignment.rs`.
+`tests/compound_assignment.rs`, and `tests/loop_control.rs`.
 
 - `Type` in `src/ast.rs` is a small `Copy` enum, not an extensible callable/type tree.
   `Block` and `TypedBlock` are currently `Vec<Statement>` / `Vec<TypedStatement>`.
   Function results are concrete and explicitly annotated; calls resolve names/IDs.
-- Semantic/backend blocks report guaranteed return with a boolean, insufficient for
-  loop transfers/value-producing divergent branches. Extend this only when each step needs it.
+- Semantic/backend blocks share private `Flow` completion sets (fallthrough,
+  return, break, continue). A while conservatively completes and consumes its
+  transfers; every statement still receives checking/emission. Expression `Never`
+  and value-producing regions remain WP3 work, not part of this summary.
 - The locals visitor currently skips expressions. The temporary visitor plans
   ordered array `i32` slots and indexed-compound `i32` address / `f64` old-value
   slots without reuse; local compounds keep the old value on the operand stack.
@@ -39,7 +41,7 @@ and `tests/compound_assignment.rs`.
 - Old-source Wasm fixtures must remain unchanged unless an explicit contract decision
   justifies a difference. Never regenerate goldens to conceal incidental drift.
 
-WP1 is implemented; subsequent extensions below remain proposed. New keywords
+WP1–WP2 are implemented; subsequent extensions below remain proposed. New keywords
 require matching host source-name validation, not restrictions on arbitrary
 nonempty host module/field names. Reserve standalone `_`
 when its syntax arrives, reject its bindings, retain `_temp`, and keep `by` contextual.
@@ -54,6 +56,7 @@ These paths exist today; ownership denotes responsibility, not mandatory edits f
 | `src/parser.rs`, `src/ast.rs`, `grammar.bnf` | Contextual grammar, optional tails/results/defaults, raw syntax API |
 | `src/semantic.rs`, `src/semantic_tests.rs`, `src/typed_ast_tests.rs` | Scope/type/flow rules, call binding, inference and captures |
 | `src/typed_ast.rs` | Concrete bindings/signatures, resolved nodes/IDs, origin information |
+| `src/flow.rs` | Shared private completion sets, independent of static traversal |
 | `src/host.rs`, `src/exports.rs`, `src/compiler.rs`, `src/lib.rs` | Registration/export restrictions, owned snapshots, public API and stage errors |
 | `src/codegen/walker.rs`, `src/codegen/walker_tests.rs` | Exhaustive structural traversal and traversal-order tests |
 | `src/codegen/locals.rs`, `src/codegen/temporaries.rs` | Separate declaration and typed scratch-slot planning policies |
@@ -91,8 +94,9 @@ default Cargo success alone cannot satisfy runtime gates.
 Public-shape gates occur immediately before the package that needs the change:
 
 1. WP1 adds a checked typed place/compound statement, not generalized expression callees.
-2. WP2 adds minimal loop/label context and distinguishes fallthrough, return and
-   loop transfer without mistaking `break` for a guaranteed function return.
+2. WP2 adds typed `LoopId`, `While.id`, and resolved `Break` / `Continue` targets,
+   requiring public typed consumers to update constructors/matches. Private
+   completion sets and loop/label contexts distinguish transfers from returns.
 3. WP3 prefers retaining statement-vector aliases with raw/typed value-block wrappers
    containing statements plus an optional boxed tail. Approve this API before coding.
    A small `Copy` result category (`Value(Type)`, `Void`, `Never`) can replace expression
@@ -142,15 +146,23 @@ index/RHS effects, target-trap-before-RHS, all five operators and remainder
 NaN/infinities/subnormals/extremes/signed-zero cases.
 Scalar `%=` must not acquire memory or an implicit import; old goldens stay unchanged.
 
-### WP2 — `break` / `continue` in `while` (spec §7)
+### WP2 — `break` / `continue` in `while` (spec §7): implemented
 
-**Entry:** WP1. Add statement tokens/nodes, reject value breaks and outside-loop
-transfers, and maintain a per-function semantic loop stack. Extend backend label
-tracking to every emitted `if`, `block`, and `loop`; compute `LabelDepth` from target
-identity/current nesting, not a fixed `br 0`/`br 1`. A while continue reevaluates its
-condition; break targets the outer exit. Track abrupt flow separately from return.
+**Completed scope:** Reserved statement keywords, raw unit transfers, typed
+per-function `LoopId`s on while nodes and resolved transfer targets. Semantic loop
+stacks select the nearest enclosing while and restore on error; value/label forms
+are parse errors, outside-loop forms are semantic errors. Public typed consumers
+must handle `While.id`, `Break { target }`, and `Continue { target }`.
 
-**Exit tests:** proposed `tests/loop_control.rs`; malformed syntax, nested scopes,
+`BodyEmitter` tracks unique label identities for every emitted `if`, `block`, and
+`loop`, including short-circuit expression ifs. Relative `LabelDepth` is computed
+from active nesting rather than fixed `br 0`/`br 1`. Continue reevaluates the
+condition; break targets the exit block. Checked lowering rejects duplicate loop
+IDs and unknown, inactive, non-innermost, or cross-function transfer targets.
+Private `Flow` completion sets separate transfers from guaranteed return without
+pruning unreachable checks/emission. Scope/label/loop restoration is error-safe.
+
+**Implemented coverage:** `tests/loop_control.rs`; malformed syntax, nested scopes,
 unknown/forged targets and transfers after return. Decode depths beneath multiple
 ifs/blocks/nested whiles. Runtime effects prove nearest-loop exits, condition
 reevaluation and skipped trailing statements; a while alone still does not satisfy

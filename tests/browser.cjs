@@ -129,6 +129,57 @@ async function main() {
         assert.doesNotMatch(wat, /was-compiler\.interface/);
     });
 
+    test('while transfers target nearest loops, recheck conditions, and retain diagnostics', compiler => {
+        compiler.registerHostFunction('poll', 'env', 'poll', ['number', 'number'], 'bool');
+        compiler.registerHostFunction('mark', 'env', 'mark', ['number'], 'void');
+        const source = `
+            fn main() -> number {
+                let i = 0;
+                let total = 0;
+                while poll(i, 4) {
+                    i += 1;
+                    let j = 0;
+                    while j < 3 {
+                        j += 1;
+                        if j == 2 { if i > 0 { continue; } }
+                        if j == 3 { if true { break; } }
+                        mark(i * 10 + j);
+                        total += 1;
+                    }
+                    if i == 2 { continue; }
+                    if i == 3 { break; }
+                    total += 10;
+                    mark(i * 100);
+                }
+                return total;
+            }
+        `;
+        const expected = compile(compiler, source).bytes;
+        for (const level of [0, 1, 2, 3]) {
+            compiler.setOptimizationLevel(level);
+            const { bytes, module } = compile(compiler, source);
+            assert.deepEqual(bytes, expected);
+            const events = [];
+            const e = new WebAssembly.Instance(module, { env: {
+                poll(i, limit) { events.push('p' + i); return i < limit ? 1 : 0; },
+                mark(n) { events.push(n); }
+            }}).exports;
+            assert.equal(e.main(), 13);
+            assert.deepEqual(events, ['p0', 11, 100, 'p1', 21, 'p2', 31]);
+            for (const keyword of ['break', 'continue']) {
+                fails(() => compiler.compile(`fn main() -> void {\n    ${keyword};\n}`),
+                    /<browser>:2:5: semantic error:.*only allowed inside a loop/);
+                fails(() => compiler.compile(`fn main() -> void { while true { ${keyword} 1; } }`),
+                    /parse error/);
+                fails(() => compiler.compile(`fn main() -> number { while true { ${keyword}; return 1; } }`),
+                    /does not return a value on every path/);
+            }
+            assert.deepEqual(compile(compiler, source).bytes, expected);
+        }
+        fails(() => compiler.registerHostFunction('break', 'env', 'run', [], 'void'), /reserved/);
+        fails(() => compiler.registerHostFunction('continue', 'env', 'run', [], 'void'), /reserved/);
+    });
+
     test('compound updates preserve old values, target traps, and optimization parity', compiler => {
         compiler.registerHostFunction('index', 'env', 'index', [], 'number');
         compiler.registerHostFunction('rhs', 'env', 'rhs', ['number[]'], 'number');

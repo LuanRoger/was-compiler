@@ -458,6 +458,7 @@ fn duplicate_variable_ids_are_rejected_at_the_repeated_parameter_or_declaration(
             then: vec![declaration(77, Type::Number, number(), first)],
             else_: Some(vec![TypedStatement {
                 kind: TypedStatementKind::While {
+                    id: LoopId(0),
                     cond: Box::new(boolean()),
                     body: vec![declaration(77, Type::Bool, boolean(), repeated)],
                 },
@@ -752,6 +753,7 @@ fn unsupported_local_types_are_rejected_before_body_emission_even_in_unreachable
                         then: vec![],
                         else_: Some(vec![TypedStatement {
                             kind: TypedStatementKind::While {
+                                id: LoopId(0),
                                 cond: Box::new(boolean()),
                                 body: vec![local],
                             },

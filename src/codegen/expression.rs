@@ -93,7 +93,7 @@ pub(super) fn emit(
             if matches!(op, BinaryOp::And | BinaryOp::Or) {
                 body.emit_expr(left, span)?;
 
-                body.begin_if(BlockType::Result(ValType::I32));
+                body.begin_if(BlockType::Result(ValType::I32))?;
 
                 if *op == BinaryOp::And {
                     body.emit_expr(right, span)?;

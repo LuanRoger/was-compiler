@@ -4,6 +4,7 @@ pub mod codegen;
 pub mod compiler;
 pub mod diagnostic;
 pub mod exports;
+mod flow;
 pub mod host;
 pub mod lexer;
 mod optimization;

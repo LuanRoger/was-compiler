@@ -5,7 +5,7 @@ use was_compiler::{
     parser::ParseError,
     semantic::SemanticError,
     tokens::Span,
-    typed_ast::{BuiltinFunction, FunctionRef, VariableId},
+    typed_ast::{BuiltinFunction, FunctionRef, LoopId, VariableId},
 };
 
 #[path = "support/process.rs"]
@@ -64,6 +64,8 @@ fn semantic_errors(span: Span) -> Vec<SemanticError> {
             span,
         },
         SemanticError::InvalidAssignmentTarget { span },
+        SemanticError::BreakOutsideLoop { span },
+        SemanticError::ContinueOutsideLoop { span },
         SemanticError::UnexpectedReturnValue { span },
         SemanticError::MissingReturn {
             name: "name".into(),
@@ -125,6 +127,16 @@ fn located_codegen_errors(span: Span) -> Vec<CodegenError> {
         CodegenError::DuplicateVariableId {
             function: "main".into(),
             id: VariableId(1),
+            span,
+        },
+        CodegenError::DuplicateLoopId {
+            function: "main".into(),
+            id: LoopId(1),
+            span,
+        },
+        CodegenError::InvalidLoopTarget {
+            function: "main".into(),
+            target: LoopId(1),
             span,
         },
         CodegenError::UnknownVariable {

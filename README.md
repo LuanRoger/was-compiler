@@ -55,8 +55,7 @@ support `cwasm` artifacts.
 The compiler emits valid modules containing registered function imports,
 parameters and locals of every nonvoid language type, variable reads and
 assignments (including numeric compound updates), expression statements, returns,
-user/host function calls, `if`/`else`,
-and `while`. Strings, numeric arrays, checked array access/assignment, and built-in
+user/host function calls, `if`/`else`, and `while` with `break;` / `continue;`. Strings, numeric arrays, checked array access/assignment, and built-in
 `len` are supported. Empty `void` functions and bare `return;` statements work too.
 Calls can be forward, nested, self-recursive, or mutually recursive; arguments
 are evaluated left-to-right.
@@ -177,6 +176,38 @@ Numeric comparisons support `==`, `!=`, `<`, `<=`, `>`, and `>=`; booleans suppo
 never execute host calls or other side effects. Boolean operations treat any
 nonzero `i32` as true and produce canonical `0`/`1` results; numeric comparisons
 follow IEEE-754 behavior, including NaN and signed zero.
+
+`break;` exits the nearest enclosing `while`; `continue;` skips the rest of its
+body and reevaluates its condition. They work beneath nested `if` statements and
+inside nested loops, but cannot cross function boundaries. Both require an
+active loop, even in unreachable source. Only bare semicolon-terminated transfers
+are supported: value-bearing breaks, loop labels, `for`, and `loop` remain future
+features. `break` and `continue` are now reserved source/host-language names;
+existing bindings or functions using those exact names must be renamed. Host
+import module/field names retain their existing unrestricted nonempty contract.
+
+```text
+fn main() -> number {
+    let i = 0;
+    let total = 0;
+
+    while i < 10 {
+        i += 1;
+        if i == 3 { continue; }
+        if i == 7 { break; }
+        total += i;
+    }
+
+    return total;
+}
+```
+
+This returns `18`. Transfers skip later effects and runtime traps, but skipped
+statements still receive static and backend checks. They do not count as function
+returns. The typed API adds per-function `LoopId`s to `While` and resolved targets
+to `Break` / `Continue`; public statement matches/construction must account for
+these additions. IDs may be sparse, but must be unique within a function, and
+transfers must refer to its innermost active loop.
 
 Branches and loops use structured Wasm control flow, support nested returns, and
 preserve shadowed local bindings. Nonvoid functions must return on every path;

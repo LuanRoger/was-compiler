@@ -45,9 +45,6 @@ impl TypeIndex {
 pub(super) struct LabelDepth(u32);
 
 impl LabelDepth {
-    pub const LOOP_EXIT: Self = Self::new(1);
-    pub const LOOP_BACK_EDGE: Self = Self::new(0);
-
     pub const fn new(value: u32) -> Self {
         Self(value)
     }

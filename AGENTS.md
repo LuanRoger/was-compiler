@@ -53,7 +53,8 @@ bypasses the compiler's optimization/options orchestration.
 | `src/lib.rs`, `src/compiler.rs` | Public API, configuration, pipeline, stage errors |
 | `src/tokens.rs`, `src/lexer.rs` | Tokens and UTF-8 byte-offset spans |
 | `src/parser.rs`, `src/ast.rs` | Recursive-descent parsing and untyped syntax |
-| `src/semantic.rs`, `src/typed_ast.rs` | Types, scopes, return analysis, resolved semantic IDs |
+| `src/semantic.rs`, `src/typed_ast.rs` | Types, scopes, loop targets, return analysis, resolved semantic IDs |
+| `src/flow.rs` | Private completion sets shared by semantic/backend flow summaries |
 | `src/host.rs`, `src/exports.rs` | Ordered host declarations and owned export selection |
 | `src/optimization.rs` | Borrowed `Cow<TypedProgram>` no-op; future transformation boundary |
 | `src/codegen/abi.rs` | Language-to-Wasm signatures and named memory-layout constants |
@@ -105,8 +106,8 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   function inference, or whole-program type unification. `number` remains `f64`.
 - Named functions support forward, nested, self-recursive, mutual, and registered
   host calls. Statements include `let`, variable/index assignment, expression
-  statements, `return`, `if`/`else`, and `while`. Statement-only `+= -= *= /= %=`
-    accept `number` variables and numeric-array elements, not whole arrays.
+  statements, `return`, `if`/`else`, and `while` with bare `break;` / `continue;`.
+  Statement-only `+= -= *= /= %=` accept `number` variables and numeric-array elements, not whole arrays.
 - Expressions support literals, parentheses, unary `-`/`!`, arithmetic
   `+ - * / %`, numeric comparisons, boolean equality and short-circuit `&&`/`||`,
   string equality, numeric-array equality, indexing, and built-in `len(array)`.
@@ -114,7 +115,8 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   mutable shared storage; every evaluated array literal allocates fresh storage.
 - `//` line comments and non-nesting `/* ... */` block comments are supported
   between tokens anywhere whitespace can appear; delimiters inside strings remain text.
-- No `for`, `foreach`, `break`, `continue`, string escapes, exponent literals,
+- No `for`, `foreach`, infinite/value `loop`, value-bearing breaks, loop labels,
+  string escapes, exponent literals,
   `.5`, `1.`, string concatenation/indexing/`len`, or general postfix
   chaining. Source indexing starts from an identifier.
 - No other array element types, modules, closures, generics, free, or garbage
@@ -163,8 +165,21 @@ refactors; specify and test any intentional behavior change explicitly.
   operand stack. `%=` uses the exact existing remainder helper.
 - Logical operators short-circuit at runtime, but both operands, unreachable
   statements, and unselected function bodies still receive static/backend checks.
-- Nonvoid functions require a statically recognized guaranteed return. A loop alone
-  is not a guaranteed return, even with a literal `true` condition.
+- Bare `break;` and `continue;` target the nearest enclosing `while` within the
+  function. Continue reevaluates the condition. Keywords are reserved for source
+  and host language names, never imposed on host module/field names. No labels or
+  value-bearing transfers yet. Typed `While` carries a per-function `LoopId`;
+  typed transfers carry a resolved target. Sparse IDs are allowed; duplicate,
+  inactive, unknown, outer-instead-of-inner, and cross-function targets are rejected.
+- `Flow` separates fallthrough, return, break, and continue. Sequence only
+  fallthrough paths when summarizing, but check and emit every statement. Nonvoid
+  functions require guaranteed return; transfers and a loop alone do not satisfy
+  it, even with a literal `true` condition. Returns after transfers are unreachable
+  and cannot change their summary. Consume transfers at each while boundary.
+- `BodyEmitter` tracks unique labels for every structured `if`, `block`, and `loop`,
+  including short-circuit expressions. Resolve `LabelDepth` from active target
+  identity and nesting, never fixed loop depths. Restore labels/loop contexts and
+  initialized bindings on errors without rewinding scratch slots or identity counters.
 - Variable IDs are per-function and may be sparse. Local slots place parameters
   first, then declarations, then typed temporaries (array handles and indexed
   compound addresses/old values). Preserve shadowing, scoped
