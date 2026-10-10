@@ -680,6 +680,245 @@ fn loop_transfers_match_library_binary_and_wat_at_every_level() {
 }
 
 #[test]
+fn statement_and_value_loops_match_library_binary_and_wat_at_every_level() {
+    let scratch = Scratch::new("value_loops_parity");
+    let source = r#"
+        fn main() -> number {
+            let i = 0;
+            loop {
+                i += 1;
+                if i == 2 { continue; }
+                if i == 4 { break; }
+            }
+            let result = loop {
+                let j = 0;
+                loop { j += 1; if j == 2 { break; } }
+                break i + j;
+            };
+            return result;
+        }
+        fn boolean(flag: bool) -> bool {
+            return loop { if flag { break true; } else { break false; } };
+        }
+        fn text() -> string { return loop { break "é🦀"; }; }
+        fn items() -> number[] { return loop { break [1, 2]; }; }
+        fn early() -> number { loop { return 7; } }
+        fn no_exit_statement() -> number { loop { continue; } }
+        fn no_exit_value() -> bool { let n: number = loop {}; }
+    "#;
+    let mut compiler = Compiler::new();
+    compiler.set_exports(ExportOptions::Only(vec!["main".into()]));
+    let baseline = compiler.compile_source(source).unwrap();
+    let expected_wat = wasmprinter::print_bytes(&baseline).unwrap();
+    assert_eq!(user_exports(&decode(&baseline)), ["main"]);
+
+    let bodies = Parser::new(0)
+        .parse_all(&baseline)
+        .filter_map(|payload| match payload.unwrap() {
+            Payload::CodeSectionEntry(body) => Some(body),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    for (body, (ty, break_depth)) in bodies.iter().zip([
+        (wasmparser::ValType::F64, 1),
+        (wasmparser::ValType::I32, 2),
+        (wasmparser::ValType::I32, 1),
+        (wasmparser::ValType::I32, 1),
+    ]) {
+        let operators = body
+            .get_operators_reader()
+            .unwrap()
+            .into_iter()
+            .map(Result::unwrap)
+            .collect::<Vec<_>>();
+        assert!(operators.iter().any(|op| matches!(
+            op,
+            wasmparser::Operator::Block { blockty }
+                if *blockty == wasmparser::BlockType::Type(ty)
+        )));
+        assert!(operators.iter().any(|op| matches!(
+            op,
+            wasmparser::Operator::Loop {
+                blockty: wasmparser::BlockType::Empty
+            }
+        )));
+        assert!(operators.iter().any(|op| matches!(
+            op,
+            wasmparser::Operator::Br { relative_depth } if *relative_depth == break_depth
+        )));
+    }
+
+    for (flag, level) in [
+        ("-O0", was_compiler::OptimizationLevel::None),
+        ("-O1", was_compiler::OptimizationLevel::Basic),
+        ("-O2", was_compiler::OptimizationLevel::Standard),
+        ("-O3", was_compiler::OptimizationLevel::Aggressive),
+    ] {
+        compiler.set_optimization_level(level);
+        let expected = compiler.compile_source(source).unwrap();
+        assert_eq!(expected, baseline);
+        assert_eq!(
+            scratch.compile(source, &[flag, "--export", "main"]),
+            expected
+        );
+        let wat = success(scratch.cli(
+            &["program.was", flag, "--export", "main", "--emit", "wat"],
+            None,
+        ));
+        assert_eq!(assert_plain_wat(&wat), expected_wat);
+        assert!(
+            success(scratch.cli(
+                &[
+                    "program.was",
+                    flag,
+                    "--export",
+                    "main",
+                    "--emit",
+                    "wat",
+                    "-o",
+                    "program.wat",
+                ],
+                None,
+            ))
+            .is_empty()
+        );
+        assert_eq!(fs::read(scratch.0.join("program.wat")).unwrap(), wat);
+    }
+    scratch.assert_entries(&["program.was", "program.wasm", "program.wat"]);
+}
+
+#[test]
+fn value_loops_cli_errors_preserve_spans_and_destinations_at_every_level() {
+    use was_compiler::{CompileError, semantic::SemanticError, tokens::Span};
+
+    let scratch = Scratch::new("value_loops_errors");
+    let sentinel = b"existing artifact";
+    let cases = [
+        (
+            "fn main() -> void {\n    while true {\n        break 1;\n    }\n}",
+            "break 1;",
+            3,
+            9,
+            "A break value is not allowed in a statement loop",
+            SemanticError::BreakValueNotAllowed {
+                span: Span::new(0, 0),
+            },
+        ),
+        (
+            "fn main() -> void {\n    while true {\n        break outer;\n    }\n}",
+            "break outer;",
+            3,
+            9,
+            "A break value is not allowed in a statement loop",
+            SemanticError::BreakValueNotAllowed {
+                span: Span::new(0, 0),
+            },
+        ),
+        (
+            "fn main() -> void {\n    loop {\n        break 1;\n    }\n}",
+            "break 1;",
+            3,
+            9,
+            "A break value is not allowed in a statement loop",
+            SemanticError::BreakValueNotAllowed {
+                span: Span::new(0, 0),
+            },
+        ),
+        (
+            "fn main() -> number {\n    return loop {\n        break;\n    };\n}",
+            "break;",
+            3,
+            9,
+            "A value loop requires a break value",
+            SemanticError::MissingBreakValue {
+                span: Span::new(0, 0),
+            },
+        ),
+        (
+            "fn main() -> number {\n    return loop {\n        break {};\n    };\n}",
+            "break {};",
+            3,
+            9,
+            "A break value cannot have type void",
+            SemanticError::InvalidBreakValue {
+                span: Span::new(0, 0),
+            },
+        ),
+        (
+            "fn main(flag: bool) -> void {\n    let value = loop { if flag { break 1; } else { break false; } };\n}",
+            "let value = loop { if flag { break 1; } else { break false; } };",
+            2,
+            5,
+            "Type mismatch: expected Number, found Bool",
+            SemanticError::TypeMismatch {
+                expected: Type::Number,
+                found: Type::Bool,
+                span: Span::new(0, 0),
+            },
+        ),
+        (
+            "fn main() -> void {\n    let value = loop {};\n}",
+            "let value = loop {};",
+            2,
+            5,
+            "Cannot infer a concrete type for divergent initializer 'value'",
+            SemanticError::CannotInferNeverType {
+                name: "value".into(),
+                span: Span::new(0, 0),
+            },
+        ),
+    ];
+    for existing in [false, true] {
+        for (format, destination) in [("wasm", "program.wasm"), ("wat", "program.wat")] {
+            if existing {
+                scratch.write(destination, sentinel);
+            }
+            for (source, excerpt, line, column, message, variant) in &cases {
+                let input = scratch.write("program.was", source);
+                let start = source.find(excerpt).unwrap();
+                let expected_span = Span::new(start, start + excerpt.len());
+                let error = Compiler::new().compile_source(source).unwrap_err();
+                let CompileError::Semantic(semantic) = &error else {
+                    panic!("expected semantic error, got {error:?}");
+                };
+                assert_eq!(
+                    std::mem::discriminant(semantic),
+                    std::mem::discriminant(variant)
+                );
+                assert_eq!(semantic.span(), Some(expected_span));
+                assert_eq!(error.span(), Some(expected_span));
+                let expected = format!(
+                    "{}\n",
+                    was_compiler::diagnostic::render("program.was", source, &error)
+                );
+                let location = format!("program.was:{line}:{column}: semantic error:");
+                let caret = format!(" |{}^", " ".repeat(*column));
+                for flag in ["-O0", "-O1", "-O2", "-O3"] {
+                    let before = scratch.entries();
+                    let stderr = failure(
+                        scratch.cli(
+                            &["program.was", flag, "--emit", format, "-o", destination],
+                            None,
+                        ),
+                        1,
+                        &[&location, message, excerpt, &caret],
+                    );
+                    assert_eq!(stderr, expected);
+                    assert_eq!(fs::read(&input).unwrap(), source.as_bytes());
+                    if existing {
+                        assert_eq!(fs::read(scratch.0.join(destination)).unwrap(), sentinel);
+                    } else {
+                        assert!(!scratch.0.join(destination).exists());
+                    }
+                    assert_eq!(scratch.entries(), before, "failed compilation leaked files");
+                }
+            }
+        }
+    }
+    scratch.assert_entries(&["program.was", "program.wasm", "program.wat"]);
+}
+
+#[test]
 fn invalid_loop_transfers_report_locations_without_replacing_output() {
     let scratch = Scratch::new("invalid_loop_control");
     scratch.write("program.wasm", b"existing output");
@@ -1628,6 +1867,44 @@ fn values(value: number[]) -> number[] { return edit(value); }
 }
 
 #[test]
+fn loop_is_reserved_only_as_a_host_language_name() {
+    let scratch = Scratch::new("loop_host_names");
+    let source = "fn main() -> number { return loop { break run(); }; }";
+    let mut compiler = Compiler::new();
+    assert!(matches!(
+        compiler.register_host_function("loop", "env", "run", vec![], Type::Number),
+        Err(was_compiler::HostRegistrationError::ReservedName { name }) if name == "loop"
+    ));
+    compiler
+        .register_host_function("run", "loop", "loop", vec![], Type::Number)
+        .unwrap();
+    let bytes = scratch.compile(source, &["--host", "run=loop.loop()->number"]);
+    assert_eq!(bytes, compiler.compile_source(source).unwrap());
+    assert_eq!(decode(&bytes).imports, [("loop".into(), "loop".into())]);
+
+    compiler
+        .register_host_function(
+            "arbitrary",
+            "module with spaces/λ",
+            "field:with,delimiters",
+            vec![],
+            Type::Void,
+        )
+        .unwrap();
+    assert_eq!(
+        decode(&compiler.compile_source(source).unwrap()).imports,
+        [
+            ("loop".into(), "loop".into()),
+            (
+                "module with spaces/λ".into(),
+                "field:with,delimiters".into()
+            ),
+        ]
+    );
+    scratch.assert_entries(&["program.was", "program.wasm"]);
+}
+
+#[test]
 fn malformed_or_invalid_host_declarations_exit_one_without_outputs() {
     let scratch = Scratch::new("invalid_hosts");
     scratch.write("program.was", SIMPLE_SOURCE);
@@ -1644,6 +1921,7 @@ fn malformed_or_invalid_host_declarations_exit_one_without_outputs() {
             "Invalid host function name",
         ),
         ("len=env.len(number[])->number", "reserved"),
+        ("loop=env.run()->void", "reserved"),
     ] {
         let stderr = failure(
             scratch.cli(

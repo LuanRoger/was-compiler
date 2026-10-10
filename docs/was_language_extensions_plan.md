@@ -1,6 +1,6 @@
 # WAS language extensions implementation plan
 
-**Status:** WP1–WP3 implemented; WP4–WP12 proposed; WP13 requires separate authorization.
+**Status:** WP1–WP4 implemented; WP5–WP12 proposed; WP13 requires separate authorization.
 **Baseline:** Extension specification v0.3.
 
 Follow the [agent guide](../AGENTS.md), [extension specification](was_language_extensions_spec.md),
@@ -11,12 +11,14 @@ The spec defines behavior; this plan defines incremental work. References use nu
 
 Comments, local initializer inference, exact `%`, and export selection are implemented prerequisites.
 WP1 adds numeric compound assignments; WP2 adds bare while transfers and flow/label
-tracking; WP3 adds block/if values and internal `Never`. The baseline implementation
-notes below reflect those completed packages.
+tracking; WP3 adds block/if values and internal `Never`; WP4 adds statement/value
+loops with reachable break-result constraints and explicit divergence. The baseline
+implementation notes below reflect those completed packages.
 
 Evidence: `src/lexer.rs`, `src/parser.rs`, `src/semantic.rs`, `src/codegen/numeric.rs`, `src/cli.rs`,
 `tests/comments.rs`, `tests/inference.rs`, `tests/remainder.rs`, `tests/emitter.rs`,
-`tests/compound_assignment.rs`, `tests/loop_control.rs`, and `tests/block_values.rs`.
+`tests/compound_assignment.rs`, `tests/loop_control.rs`, `tests/block_values.rs`,
+and `tests/value_loops.rs`.
 
 - `Type` in `src/ast.rs` is a small `Copy` enum, not an extensible callable/type tree.
   `Block` and `TypedBlock` are currently `Vec<Statement>` / `Vec<TypedStatement>`.
@@ -50,7 +52,7 @@ Evidence: `src/lexer.rs`, `src/parser.rs`, `src/semantic.rs`, `src/codegen/numer
 - Old-source Wasm fixtures must remain unchanged unless an explicit contract decision
   justifies a difference. Never regenerate goldens to conceal incidental drift.
 
-WP1–WP3 are implemented; subsequent extensions below remain proposed. New keywords
+WP1–WP4 are implemented; subsequent extensions below remain proposed. New keywords
 require matching host source-name validation, not restrictions on arbitrary
 nonempty host module/field names. Reserve standalone `_`
 when its syntax arrives, reject its bindings, retain `_temp`, and keep `by` contextual.
@@ -216,22 +218,54 @@ hidden/skipped typed input. Independent decoded region/drop/local assertions and
 Validator checks accompany Node execution for selected arms, shadowing,
 short-circuiting, returns/transfers, original compound places and trap order.
 Import snapshots, exports and optimization parity remain tested. Independent
-legacy unary-minus byte expectations are retained. WP4 is next.
+legacy unary-minus byte expectations are retained. WP4 extends these regions.
 
-### WP4 — Statement/value `loop` (spec §7)
+### WP4 — Statement/value `loop` (spec §7): implemented
 
-**Entry:** WP3. Reuse target tracking and value regions. Statement loops allow bare
-break; value loops unify reachable breaks to one nonvoid type and reject bare breaks.
-Only breaks targeting that loop contribute; nested breaks do not type outer loops.
-Analyze unreachable breaks for validity without using them as reachable constraints.
-No reachable exit means `Never`; inferred `let x = loop {};` fails for lack of a
-storage type, while `let x: number = loop {};` is accepted and later code is checked.
+**Completed scope:** Reserved `loop`, statement/value loops and `break value;`.
+Raw/typed expression and statement enums add `Loop { body }`, with a per-function
+LoopId in typed nodes. Existing bare Break variants remain; raw `BreakValue(Expr)`
+and typed `BreakValue { target, value }` are separate. Loop bodies retain strict
+statement vectors, not tails. Update public exhaustive matches; no ABI/type
+representation changes are introduced.
 
-**Exit tests:** extend `tests/loop_control.rs` / `tests/block_values.rs`; mixed break
-values, wrong loop kinds, nested targets, Never inference and forged break result
-annotations. Decode typed outer block and relative branches; execute bounded loops
-returning number/bool/string/array handles. Do not execute unbounded examples without
-a bounded subprocess; compiler subprocess deadlines are not guest fuel.
+Prefix bare loops in function/statement bodies, including `loop {};`, are
+statements. In value blocks, final bare loops without semicolons are value tails;
+nonfinal or semicolon-terminated bare loops are statements. Parenthesized loops
+are expressions, including discarded values. No newline heuristics or arithmetic
+continuation across bare statement-loop boundaries. Reserve loop in host source
+names, never module/field names.
+
+Statement/while loops allow only bare breaks; value loops require values. All
+reachable breaks targeting a value loop unify to one concrete nonvoid type.
+Nested-loop constraints are consumed independently. Private Flow carries reachable
+constraints through sequence/branch composition; there is no constraint collector
+that ignores reachability, subtree rewalk, or public flow annotation. Unreachable
+breaks do not constrain results but remain contextually/type checked. Void values
+are invalid; a Never RHS performs no actual break. Kind/void failures have located
+`MissingBreakValue`, `BreakValueNotAllowed`, and `InvalidBreakValue` errors; reachable
+result conflicts use TypeMismatch at the enclosing loop's diagnostic span.
+
+No reachable exit yields Never. Inferred `let x = loop {};` fails; annotated
+initialization is accepted with no reachable store, and later source is checked.
+Nonvoid functions allow returns or explicit divergence, never normal fallthrough.
+Ordinary while remains conservative even with literal true; a noncompleting while
+condition consumes its own break/continue outcomes without inventing completion.
+
+Checked lowering uses a declared single-result outer block and empty backedge loop,
+then verifies the annotation against reconstructed flow. Unreachable breaks with
+incompatible raw Wasm payloads emit Unreachable rather than an invalid typed branch;
+their constraints still fail if reachable. Keep dynamic label identities, scoped
+cleanup, live stack prefixes, separate planners, helper ordering and no result local.
+The walker traverses loop bodies within block hooks and value-break RHSs as expressions.
+
+**Implemented coverage:** `tests/value_loops.rs`, focused lexer/parser/semantic,
+walker/backend/cleanup tests, diagnostics and CLI/browser suites. Validator plus
+independent region/branch/local/helper assertions accompany bounded Node execution
+of all result types, effects, transfers, aliases and saved compound places. Forged
+IDs, loop kinds/results and hidden/unreachable children are checked. Legacy fixtures,
+optimization parity, exports and import snapshots are retained. Unbounded loops
+are compile-only tests; subprocess deadlines are not guest fuel. WP5 is next.
 
 ### WP5 — Safe ranges, range/array `for`, membership (spec §§5–6)
 

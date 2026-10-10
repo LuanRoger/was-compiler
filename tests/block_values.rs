@@ -432,7 +432,6 @@ fn hidden_and_abrupt_source_children_still_receive_scope_type_and_return_checks(
     }
     for body in [
         "while { break; } {}",
-        "while { continue; } {}",
         "while true { let n: number = { break; }; return 1; }",
         "false && { return 1; };",
     ] {

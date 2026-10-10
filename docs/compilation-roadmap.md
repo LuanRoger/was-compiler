@@ -528,10 +528,11 @@ belong to WP11, not this milestone.
 
 `break;` exits the nearest enclosing while and `continue;` reevaluates its
 condition, including under nested branches and loops. Transfers cannot cross
-function boundaries. They require semicolons and do not accept values or labels;
-`for` and statement/value `loop` remain future work. These two keywords now reserve
-previously usable source and host-language names; rename existing bindings or
-functions using them. Host import module/field names remain unaffected.
+function boundaries. WP2 introduces bare semicolon-terminated transfers; WP4
+below adds statement/value loop and value breaks. Labels and for remain future
+work. Break/continue reserve previously usable source and host-language names;
+rename existing bindings/functions using them. Host module/field names remain
+unaffected.
 
 The raw statement enum gains unit `Break` / `Continue` variants. The typed API
 adds per-function `LoopId`, `While.id`, and `Break { target }` /
@@ -594,7 +595,43 @@ Coverage includes `tests/block_values.rs`, frontend/planner/checked-backend unit
 independent decoded MVP region/local/drop checks plus Validator, legacy byte
 expectations, and Node tests of effects, scopes, transfers, saved compound places
 and trap order. CLI/browser parity and diagnostics, forged annotations, hidden
-bodies and skipped operands remain covered. WP4 (statement/value `loop`) is next.
+bodies and skipped operands remain covered. WP4 extends these regions.
+
+## Implemented language extension: statement/value loops (WP4)
+
+`loop` is now a reserved source/host-language keyword. Statements allow bare
+breaks; loop expressions produce number, bool, string or numeric-array results
+through value breaks. Raw/typed statement and expression enums add `Loop { body }`
+(with `id` in typed nodes), while preserving strict statement-vector bodies.
+Bare Break variants remain; raw `BreakValue(Expr)` and typed
+`BreakValue { target, value }` are separate. No new ABI or storage Type is added.
+Prefix bare loops, including `loop {};`, are statements. A final bare loop in a
+value block without `;` is a tail; nonfinal/semicolon-terminated loops are
+statements. Parenthesized loops are expressions. Whitespace never chooses context.
+
+Only reachable breaks targeting a value loop constrain its result, with exact
+nonvoid joins. Nested-loop constraints are consumed at their own boundary. Private
+Flow carries reachable constraints through sequence/branch composition and now
+separates explicit divergence. Unreachable breaks still require the right loop
+kind, nonvoid RHS and valid children, but do not type the loop. A Never RHS supplies
+no value or actual break. A no-exit loop is Never; inferred initialization fails,
+annotated initialization has no reachable store. Nonvoid functions may return or
+explicitly diverge, never fall through. Ordinary while remains conservative even
+with literal true; noncompleting conditions consume their own transfers accurately.
+
+MVP lowering uses a typed outer block and empty backedge loop, with identity-based
+branch depths and no artificial result local. The declared result chooses the
+region type; checked lowering reconstructs and verifies the outcome. An unreachable
+break with an incompatible raw payload emits Unreachable instead of an invalid
+branch, while a reachable conflict still rejects compilation. Scope/label cleanup,
+helper order and separate memory/local/scratch/remainder planning are preserved.
+
+`tests/value_loops.rs` and focused frontend/planner/backend tests cover result
+joins, Never, unreachable checks, forged targets/kinds/annotations, legacy bytes,
+exports and owned imports. Independent decoded regions/branches/locals plus
+Validator accompany bounded Node effects/alias/transfer/stack-prefix tests and
+CLI/browser parity/diagnostics. Infinite cases are compile-only; resource controls
+remain the embedding's responsibility. WP5 (ranges and `for`) is next.
 
 ## Remaining work
 

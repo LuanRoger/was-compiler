@@ -6,7 +6,9 @@ use crate::{
 use wasm_encoder::Instruction;
 
 use super::{
-    CodegenError, control_flow, expect_operand, expect_type, function::BodyEmitter, place,
+    CodegenError, control_flow, expect_operand, expect_type,
+    function::{BodyEmitter, LoopKind},
+    place,
 };
 
 pub(super) fn emit_block(
@@ -98,11 +100,60 @@ pub(super) fn emit(
             body: block,
         } => control_flow::emit_while(*id, cond, block, emitter, span),
 
+        TypedStatementKind::Loop { id, body } => {
+            let (flow, _) = control_flow::emit_loop(*id, body, LoopKind::Statement, emitter, span)?;
+
+            if !flow.can_fall_through() {
+                emitter.instruction(&Instruction::Unreachable);
+            }
+
+            Ok(flow)
+        }
+
         TypedStatementKind::Break { target } => {
             let context = emitter.loop_context(*target, span)?;
+            if matches!(context.kind, LoopKind::Value(_)) {
+                return Err(CodegenError::MissingBreakValue {
+                    function: function.into(),
+                    span,
+                });
+            }
             emitter.branch(context.break_label)?;
 
             Ok(Flow::BREAK)
+        }
+
+        TypedStatementKind::BreakValue { target, value } => {
+            let context = emitter.loop_context(*target, span)?;
+            let LoopKind::Value(result) = context.kind else {
+                return Err(CodegenError::BreakValueNotAllowed {
+                    function: function.into(),
+                    span,
+                });
+            };
+            if matches!(value.ty, ExprResult::Void | ExprResult::Value(Type::Void)) {
+                return Err(CodegenError::InvalidBreakValue {
+                    function: function.into(),
+                    span,
+                });
+            }
+
+            let flow = emitter.emit_expr(value, span)?;
+            let Some(ty) = value.ty.value_type() else {
+                // Never has no value and never reaches the transfer.
+                return Ok(flow);
+            };
+
+            if super::expression::wasm_result(value.ty) == super::expression::wasm_result(result) {
+                emitter.branch(context.break_label)?;
+            } else {
+                // A mismatched break may be unreachable after composition. Check
+                // its RHS, but do not emit a branch with an invalid Wasm payload.
+                // The loop still rejects its type constraint if it is reachable.
+                emitter.instruction(&Instruction::Unreachable);
+            }
+
+            Ok(flow.then(Flow::value_break(ty)))
         }
 
         TypedStatementKind::Continue { target } => {

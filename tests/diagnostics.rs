@@ -70,6 +70,9 @@ fn semantic_errors(span: Span) -> Vec<SemanticError> {
         },
         SemanticError::InvalidAssignmentTarget { span },
         SemanticError::BreakOutsideLoop { span },
+        SemanticError::BreakValueNotAllowed { span },
+        SemanticError::MissingBreakValue { span },
+        SemanticError::InvalidBreakValue { span },
         SemanticError::ContinueOutsideLoop { span },
         SemanticError::UnexpectedReturnValue { span },
         SemanticError::MissingReturn {
@@ -158,6 +161,18 @@ fn located_codegen_errors(span: Span) -> Vec<CodegenError> {
         CodegenError::InvalidLoopTarget {
             function: "main".into(),
             target: LoopId(1),
+            span,
+        },
+        CodegenError::BreakValueNotAllowed {
+            function: "main".into(),
+            span,
+        },
+        CodegenError::MissingBreakValue {
+            function: "main".into(),
+            span,
+        },
+        CodegenError::InvalidBreakValue {
+            function: "main".into(),
             span,
         },
         CodegenError::UnknownVariable {

@@ -1,18 +1,80 @@
-/// Possible completions of a statement or block, independent of static checking.
+use crate::ast::Type;
+
+/// Possible completions, with reachable value-break constraints for the nearest loop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Flow(u8);
+pub(crate) struct Flow {
+    completions: u8,
+    break_types: u8,
+    first_break_type: Option<Type>,
+}
 
 impl Flow {
-    pub(crate) const NONE: Self = Self(0);
-    pub(crate) const FALLTHROUGH: Self = Self(1);
-    pub(crate) const RETURN: Self = Self(2);
-    pub(crate) const BREAK: Self = Self(4);
-    pub(crate) const CONTINUE: Self = Self(8);
+    pub(crate) const NONE: Self = Self::completion(0);
+    pub(crate) const FALLTHROUGH: Self = Self::completion(1);
+    pub(crate) const RETURN: Self = Self::completion(2);
+    pub(crate) const BREAK: Self = Self::completion(4);
+    pub(crate) const CONTINUE: Self = Self::completion(8);
+    pub(crate) const DIVERGE: Self = Self::completion(16);
+
+    const fn completion(completions: u8) -> Self {
+        Self {
+            completions,
+            break_types: 0,
+            first_break_type: None,
+        }
+    }
+
+    fn type_bit(ty: Type) -> u8 {
+        match ty {
+            Type::Number => 1,
+            Type::Bool => 2,
+            Type::String => 4,
+            Type::NumberArray => 8,
+            Type::Void => 16,
+        }
+    }
+
+    pub(crate) fn value_break(ty: Type) -> Self {
+        Self {
+            break_types: Self::type_bit(ty),
+            first_break_type: Some(ty),
+            ..Self::BREAK
+        }
+    }
+
+    pub(crate) fn break_type(self) -> Result<Option<Type>, (Type, Type)> {
+        let Some(expected) = self.first_break_type else {
+            return Ok(None);
+        };
+
+        for found in [
+            Type::Number,
+            Type::Bool,
+            Type::String,
+            Type::NumberArray,
+            Type::Void,
+        ] {
+            if found != expected && self.break_types & Self::type_bit(found) != 0 {
+                return Err((expected, found));
+            }
+        }
+
+        Ok(Some(expected))
+    }
+
+    pub(crate) fn returns_or_diverges(self) -> bool {
+        self.completions != 0
+            && self.completions & !(Self::RETURN.completions | Self::DIVERGE.completions) == 0
+    }
 
     /// Only normally completing paths reach the next statement.
     pub(crate) fn then(self, next: Self) -> Self {
         if self.can_fall_through() {
-            Self((self.0 & !Self::FALLTHROUGH.0) | next.0)
+            Self {
+                completions: self.completions & !Self::FALLTHROUGH.completions,
+                ..self
+            }
+            .join(next)
         } else {
             self
         }
@@ -23,20 +85,39 @@ impl Flow {
     }
 
     pub(crate) fn join(self, other: Self) -> Self {
-        Self(self.0 | other.0)
-    }
-
-    pub(crate) fn always_returns(self) -> bool {
-        self == Self::RETURN
+        Self {
+            completions: self.completions | other.completions,
+            break_types: self.break_types | other.break_types,
+            first_break_type: self.first_break_type.or(other.first_break_type),
+        }
     }
 
     pub(crate) fn can_fall_through(self) -> bool {
-        self.0 & Self::FALLTHROUGH.0 != 0
+        self.completions & Self::FALLTHROUGH.completions != 0
     }
 
     /// A while may execute zero times; loop transfers never escape its boundary.
     pub(crate) fn while_loop(self) -> Self {
-        Self(Self::FALLTHROUGH.0 | (self.0 & Self::RETURN.0))
+        Self::completion(
+            Self::FALLTHROUGH.completions
+                | (self.completions & (Self::RETURN.completions | Self::DIVERGE.completions)),
+        )
+    }
+
+    /// A backedge may repeat forever; only a reachable break completes normally.
+    pub(crate) fn infinite_loop(self) -> Self {
+        let mut completions =
+            self.completions & (Self::RETURN.completions | Self::DIVERGE.completions);
+
+        if self.completions & Self::BREAK.completions != 0 {
+            completions |= Self::FALLTHROUGH.completions;
+        }
+
+        if self.completions & (Self::FALLTHROUGH.completions | Self::CONTINUE.completions) != 0 {
+            completions |= Self::DIVERGE.completions;
+        }
+
+        Self::completion(completions)
     }
 }
 
@@ -47,7 +128,7 @@ mod tests {
     #[test]
     fn empty_outcomes_and_fallthrough_removal_compose() {
         assert!(!Flow::NONE.can_fall_through());
-        assert!(!Flow::NONE.always_returns());
+        assert!(!Flow::NONE.returns_or_diverges());
         assert_eq!(Flow::NONE.then(Flow::RETURN), Flow::NONE);
         assert_eq!(Flow::FALLTHROUGH.without_fallthrough(), Flow::NONE);
 
@@ -81,12 +162,15 @@ mod tests {
     }
 
     #[test]
-    fn only_a_pure_return_guarantees_function_return() {
-        assert!(Flow::RETURN.always_returns());
+    fn function_completion_requires_return_or_explicit_divergence() {
+        assert!(Flow::RETURN.returns_or_diverges());
+        assert!(Flow::DIVERGE.returns_or_diverges());
+        assert!(Flow::RETURN.join(Flow::DIVERGE).returns_or_diverges());
 
         for outcome in [Flow::FALLTHROUGH, Flow::BREAK, Flow::CONTINUE] {
-            assert!(!outcome.always_returns());
-            assert!(!outcome.join(Flow::RETURN).always_returns());
+            assert!(!outcome.returns_or_diverges());
+            assert!(!outcome.join(Flow::RETURN).returns_or_diverges());
+            assert!(!outcome.join(Flow::DIVERGE).returns_or_diverges());
         }
 
         assert!(Flow::FALLTHROUGH.can_fall_through());
@@ -109,7 +193,7 @@ mod tests {
         let transfers = Flow::BREAK.join(Flow::CONTINUE);
 
         assert_eq!(transfers.then(Flow::RETURN), transfers);
-        assert!(!transfers.then(Flow::RETURN).always_returns());
+        assert!(!transfers.then(Flow::RETURN).returns_or_diverges());
     }
 
     #[test]
@@ -128,7 +212,7 @@ mod tests {
             conditional_break.then(Flow::RETURN),
             Flow::BREAK.join(Flow::RETURN)
         );
-        assert!(!conditional_break.then(Flow::RETURN).always_returns());
+        assert!(!conditional_break.then(Flow::RETURN).returns_or_diverges());
         assert_eq!(
             conditional_break.then(Flow::CONTINUE.join(Flow::FALLTHROUGH)),
             Flow::BREAK.join(Flow::CONTINUE).join(Flow::FALLTHROUGH)
@@ -151,6 +235,54 @@ mod tests {
     }
 
     #[test]
+    fn value_break_constraints_follow_reachable_sequence_and_nested_boundaries() {
+        use crate::ast::Type;
+
+        let number = Flow::value_break(Type::Number);
+        let boolean = Flow::value_break(Type::Bool);
+
+        assert_eq!(number.break_type(), Ok(Some(Type::Number)));
+        assert_eq!(number.then(boolean).break_type(), Ok(Some(Type::Number)));
+        assert_eq!(Flow::RETURN.then(number).break_type(), Ok(None));
+        assert_eq!(Flow::DIVERGE.then(number).break_type(), Ok(None));
+        assert_eq!(
+            number.join(boolean).break_type(),
+            Err((Type::Number, Type::Bool))
+        );
+        assert_eq!(
+            boolean.join(number).break_type(),
+            Err((Type::Bool, Type::Number))
+        );
+        assert_eq!(number.infinite_loop().break_type(), Ok(None));
+        assert_eq!(number.while_loop().break_type(), Ok(None));
+        assert_eq!(
+            number.infinite_loop().then(boolean).break_type(),
+            Ok(Some(Type::Bool))
+        );
+        assert_eq!(
+            Flow::DIVERGE.infinite_loop().then(boolean).break_type(),
+            Ok(None)
+        );
+    }
+
+    #[test]
+    fn infinite_loops_consume_transfers_without_inventing_fallthrough() {
+        assert_eq!(Flow::FALLTHROUGH.infinite_loop(), Flow::DIVERGE);
+        assert_eq!(Flow::CONTINUE.infinite_loop(), Flow::DIVERGE);
+        assert_eq!(Flow::BREAK.infinite_loop(), Flow::FALLTHROUGH);
+        assert_eq!(Flow::RETURN.infinite_loop(), Flow::RETURN);
+        assert_eq!(Flow::DIVERGE.infinite_loop(), Flow::DIVERGE);
+        assert_eq!(
+            Flow::RETURN.join(Flow::CONTINUE).infinite_loop(),
+            Flow::RETURN.join(Flow::DIVERGE)
+        );
+        assert_eq!(
+            Flow::BREAK.join(Flow::FALLTHROUGH).infinite_loop(),
+            Flow::FALLTHROUGH.join(Flow::DIVERGE)
+        );
+    }
+
+    #[test]
     fn while_consumes_transfers_and_conservatively_completes() {
         for body in [
             Flow::FALLTHROUGH,
@@ -169,7 +301,7 @@ mod tests {
             Flow::RETURN.while_loop(),
             Flow::FALLTHROUGH.join(Flow::RETURN)
         );
-        assert!(!Flow::RETURN.while_loop().always_returns());
+        assert!(!Flow::RETURN.while_loop().returns_or_diverges());
         assert_eq!(
             Flow::BREAK.then(Flow::RETURN).while_loop(),
             Flow::FALLTHROUGH
@@ -178,7 +310,12 @@ mod tests {
             Flow::CONTINUE.then(Flow::RETURN).while_loop(),
             Flow::FALLTHROUGH
         );
-        assert!(Flow::BREAK.while_loop().then(Flow::RETURN).always_returns());
+        assert!(
+            Flow::BREAK
+                .while_loop()
+                .then(Flow::RETURN)
+                .returns_or_diverges()
+        );
         assert_eq!(
             Flow::RETURN.while_loop().while_loop(),
             Flow::FALLTHROUGH.join(Flow::RETURN)

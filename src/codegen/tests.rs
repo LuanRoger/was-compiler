@@ -456,3 +456,4 @@ mod locals;
 mod loop_control;
 mod malformed;
 mod runtime;
+mod value_loops;

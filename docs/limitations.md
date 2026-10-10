@@ -7,8 +7,8 @@ promises**. This document does not propose code optimization.
 ## Status and scope
 
 M0–M9, including CLI/runtime integration, numeric-array equality, and floating-point
-remainder, are implemented, as are WP1–WP3: compound assignments, while
-transfers, and tail-valued block/if expressions. Current behavior below is grounded in
+remainder, are implemented, as are WP1–WP4: compound assignments, while
+transfers, tail-valued block/if expressions, and statement/value loops. Current behavior below is grounded in
 the frontend/backend, [CLI](../src/cli.rs), [diagnostics](../src/diagnostic.rs),
 [export policy](../src/exports.rs), [Node runtime](../runtime/index.cjs), and their
 unit/integration tests. See
@@ -49,12 +49,13 @@ updates check the target once and save its address and old value before RHS
 effects; failure traps before RHS evaluation. `%=` shares exact floating remainder
 behavior with `%`. Captured-binding updates remain future closure work.
 
-`break` and `continue` are reserved source keywords and host-language names; old
-bindings/functions using these exact names must be renamed. Host module/field
-names are unaffected. Transfers outside a loop are semantic errors, including
-after a return or in an unselected function. Value-bearing or labeled transfers
-are parse errors in this release. Unreachable statements remain checked and
-emitted, even though transfers skip their runtime effects and traps.
+`break`, `continue`, and `loop` are reserved source keywords and host-language
+names; rename existing bindings/functions using them. Host module/field names
+are unaffected. Transfers outside a loop are semantic errors, including after a
+return or in an unselected function. Value breaks work only in loop expressions;
+in while/statement loops they are semantic errors, not parse errors. Labels remain
+unsupported (`break outer;` parses as a value expression, not a label).
+Unreachable statements remain checked/emitted despite skipped runtime effects.
 
 Tail-valued expression blocks and `if`/`else if` values are implemented. A trailing
 semicolon discards a result; normally completing branches must match exactly,
@@ -69,11 +70,22 @@ a final bare if in an expression block is instead its tail. Parenthesize the
 whole if for arithmetic continuation in statement/tail-classification positions:
 `if true {} -1;` remains two statements, independent of whitespace.
 
+Statement/value `loop` is implemented. Its body is a strict statement vector;
+only `break value;` supplies a result. Reachable break values must match exactly,
+with nested loops independent. Unreachable breaks remain contextually/type checked
+but do not constrain the result. A Never RHS never reaches its break; Void RHSs
+are invalid. Bare prefix loops in statement bodies (including `loop {};`) are
+statement contexts. A final bare loop in an expression block without `;` is a tail;
+nonfinal/semicolon-terminated bare loops are statements. Parenthesized loops are
+expressions. A no-exit loop yields Never; unannotated Never initialization fails,
+while annotated divergent initialization has no reachable store. Compiler resource
+controls remain an embedding responsibility, not a loop feature.
+
 | Restriction now | Practical effect | Current alternative | Possible future choice and tradeoff |
 | --- | --- | --- | --- |
 | Only `number`, `bool`, `string`, `number[]`, and `void` exist. Parameters and return types require annotations; every `let` requires an initializer. No function inference, whole-program type unification, promotions, implicit coercions, or source `i32` type. | Local inference does not change the `f64` numeric model or allow later assignments of another type. A boolean cannot stand in for a number, and a numeric value cannot serve as a condition; `void` is not a variable/parameter type. | Use inferred or explicitly annotated locals and explicit helper functions, branches, or registered host conversions with matching signatures. | Explicit conversions or broader inference require separate type-system and error-ordering decisions; neither is implied by local initializer inference. |
 | No source modules/import declarations, structs, generics, first-class functions, or closures. Calls resolve named user functions, registered hosts, or the built-in `len`. | The source program is one collection of functions; host registration is an embedding/CLI responsibility. | Put related functions in one source unit and supply external capabilities through host functions. Numeric-array conventions can model simple records, but have no field/type safety. | Modules or dedicated aggregate/function types need name-resolution, type-system, and ABI decisions. Host-side modeling avoids those changes but keeps application-specific conventions outside the language. |
-| Control flow is `if`/`else`, `while`, `return`, and bare `break;` / `continue;` targeting the nearest enclosing while. No labels, value breaks, `loop`, `for`, or `foreach`. Every nonvoid function must return on all statically recognized paths. A while body alone is not a guaranteed return, even `while true`; an unconditional explicit return in its condition does guarantee return before the body. | Transfers work under nested branches but cannot cross function boundaries or yield values. Intentionally non-returning nonvoid functions still need an explicit fallback return. | Use a numeric index and `len(array)`, nearest-loop transfers, nested conditions, and an explicit fallback return. Use `void` where no result is intended. | New loop forms require separate semantic/control-flow rules and tests; internal `Never` for expression transfers is already supported. They are not behavior-preserving cleanup. |
+| No labels, `for`, or `foreach`. Transfers target the nearest while/loop; only value loops allow value breaks. Nonvoid functions must return or explicitly diverge, never fall through. Ordinary while remains conservative even with literal true. | Loops cannot transfer across function boundaries. A no-exit syntactic loop is Never, but arbitrary calls or possible traps do not prove divergence. | Use statement/value `loop`, numeric-index while plus `len(array)`, and explicit returns. Parenthesize loops to discard their values; annotate divergent local initializers. | Range/array iteration requires its own grammar, numeric safety, continuation/latch, and representation tests; it is WP5, not incidental cleanup. |
 | Array indexing in source starts from an identifier; there is no general postfix chaining. | `make_values()[0]` and `[1, 2][0]` are not supported source forms. | Assign the result/literal to an inferred or annotated `number[]` local, then index that local. | General postfix parsing is a grammar feature and needs explicit assignment-target rules. |
 | Identifiers are ASCII letters/underscore followed by ASCII letters/digits/underscore. | Unicode identifiers are unsupported. | Use ASCII identifiers. | Define a Unicode identifier policy with normalization/confusable-name decisions. |
 | Numeric literals contain digits, optionally a dot with digits on both sides. No exponent notation, `.5`, or `1.`. A leading minus is an operator. | `1e3`, `.5`, and `1.` cannot be used as number literals. | Write `1000`, `0.5`, and `1.0`; use unary `-` for negative values. | Broader literal syntax needs matching lexer and backend validation so forged typed literals do not bypass the grammar. |
@@ -258,6 +270,9 @@ types/spans, exact binary64 edge cases against an independent reference, and
 once-only left-to-right operand effects. [Block-value tests](../tests/block_values.rs)
 cover result categories, scopes, transfers, branch effects, saved compound places,
 trap order, deterministic output, and import/export/optimization contracts.
+[Value-loop tests](../tests/value_loops.rs) extend those contracts to all loop
+results, reachable constraints, nested contexts, forged annotations/targets,
+explicit divergence, aliasing, and live operand-stack prefixes.
 The compiler-in-Wasm path uses the same pipeline;
 [browser tests](../tests/browser.rs) execute emitted guest modules.
 

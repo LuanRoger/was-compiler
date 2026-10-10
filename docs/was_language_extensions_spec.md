@@ -1,11 +1,11 @@
 # WAS Language Extensions — Unified Design and Implementation Specification
 
-**Status:** Design baseline with the 13 approved decisions and implementation clarifications (WP1–WP3 implemented: compound assignments, while transfers, block/if values and internal Never; remaining extensions proposed)
+**Status:** Design baseline with the 13 approved decisions and implementation clarifications (WP1–WP4 implemented: compound assignments, while transfers, block/if values, internal Never and statement/value loops; remaining extensions proposed)
 **Version:** 0.3 — 9 October 2026 (implementation clarification update)  
 **Target:** Core WebAssembly, initially the MVP-compatible instruction set already used by `was-compiler`, with optional optimizations gated by Wasm features.  
 **Repository:** https://github.com/LuanRoger/was-compiler
 
-> **Normative language.** **MUST**, **SHOULD**, and **MAY** describe requirements, strong recommendations, and optional implementation choices. This document establishes a coherent *proposed* semantic model. Decisions tagged **Open decision** need confirmation before being frozen as language guarantees. Compound assignments (§4/WP1), bare `while` transfers (§7/WP2), and block/if values with internal Never (§§3.2, 8.1/WP3) are implemented. Other extension examples remain proposed `.was` syntax, not claims about the present compiler.
+> **Normative language.** **MUST**, **SHOULD**, and **MAY** describe requirements, strong recommendations, and optional implementation choices. This document establishes a coherent *proposed* semantic model. Decisions tagged **Open decision** need confirmation before being frozen as language guarantees. Compound assignments (§4/WP1), bare `while` transfers (§7/WP2), block/if values with internal Never (§§3.2, 8.1/WP3), and statement/value loops (§7/WP4) are implemented. Other extension examples remain proposed `.was` syntax, not claims about the present compiler.
 
 The [concrete implementation plan](was_language_extensions_plan.md) maps this
 specification to ordered work packages, repository files, acceptance tests, and
@@ -13,7 +13,8 @@ validation gates. This revision retains the approved v0.2 direction, including
 shared mutable captures and local-only closures; it clarifies implementation
 safety and corrects the current-language baseline. Compound assignments (§4/WP1)
 and bare `while` transfers (§7/WP2), followed by block/if values and internal Never
-(§§3.2, 8.1/WP3), are implemented; WP4 onward remains proposed.
+(§§3.2, 8.1/WP3) and statement/value loops (§7/WP4), are implemented;
+WP5 onward remains proposed.
 
 ## 1. Goals and non-goals
 
@@ -42,8 +43,9 @@ and bare `while` transfers (§7/WP2), followed by block/if values and internal N
 The current compiler supports `fn` with required parameter/return annotations,
 annotated `let name: type = value;` and inferred `let name = value;` declarations,
 reassignment, numeric compound assignments, `if`, `while`, bare `break;` /
-`continue;`, `return`, tail-valued blocks, value-context `if` / `else if`, named
-calls, and `number`, `bool`, `string`, `number[]`, and
+`continue;`, `return`, statement/value `loop`, value breaks in loop expressions,
+tail-valued blocks, value-context `if` / `else if`, named calls, and `number`,
+`bool`, `string`, `number[]`, and
 `void`. Every local requires an initializer and retains a fixed type. `//` line comments and non-nesting `/* ... */` block comments are implemented.
 Use the local implementation and tests, alongside README and grammar, as evidence
 of the existing-language baseline rather than assuming a public copy is current.
@@ -63,7 +65,7 @@ output and diagnostics; the extensions below do not imply optimization passes.
 
 **Compatibility requirements:**
 
-- Existing valid programs MUST remain valid wherever possible, except new keywords intentionally reserve previously usable names. `break` and `continue` are now reserved source/host-language names; existing bindings/functions using them must be renamed. Standalone `_` bindings are intentionally reserved when their extension arrives. Host import module/field names remain unaffected.
+- Existing valid programs MUST remain valid wherever possible, except new keywords intentionally reserve previously usable names. `break`, `continue`, and `loop` are now reserved source/host-language names; existing bindings/functions using them must be renamed. Standalone `_` bindings are intentionally reserved when their extension arrives. Host import module/field names remain unaffected.
 - `let` MUST remain assignable under this extension set (no implicit switch to Rust-like immutable `let`).
 - Any optimization MUST preserve observable `f64` numerical semantics unless a separately documented opt-in mode is introduced.
 - Host imports/exports MUST retain their current raw ABI. Functions with `range` parameters/results cannot be raw-exported or imported until a host ABI is defined; callable types in function signatures are not supported in v1.
@@ -102,11 +104,11 @@ Unless explicitly stated otherwise:
 ### 3.2 Values, control flow, and divergence
 
 **Implementation status:** WP3 implements block/if results and semantic categories
-`Value(T)`, `Void`, and `Never`; future `loop` and `match` forms below remain proposed.
-Never means no normal completion, not necessarily nontermination: an explicit
-`return`, `break`, or `continue` can terminate a block's normal path. A possible
-runtime trap or arbitrary call is not inferred as Never. Future loops with no
-reachable exit may also yield Never. Track transfer targets separately from value
+`Value(T)`, `Void`, and `Never`; WP4 adds statement/value loops. Match remains
+proposed. Never means no normal completion, not necessarily nontermination:
+explicit return, break, or continue can terminate a block's normal path, and a
+syntactic loop without a reachable exit yields Never. A possible runtime trap or
+arbitrary call is not inferred as Never. Track transfer targets separately from value
 types. Never has no source spelling, storage, or ABI type. **Do not** require full
 termination proofs or omit required static checks based on reachability.
 
@@ -141,8 +143,13 @@ let result: number = {
   normally completing paths; Never branches are allowed. In implemented syntax,
   `let value = { return 1; };` in a number-returning function cannot infer a storage
   type, whereas `let value: number = { return 1; };` is accepted without a reachable
-  store. Void results cannot initialize locals. Future `loop {}` follows the same
-  inference rule, but loop syntax is not implemented yet.
+  store. Void results cannot initialize locals. Implemented `loop {}` follows the
+  same rule: `let value = loop {};` fails inference, while an explicitly annotated
+  divergent initializer is accepted and has no reachable store.
+- Nonvoid functions accept return or explicit divergence, never normal completion
+  without a return. `fn forever() -> number { loop {} }` is valid. This does not
+  establish that arbitrary calls, trapping operations, or ordinary while bodies
+  guarantee noncompletion; ordinary while remains conservative.
 - A divergent RHS of `&&` / `||` alone does not make the whole expression Never:
   the short-circuit path may complete normally. Check all operands regardless.
 - While loop context is active during its condition, so condition blocks can
@@ -372,14 +379,14 @@ block break_target {
 
 ## 7. Feature specification: `break`, `continue`, and infinite `loop`
 
-**Implementation status:** WP2 implements only bare `break;` and `continue;` in
-`while`, including nested branches/loops, function-local target resolution, and
-static/backend rejection outside loops. Typed while nodes carry a per-function
-`LoopId` and transfers carry resolved targets. Value-bearing breaks, labels,
-`for`, and statement/value `loop` remain proposed. Transfers never count as a
-function return. WP3 also supports these transfers inside expression regions and
-in a loop's own condition; an unconditional condition return guarantees return
-before the body, whereas a while body alone still requires a fallback return.
+**Implementation status:** WP2–WP4 implement while transfers, transfers through
+expression regions/conditions, and statement/value loops with value breaks.
+Typed while/loop nodes carry per-function LoopIds; transfers carry resolved
+innermost targets. Labels and for remain proposed. A transfer is not a function
+return, but a loop without reachable exit explicitly diverges. Nonvoid functions
+allow returns or explicit divergence, never normal fallthrough. Ordinary while
+remains conservative even with literal true; a noncompleting condition consumes
+its own break/continue outcomes without inventing normal completion.
 
 ### 7.1 Syntax
 
@@ -407,7 +414,16 @@ let first: number = loop {
 - `break;` is valid in `while`, `for`, and statement-position `loop`.
 - `continue;` is valid in any loop; it skips to the loop's continuation/latch point.
 - `break EXPR;` is valid only for a `loop` expression. Every *reachable* `break` targeting that loop expression MUST produce a compatible non-`void` value; a bare `break;` in that loop is a type error.
-- `loop { ... }` can be used as a `void` statement or a value-producing expression.
+- `loop { ... }` can be used as a statement or a value-producing expression.
+  Prefix bare loops in function/statement bodies, including `loop {};`, are
+  statements. In a value block, a final bare loop without a semicolon is its tail;
+  nonfinal/semicolon-terminated bare loops are statements. Parenthesized loops
+  are expressions, including discarded values. No newline heuristics apply.
+  Loop bodies contain strict statements; only value breaks supply results.
+- Bare breaks in value loops, value breaks in statement/while loops, and Void
+  break RHSs are invalid even when unreachable. Never RHSs supply no value or
+  actual break. Unreachable but otherwise valid break values do not constrain
+  the result; exact concrete result joins are checked at the loop boundary.
 - The type of a value-producing `loop` is the unified type of its reachable breaks. A syntactic `loop` with no reachable `break` exiting that loop has type `Never`; the analysis need not prove termination of arbitrary conditionals or functions. `Never` can flow into a concretely annotated declaration. Unreachable source is still type-checked.
 - A `break VALUE;` in a nested loop affects only that nested loop; its value does not type the outer loop.
 - Loop labels, labeled breaks, and `break VALUE` in `for`/`while` are deferred.
@@ -417,12 +433,33 @@ let first: number = loop {
 Use a stack of compiler `LoopContext` objects containing typed break target, continue target, result type, and nesting-depth bookkeeping. Never hardcode `br 0`/`br 1`: nesting `if`, `block`, or nested `loop` changes relative label depths.
 
 For a value-producing `loop`, an outer `block (result T)` can receive the break value; `break VALUE` compiles `VALUE` then branches to the result-bearing outer block. With MVP-compatible Wasm, `f64` and `i32` results are straightforward;
-`range` results use their chosen internal record/handle representation. Local
+Existing string/array results use their i32 descriptor handle. Future `range`
+results use their chosen internal record/handle representation. Local
 closure bindings are not transferable values and cannot be loop results. The empty body without breaks must not produce an arbitrary value on fallthrough.
+
+The implemented raw/typed statement and expression enums add Loop nodes, with
+body vectors and typed IDs. Bare Break variants remain; raw `BreakValue(Expr)`
+and typed `BreakValue { target, value }` are separate. Update public exhaustive
+matches. Private Flow carries reachable value-break type constraints and explicit
+divergence through sequence/branch composition, consuming them at loop boundaries.
+Do not collect unreachable constraints opportunistically or rewalk subtrees.
+
+Declared annotations choose MVP outer-block results and are verified against
+reconstructed flow. A checked unreachable break with an incompatible raw Wasm
+payload emits Unreachable instead of an invalid typed branch; its type constraint
+still rejects compilation if reachable. Preserve scopes, unique label identities,
+live operand prefixes and stack polymorphism, without an artificial result local.
+The walker traverses loop bodies within block hooks and value-break RHSs as
+expressions, leaving memory/local/scratch/remainder policies separate.
 
 ### 7.4 Acceptance tests
 
-- Nested loops pick the correct targets.
+- Nested loops pick the correct targets. WP4 tests cover all existing concrete
+  results, unreachable valid mismatches, forged kinds/results/IDs, divergent
+  initialization and nonvoid completion, plus independent decoded MVP regions
+  and branches with Validator checks. Bounded Node tests cover effects, aliases,
+  transfers and live stack prefixes. Infinite examples are compile-only tests;
+  subprocess deadlines are not guest fuel or process-tree cancellation.
 - `continue` in `for` advances the induction variable.
 - `break 10;` in `while` is rejected.
 - Mixing `break 10;` and `break true;` from the same value loop is rejected.
@@ -1133,9 +1170,10 @@ The first five milestones are approved **in this exact order**, building only th
 2. **`break` and `continue` in `while`:** introduce a minimal stack of loop targets and correct branch-depth calculation.
 3. **Tail-valued blocks and `if` expressions (implemented WP3):** context-sensitive
    block results and Never; retain explicit named-function return and check all
-   unreachable/skipped children. **Next: WP4 statement/value loop**, not included
-   in the WP3 implementation.
-4. **Statement/value `loop`:** add `break value` typing, unify reachable break results, and reuse the loop-target stack.
+   unreachable/skipped children.
+4. **Statement/value `loop` (implemented WP4):** break-value typing, reachable
+   result constraints and explicit divergence with the existing loop-target stack.
+   **Next: WP5 ranges and for**, not part of this implementation.
 5. **Ranges and `for`:** eager range validation, exact internal `i64`, `for` ranges and `number[]`, correct `continue` latch, range membership.
 
 Following these milestones, incremental later work (ordering within a group MAY be adjusted according to dependencies):

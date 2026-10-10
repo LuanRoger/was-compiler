@@ -58,6 +58,9 @@ pub enum Expr {
         args: Vec<Expr>,
     },
 
+    Loop {
+        body: Block,
+    },
     Block(ValueBlock),
     If {
         cond: Box<Expr>,
@@ -117,7 +120,11 @@ pub enum StatementKind {
         body: Block,
     },
 
+    Loop {
+        body: Block,
+    },
     Break,
+    BreakValue(Expr),
     Continue,
     Return(Option<Expr>),
     Expression(Expr),

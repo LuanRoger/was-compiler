@@ -122,7 +122,9 @@ fn collect_let_ids(block: &TypedBlock, ids: &mut Vec<VariableId>) {
                     collect_let_ids(else_, ids);
                 }
             }
-            StmtKind::While { body, .. } => collect_let_ids(body, ids),
+            StmtKind::While { body, .. } | StmtKind::Loop { body, .. } => {
+                collect_let_ids(body, ids)
+            }
             _ => {}
         }
     }
@@ -155,11 +157,18 @@ fn assert_block_spans(ast: &AstBlock, typed: &TypedBlock) {
                 StmtKind::While {
                     body: typed_body, ..
                 },
+            )
+            | (
+                AstStatementKind::Loop { body },
+                StmtKind::Loop {
+                    body: typed_body, ..
+                },
             ) => assert_block_spans(body, typed_body),
             (AstStatementKind::Let { .. }, StmtKind::Let { .. })
             | (AstStatementKind::Assignment { .. }, StmtKind::Assignment { .. })
             | (AstStatementKind::CompoundAssignment { .. }, StmtKind::CompoundAssignment { .. })
             | (AstStatementKind::Break, StmtKind::Break { .. })
+            | (AstStatementKind::BreakValue(_), StmtKind::BreakValue { .. })
             | (AstStatementKind::Continue, StmtKind::Continue { .. })
             | (AstStatementKind::Return(_), StmtKind::Return(_))
             | (AstStatementKind::Expression(_), StmtKind::Expression(_)) => {}
@@ -1412,6 +1421,222 @@ fn while_condition_blocks_resolve_transfers_to_their_own_loop() {
         block.statements[0].kind,
         StmtKind::Continue { target: *outer }
     );
+}
+
+#[test]
+fn value_loop_results_distinguish_concrete_values_and_never_rhs_breaks() {
+    for (return_type, body, result) in [
+        (
+            "number",
+            "break 1; break true;",
+            ExprResult::Value(Type::Number),
+        ),
+        ("bool", "break true;", ExprResult::Value(Type::Bool)),
+        ("string", "break \"λ\";", ExprResult::Value(Type::String)),
+        (
+            "number[]",
+            "break [1];",
+            ExprResult::Value(Type::NumberArray),
+        ),
+        ("number", "", ExprResult::Never),
+        ("number", "continue; break false;", ExprResult::Never),
+        ("number", "break { return 1; };", ExprResult::Never),
+        (
+            "bool",
+            "break { break true; 1 };",
+            ExprResult::Value(Type::Bool),
+        ),
+    ] {
+        let source = format!("fn test() -> {return_type} {{ return loop {{ {body} }}; }}");
+        let typed = analyze(&source);
+        let value = returned(&typed.functions[0].body[0]);
+
+        assert_eq!(value.ty, result, "{source}");
+        let ExprKind::Loop { id, body } = &value.kind else {
+            panic!("expected loop")
+        };
+
+        assert_eq!(*id, LoopId(0));
+        if let Some(statement) = body.first() {
+            match &statement.kind {
+                StmtKind::BreakValue { target, value } => {
+                    assert_eq!(*target, *id);
+                    if matches!(value.kind, ExprKind::Block(_)) {
+                        assert_eq!(value.ty, ExprResult::Never);
+                    } else {
+                        assert_eq!(value.ty, result);
+                    }
+                }
+                StmtKind::Continue { target } => assert_eq!(*target, *id),
+                _ => panic!("unexpected transfer"),
+            }
+        }
+    }
+}
+
+#[test]
+fn mixed_loop_ids_follow_preorder_and_target_the_nearest_kind_including_conditions() {
+    let typed = analyze(
+        "fn first() -> void {
+        loop { while loop { break true; } { (loop { break 1; }); continue; } break; }
+        (loop { break false; });
+    } fn second() -> number { return loop { break loop { break 1; }; }; }",
+    );
+    let StmtKind::Loop { id: outer, body } = &typed.functions[0].body[0].kind else {
+        panic!("expected loop")
+    };
+    let StmtKind::While {
+        id: while_id,
+        cond,
+        body: while_body,
+    } = &body[0].kind
+    else {
+        panic!("expected while")
+    };
+    let ExprKind::Loop {
+        id: cond_id,
+        body: cond_body,
+    } = &cond.kind
+    else {
+        panic!("expected condition loop")
+    };
+
+    assert_eq!(*outer, LoopId(0));
+    assert_eq!(*while_id, LoopId(1));
+    assert_eq!(*cond_id, LoopId(2));
+    assert_eq!(cond.ty, Type::Bool);
+    assert_eq!(
+        cond_body[0].kind,
+        StmtKind::BreakValue {
+            target: *cond_id,
+            value: expr(ExprKind::Bool(true), Type::Bool)
+        }
+    );
+    let StmtKind::Expression(value) = &while_body[0].kind else {
+        panic!("expected expression")
+    };
+    let ExprKind::Loop {
+        id: inner,
+        body: inner_body,
+    } = &value.kind
+    else {
+        panic!("expected inner loop")
+    };
+
+    assert_eq!(*inner, LoopId(3));
+    assert_eq!(
+        inner_body[0].kind,
+        StmtKind::BreakValue {
+            target: *inner,
+            value: number("1")
+        }
+    );
+    assert_eq!(while_body[1].kind, StmtKind::Continue { target: *while_id });
+    assert_eq!(body[1].kind, StmtKind::Break { target: *outer });
+    let StmtKind::Expression(value) = &typed.functions[0].body[1].kind else {
+        panic!("expected expression")
+    };
+
+    assert!(matches!(value.kind, ExprKind::Loop { id: LoopId(4), .. }));
+    let value = returned(&typed.functions[1].body[0]);
+    let ExprKind::Loop { id, body } = &value.kind else {
+        panic!("expected value loop")
+    };
+    let StmtKind::BreakValue { target, value } = &body[0].kind else {
+        panic!("expected value break")
+    };
+
+    assert_eq!(*id, LoopId(0));
+    assert_eq!(*target, *id);
+    let ExprKind::Loop { id: nested, body } = &value.kind else {
+        panic!("expected nested loop")
+    };
+
+    assert_eq!(*nested, LoopId(1));
+    assert_eq!(
+        body[0].kind,
+        StmtKind::BreakValue {
+            target: *nested,
+            value: number("1")
+        }
+    );
+}
+
+#[test]
+fn loop_scopes_preserve_shadow_initializer_ids_unreachable_nodes_and_byte_spans() {
+    let source = "fn test(x: number) -> number { /* é */ let y = loop { let x = x + 1; break /* λ */ x; let hidden = true; }; loop { let x = false; break; } return x + y; }";
+    let ast = parse(source);
+    let typed = SemanticAnalyzer::new().analyze(&ast).unwrap();
+    let body = &typed.functions[0].body;
+
+    assert_block_spans(&ast.functions[0].body, body);
+    let StmtKind::Let { id, value, .. } = &body[0].kind else {
+        panic!("expected let")
+    };
+    let ExprKind::Loop {
+        id: loop_id,
+        body: loop_body,
+    } = &value.kind
+    else {
+        panic!("expected loop")
+    };
+
+    assert_eq!(*id, VariableId(3));
+    assert_let(
+        &loop_body[0],
+        1,
+        "x",
+        Type::Number,
+        binary(
+            identifier(0, "x", Type::Number),
+            BinaryOp::Add,
+            number("1"),
+            Type::Number,
+        ),
+    );
+    assert_eq!(
+        loop_body[1].kind,
+        StmtKind::BreakValue {
+            target: *loop_id,
+            value: identifier(1, "x", Type::Number)
+        }
+    );
+    let text = "break /* λ */ x;";
+    let start = source.find(text).unwrap();
+
+    assert_eq!(loop_body[1].span, Span::new(start, start + text.len()));
+    assert_let(
+        &loop_body[2],
+        2,
+        "hidden",
+        Type::Bool,
+        expr(ExprKind::Bool(true), Type::Bool),
+    );
+    let StmtKind::Loop {
+        body: statement_body,
+        ..
+    } = &body[1].kind
+    else {
+        panic!("expected statement loop")
+    };
+
+    assert_let(
+        &statement_body[0],
+        4,
+        "x",
+        Type::Bool,
+        expr(ExprKind::Bool(false), Type::Bool),
+    );
+    assert_eq!(
+        returned(&body[2]),
+        &binary(
+            identifier(0, "x", Type::Number),
+            BinaryOp::Add,
+            identifier(3, "y", Type::Number),
+            Type::Number
+        )
+    );
+    assert_eq!(ast, parse(source));
 }
 
 #[test]

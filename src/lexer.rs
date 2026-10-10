@@ -272,6 +272,7 @@ impl<'a> Lexer<'a> {
             "if" => self.make_token(TokenKind::If),
             "else" => self.make_token(TokenKind::Else),
             "while" => self.make_token(TokenKind::While),
+            "loop" => self.make_token(TokenKind::Loop),
             "break" => self.make_token(TokenKind::Break),
             "continue" => self.make_token(TokenKind::Continue),
             "number" => self.make_token(TokenKind::Number),
@@ -610,6 +611,33 @@ mod tests {
                 TokenKind::StringLiteral("break continue".into()),
                 TokenKind::Identifier("bre".into()),
                 TokenKind::Identifier("ak".into()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn loop_keyword_preserves_boundaries_comments_and_byte_spans() {
+        let source = "/* é */loop/* λ */{} loop1 _loop Loop \"loop\" lo/*x*/op";
+        let tokens = Lexer::new(source).tokenize();
+        let start = source.find("loop").unwrap();
+
+        assert_eq!(tokens[0].span, Span::new(start, start + 4));
+        assert_eq!(
+            tokens
+                .into_iter()
+                .map(|token| token.kind)
+                .collect::<Vec<_>>(),
+            vec![
+                TokenKind::Loop,
+                TokenKind::LeftBrace,
+                TokenKind::RightBrace,
+                TokenKind::Identifier("loop1".into()),
+                TokenKind::Identifier("_loop".into()),
+                TokenKind::Identifier("Loop".into()),
+                TokenKind::StringLiteral("loop".into()),
+                TokenKind::Identifier("lo".into()),
+                TokenKind::Identifier("op".into()),
                 TokenKind::Eof,
             ]
         );

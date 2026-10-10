@@ -152,11 +152,25 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
             Some(TokenKind::Let) => self.parse_let()?,
             Some(TokenKind::If) => self.parse_if()?,
             Some(TokenKind::While) => self.parse_while()?,
+            Some(TokenKind::Loop) => {
+                let body = self.parse_loop_body()?;
+
+                self.consume(TokenKind::Semicolon);
+
+                StatementKind::Loop { body }
+            }
             Some(TokenKind::Break) => {
                 self.advance();
+
+                let kind = if self.check(&TokenKind::Semicolon) {
+                    StatementKind::Break
+                } else {
+                    StatementKind::BreakValue(self.parse_expression()?)
+                };
+
                 self.expect(TokenKind::Semicolon)?;
 
-                StatementKind::Break
+                kind
             }
             Some(TokenKind::Continue) => {
                 self.advance();
@@ -251,15 +265,17 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
         let first = self
             .tokens
             .partition_point(|token| token.span.start() < tail_span.start());
-        let starts_with_if = self
-            .tokens
-            .get(first)
-            .is_some_and(|token| token.kind == TokenKind::If);
+        let first_kind = self.tokens.get(first).map(|token| &token.kind);
         let mut statements = block.statements;
 
         if let Some(tail) = block.tail {
             let kind = match *tail {
-                expr @ Expr::If { .. } if starts_with_if => self.discard_if(expr),
+                expr @ Expr::If { .. } if first_kind == Some(&TokenKind::If) => {
+                    self.discard_if(expr)
+                }
+                Expr::Loop { body } if first_kind == Some(&TokenKind::Loop) => {
+                    StatementKind::Loop { body }
+                }
                 expr => StatementKind::Expression(expr),
             };
 
@@ -334,12 +350,17 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
 
             let statement_start = self.current_span().start();
             let starts_with_if = self.check(&TokenKind::If);
+            let starts_with_loop = self.check(&TokenKind::Loop);
             let starts_with_identifier = matches!(
                 self.peek().map(|token| &token.kind),
                 Some(TokenKind::Identifier(_))
             );
             let expr = if starts_with_if {
                 self.parse_if_expression()?
+            } else if starts_with_loop {
+                Expr::Loop {
+                    body: self.parse_loop_body()?,
+                }
             } else {
                 self.parse_expression()?
             };
@@ -357,7 +378,15 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
                 });
             } else if self.consume(TokenKind::Semicolon) {
                 statements.push(Statement {
-                    kind: StatementKind::Expression(expr),
+                    kind: if starts_with_loop {
+                        let Expr::Loop { body } = expr else {
+                            unreachable!("a bare loop was parsed above");
+                        };
+
+                        StatementKind::Loop { body }
+                    } else {
+                        StatementKind::Expression(expr)
+                    },
                     span: self.span_since(statement_start),
                 });
             } else if self.check(&TokenKind::RightBrace) {
@@ -366,6 +395,15 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
             } else if starts_with_if {
                 statements.push(Statement {
                     kind: self.discard_if(expr),
+                    span: self.span_since(statement_start),
+                });
+            } else if starts_with_loop {
+                let Expr::Loop { body } = expr else {
+                    unreachable!("a bare loop was parsed above");
+                };
+
+                statements.push(Statement {
+                    kind: StatementKind::Loop { body },
                     span: self.span_since(statement_start),
                 });
             } else {
@@ -380,6 +418,12 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
             tail,
             span: self.span_since(start),
         })
+    }
+
+    fn parse_loop_body(&mut self) -> Result<Block, ParseError> {
+        self.expect(TokenKind::Loop)?;
+
+        self.parse_block()
     }
 
     fn parse_while(&mut self) -> Result<StatementKind, ParseError> {
@@ -563,6 +607,11 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
 
             Some(TokenKind::LeftBrace) => return Ok(Expr::Block(self.parse_value_block()?)),
             Some(TokenKind::If) => return self.parse_if_expression(),
+            Some(TokenKind::Loop) => {
+                return Ok(Expr::Loop {
+                    body: self.parse_loop_body()?,
+                });
+            }
 
             Some(TokenKind::LeftBracket) => {
                 self.advance();
@@ -697,6 +746,7 @@ fn token_name(kind: &TokenKind<'_>) -> &'static str {
         TokenKind::If => "if",
         TokenKind::Else => "else",
         TokenKind::While => "while",
+        TokenKind::Loop => "loop",
         TokenKind::Break => "break",
         TokenKind::Continue => "continue",
         TokenKind::Return => "return",
@@ -1162,15 +1212,11 @@ mod tests {
     }
 
     #[test]
-    fn rejects_loop_transfer_values_labels_and_missing_semicolons() {
+    fn rejects_continue_values_labels_and_missing_transfer_semicolons() {
         for (statement, found, text) in [
-            ("break 1;", "number literal", "1"),
-            ("break true;", "true", "true"),
-            ("break label;", "identifier", "label"),
-            ("break (1);", "(", "("),
             ("continue 1;", "number literal", "1"),
             ("continue label;", "identifier", "label"),
-            ("break", "}", "}"),
+            ("break 1", "}", "}"),
             ("continue", "}", "}"),
         ] {
             let source = format!("fn main() -> void {{ while true {{ {statement} }} }}");
@@ -1195,6 +1241,10 @@ mod tests {
         for source in [
             "fn break() -> void {}",
             "fn continue() -> void {}",
+            "fn loop() -> void {}",
+            "fn main(loop: number) -> void {}",
+            "fn main() -> void { let loop = 1; }",
+            "fn main() -> void { break }",
             "fn main(break: number) -> void {}",
             "fn main() -> void { let continue = 1; }",
             "fn main() -> number { return break; }",
@@ -1213,6 +1263,138 @@ mod tests {
             for end in 0..source.len() {
                 let _ = parse(&source[..end]);
             }
+        }
+    }
+
+    #[test]
+    fn parses_break_values_with_expressions_and_original_byte_spans() {
+        for value in [
+            "1",
+            "true",
+            "label",
+            "(1)",
+            "[1, 2]",
+            "if true { 1 } else { 2 }",
+            "loop { break 1; }",
+        ] {
+            let text = format!("break /* λ */ {value};");
+            let source = format!("fn test() -> void {{ /* é */ {text} }}");
+            let program = parse(&source).unwrap();
+            let statement = &program.functions[0].body[0];
+            let start = source.find(&text).unwrap();
+
+            let tokens = Lexer::new(&source).tokenize();
+            let value_start = start + "break /* λ */ ".len();
+            let first = tokens.partition_point(|token| token.span.start() < value_start);
+            let expected = Parser::new(&tokens[first..]).parse_expression().unwrap();
+
+            assert_eq!(statement.kind, StatementKind::BreakValue(expected));
+            assert_eq!(statement.span, Span::new(start, start + text.len()));
+        }
+    }
+
+    #[test]
+    fn bare_loop_statements_end_at_the_brace_and_allow_an_optional_semicolon() {
+        for separator in ["", " ", "/* é */", "\n"] {
+            for suffix in ["", ";"] {
+                let head = format!("loop {{ break; }}{suffix}");
+                let source =
+                    format!("fn test() -> void {{ {head}{separator}--1; (loop {{ break 2; }}); }}");
+                let program = parse(&source).unwrap();
+                let body = &program.functions[0].body;
+                let start = source.find("loop").unwrap();
+
+                assert_eq!(body.len(), 3);
+                assert!(matches!(body[0].kind, StatementKind::Loop { .. }));
+                assert_eq!(body[0].span, Span::new(start, start + head.len()));
+                assert_expression_statement(&body[1], &negate(negate(number("1"))));
+                assert!(matches!(
+                    body[2].kind,
+                    StatementKind::Expression(Expr::Loop { .. })
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn value_blocks_classify_final_nonfinal_and_parenthesized_loops_without_newlines() {
+        let Expr::Block(block) =
+            expression("{ loop { break; }-1; loop { break; }; loop { break true; } }")
+        else {
+            panic!("expected block")
+        };
+
+        assert_eq!(block.statements.len(), 3);
+        assert!(matches!(
+            block.statements[0].kind,
+            StatementKind::Loop { .. }
+        ));
+        assert_expression_statement(&block.statements[1], &negate(number("1")));
+        assert!(matches!(
+            block.statements[2].kind,
+            StatementKind::Loop { .. }
+        ));
+        assert!(matches!(block.tail.as_deref(), Some(Expr::Loop { .. })));
+
+        let Expr::Block(block) = expression("{ (loop { break 1; }) - 1 }") else {
+            panic!("expected block")
+        };
+
+        assert!(matches!(
+            block.tail.as_deref(),
+            Some(Expr::Binary {
+                op: BinaryOp::Subtract,
+                ..
+            })
+        ));
+        assert!(parse("fn test() -> void { loop {} + 1; }").is_err());
+        assert!(parse("fn test() -> void { let x = { loop {} + 1 }; }").is_err());
+
+        let program =
+            parse("fn test() -> void { if true { loop { break; } } else { (loop { break 1; }) } }")
+                .unwrap();
+        let StatementKind::If {
+            then,
+            else_: Some(else_),
+            ..
+        } = &program.functions[0].body[0].kind
+        else {
+            panic!("expected if")
+        };
+
+        assert!(matches!(then[0].kind, StatementKind::Loop { .. }));
+        assert!(matches!(
+            else_[0].kind,
+            StatementKind::Expression(Expr::Loop { .. })
+        ));
+    }
+
+    #[test]
+    fn loop_expressions_accept_ordinary_operand_continuation_and_strict_bodies() {
+        for value in [
+            "loop { break 1; } - 2 * 3",
+            "-loop { break 1; }",
+            "take(loop { break [1]; })",
+        ] {
+            let _ = expression(value);
+        }
+
+        for source in [
+            "fn test() -> void { loop }",
+            "fn test() -> void { loop true {} }",
+            "fn test() -> void { loop { 1 } }",
+            "fn test() -> void { let x = loop { 1 }; }",
+            "fn test() -> void { let x = loop { break 1 }; }",
+            "fn test() -> void { loop { break: label; } }",
+            "fn test() -> void { loop { continue 1; } }",
+        ] {
+            assert!(parse(source).is_err(), "{source}");
+        }
+
+        let source = "fn test() -> number { return loop { break if true { loop { break 1; } } else { 2 }; }; }";
+
+        for end in 0..source.len() {
+            let _ = parse(&source[..end]);
         }
     }
 

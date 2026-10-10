@@ -97,6 +97,10 @@ pub enum TypedExprKind {
         args: Vec<TypedExpr>,
     },
 
+    Loop {
+        id: LoopId,
+        body: TypedBlock,
+    },
     Block(TypedValueBlock),
     If {
         cond: Box<TypedExpr>,
@@ -159,8 +163,16 @@ pub enum TypedStatementKind {
         body: TypedBlock,
     },
 
+    Loop {
+        id: LoopId,
+        body: TypedBlock,
+    },
     Break {
         target: LoopId,
+    },
+    BreakValue {
+        target: LoopId,
+        value: TypedExpr,
     },
     Continue {
         target: LoopId,

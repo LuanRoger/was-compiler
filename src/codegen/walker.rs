@@ -39,7 +39,9 @@ fn walk_statements<V: Visitor>(block: &TypedBlock, visitor: &mut V) -> ControlFl
         visitor.enter_statement(statement)?;
 
         match &statement.kind {
-            TypedStatementKind::Let { value, .. } | TypedStatementKind::Expression(value) => {
+            TypedStatementKind::Let { value, .. }
+            | TypedStatementKind::BreakValue { value, .. }
+            | TypedStatementKind::Expression(value) => {
                 walk_expression(value, visitor)?;
             }
 
@@ -62,6 +64,8 @@ fn walk_statements<V: Visitor>(block: &TypedBlock, visitor: &mut V) -> ControlFl
                 walk_expression(cond, visitor)?;
                 walk_block(body, visitor)?;
             }
+
+            TypedStatementKind::Loop { body, .. } => walk_block(body, visitor)?,
 
             TypedStatementKind::Break { .. } | TypedStatementKind::Continue { .. } => {}
 
@@ -118,6 +122,8 @@ fn walk_expression<V: Visitor>(expr: &TypedExpr, visitor: &mut V) -> ControlFlow
             walk_expression(expr, visitor)?;
             walk_expression(index, visitor)?;
         }
+
+        TypedExprKind::Loop { body, .. } => walk_block(body, visitor)?,
 
         TypedExprKind::Block(block) => walk_value_block(block, visitor)?,
 

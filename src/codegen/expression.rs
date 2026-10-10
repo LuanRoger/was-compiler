@@ -7,7 +7,9 @@ use crate::{
 use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
 
 use super::{
-    CodegenError, abi, call, expect_operand, expect_result, function::BodyEmitter, memory::Helper,
+    CodegenError, abi, call, control_flow, expect_operand, expect_result,
+    function::{BodyEmitter, LoopKind},
+    memory::Helper,
     values,
 };
 
@@ -27,14 +29,16 @@ fn eager_result(ty: Type, operands: &[&TypedExpr]) -> ExprResult {
     }
 }
 
-fn block_type(result: ExprResult) -> BlockType {
+pub(super) fn wasm_result(result: ExprResult) -> Option<ValType> {
     match result {
-        ExprResult::Value(Type::Number) => BlockType::Result(ValType::F64),
-        ExprResult::Value(Type::Bool | Type::String | Type::NumberArray) => {
-            BlockType::Result(ValType::I32)
-        }
-        ExprResult::Value(Type::Void) | ExprResult::Void | ExprResult::Never => BlockType::Empty,
+        ExprResult::Value(Type::Number) => Some(ValType::F64),
+        ExprResult::Value(Type::Bool | Type::String | Type::NumberArray) => Some(ValType::I32),
+        ExprResult::Value(Type::Void) | ExprResult::Void | ExprResult::Never => None,
     }
+}
+
+pub(super) fn block_type(result: ExprResult) -> BlockType {
+    wasm_result(result).map_or(BlockType::Empty, BlockType::Result)
 }
 
 pub(super) fn emit(
@@ -198,6 +202,10 @@ pub(super) fn emit(
                 memory_index: 0,
             }));
             (flow, result(flow, Type::Number))
+        }
+
+        TypedExprKind::Loop { id, body: block } => {
+            control_flow::emit_loop(*id, block, LoopKind::Value(expr.ty), body, span)?
         }
 
         TypedExprKind::Block(block) => emit_value_block(block, expr.ty, body)?,

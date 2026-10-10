@@ -166,11 +166,9 @@ fn outside_loop_errors_keep_transfer_spans_even_when_source_cannot_execute() {
 }
 
 #[test]
-fn transfer_values_and_labels_are_parse_errors_and_while_still_requires_fallback_returns() {
+fn transfer_syntax_and_while_still_requires_fallback_returns() {
     for body in [
-        "while true { break 1; }",
         "while true { continue 1; }",
-        "while true { break outer; }",
         "while true { continue outer; }",
         "while true { break }",
         "while true { let n = continue; }",
@@ -179,6 +177,16 @@ fn transfer_values_and_labels_are_parse_errors_and_while_still_requires_fallback
         assert!(matches!(
             Compiler::new().compile_source(&source),
             Err(CompileError::Parse(_))
+        ));
+    }
+
+    for body in ["while true { break 1; }", "while true { break outer; }"] {
+        let source = format!("fn main() -> void {{ {body} }}");
+        assert!(matches!(
+            Compiler::new().compile_source(&source),
+            Err(CompileError::Semantic(
+                SemanticError::BreakValueNotAllowed { .. }
+            ))
         ));
     }
 

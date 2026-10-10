@@ -108,7 +108,9 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   function inference, or whole-program type unification. `number` remains `f64`.
 - Named functions support forward, nested, self-recursive, mutual, and registered
   host calls. Statements include `let`, variable/index assignment, expression
-  statements, `return`, `if`/`else`, and `while` with bare `break;` / `continue;`.
+  statements, `return`, `if`/`else`, `while`, and `loop`. Bare `break;` exits while
+  and statement loops; `break value;` exits value loops. Continue restarts the
+  nearest loop (reevaluating a while condition).
   Statement-only `+= -= *= /= %=` accept `number` variables and numeric-array elements, not whole arrays.
 - Expressions support literals, parentheses, unary `-`/`!`, arithmetic
   `+ - * / %`, numeric comparisons, boolean equality and short-circuit `&&`/`||`,
@@ -120,8 +122,10 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   mutable shared storage; every evaluated array literal allocates fresh storage.
 - `//` line comments and non-nesting `/* ... */` block comments are supported
   between tokens anywhere whitespace can appear; delimiters inside strings remain text.
-- No `for`, `foreach`, infinite/value `loop`, value-bearing breaks, loop labels,
-  string escapes, exponent literals,
+- Statement/value `loop` supports all concrete result types through value breaks;
+  no reachable exit yields Never. Explicit divergence is allowed in nonvoid
+  functions. No `for`, `foreach`, loop labels, value breaks in while, string
+  escapes, exponent literals,
   `.5`, `1.`, string concatenation/indexing/`len`, or general postfix
   chaining. Source indexing starts from an identifier.
 - No other array element types, modules, closures, generics, free, or garbage
@@ -193,6 +197,30 @@ refactors; specify and test any intentional behavior change explicitly.
   slot before initializer declarations, preserving legacy declaration preorder.
   Memory, scratch and remainder policies remain separate and exhaustive.
 
+### Statement and value loops
+
+- Raw/typed statement and expression enums add `Loop { body }` (typed nodes also
+  carry `id`). Keep bare Break variants; raw `BreakValue(Expr)` and typed
+  `BreakValue { target, value }` are separate. Loop bodies remain strict statement
+  vectors; only break values supply expression-loop results.
+- Prefix bare loops in function/statement bodies, including `loop {};`, are
+  statement contexts. A final bare loop without a semicolon in a value block is
+  a value tail; nonfinal/semicolon-terminated loops are statements. Parenthesized
+  loops are expressions, including discarded values. No newline heuristics.
+- Unify only reachable value breaks targeting that loop, with exact concrete
+  types. Static/backend checks reject bare breaks in value loops, value breaks
+  in statement/while loops, and Void RHSs, even when unreachable. Loop-result
+  annotations are checked against reconstructed flow, not trusted.
+- Lower value loops to MVP typed outer blocks and empty backedge loops. Save no
+  artificial result local. The declared annotation chooses the region result;
+  an unreachable break with an incompatible raw payload is checked/emitted with
+  Unreachable instead of an invalid typed branch. Its constraint still rejects
+  compilation if reachable. Preserve live stack prefixes and label identities.
+- The walker traverses loop bodies within block hooks and value-break RHSs as
+  expressions. Keep memory/local/scratch/remainder policies separate, including
+  all unreachable/skipped children. Do not execute unbounded examples in tests;
+  subprocess deadlines are not guest fuel or process-tree cancellation.
+
 ### Evaluation, scopes, and module layout
 
 - Evaluate operands, call arguments, and array elements exactly once, left-to-right.
@@ -203,21 +231,26 @@ refactors; specify and test any intentional behavior change explicitly.
   operand stack. `%=` uses the exact existing remainder helper.
 - Logical operators short-circuit at runtime, but both operands, unreachable
   statements, and unselected function bodies still receive static/backend checks.
-- Bare `break;` and `continue;` target the nearest enclosing `while` within the
-  function. Continue reevaluates the condition. Keywords are reserved for source
-  and host language names, never imposed on host module/field names. No labels or
-  value-bearing transfers yet. Typed `While` carries a per-function `LoopId`;
-  typed transfers carry a resolved target. Sparse IDs are allowed; duplicate,
-  inactive, unknown, outer-instead-of-inner, and cross-function targets are rejected.
-- `Flow` separates fallthrough, return, break, and continue. Sequence only
-  fallthrough paths when summarizing, but check and emit every statement. Nonvoid
-  functions require guaranteed return; transfers and a loop alone do not satisfy
-  it, even with a literal `true` condition. Returns after transfers are unreachable
-  and cannot change their summary. Consume transfers at each while boundary.
-  Activate a while's loop context before analyzing/emitting its condition, so
-  condition blocks can transfer to that loop. An unconditional explicit return
-  in the condition guarantees return before the body; a literal-true body alone
-  still does not. Summaries include expression effects without pruning checks.
+- Transfers target the nearest enclosing while/loop within the function. Bare
+  breaks require a statement loop; value breaks require a value loop. Continue
+  restarts the nearest loop. Keywords, including `loop`, are reserved for source
+  and host language names, never imposed on host module/field names. No labels.
+  Typed while/loop nodes carry per-function `LoopId`s; transfers carry resolved
+  targets. Sparse IDs are allowed; duplicate, inactive, unknown,
+  outer-instead-of-inner, and cross-function targets are rejected.
+- `Flow` separates fallthrough, return, break, continue, and explicit divergence.
+  Reachable value-break type constraints travel in private flow summaries and are
+  consumed at the nearest loop boundary; never collect constraints in mutable
+  context without sequence reachability or rewalk subtrees. Unreachable breaks
+  must be contextually/type valid but do not constrain the loop result. Void
+  break values are invalid; a Never RHS produces no value or actual break.
+- Sequence only fallthrough paths in summaries but check/emit every child. Nonvoid
+  functions allow return or explicit divergence, never normal fallthrough.
+  Ordinary while remains conservative even with literal true; a syntactic loop
+  without reachable exit yields Never. Activate while context before its condition;
+  condition blocks can transfer to that loop. A noncompleting condition consumes
+  its own break/continue paths without inventing completion. Summaries include
+  expression effects without pruning checks.
 - `BodyEmitter` tracks unique labels for every structured `if`, `block`, and `loop`,
   including short-circuit expressions. Resolve `LabelDepth` from active target
   identity and nesting, never fixed loop depths. Restore labels/loop contexts and

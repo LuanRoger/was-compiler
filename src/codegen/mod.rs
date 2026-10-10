@@ -182,6 +182,15 @@ pub enum CodegenError {
         span: Span,
     },
 
+    #[error("break value is not allowed in this loop in function `{function}` at {span:?}")]
+    BreakValueNotAllowed { function: String, span: Span },
+
+    #[error("value loop requires a break value in function `{function}` at {span:?}")]
+    MissingBreakValue { function: String, span: Span },
+
+    #[error("invalid break value in function `{function}` at {span:?}")]
+    InvalidBreakValue { function: String, span: Span },
+
     #[error("unknown variable ID {id:?} in function `{function}` at {span:?}")]
     UnknownVariable {
         function: String,
@@ -237,6 +246,9 @@ impl CodegenError {
             | Self::DuplicateVariableId { span, .. }
             | Self::DuplicateLoopId { span, .. }
             | Self::InvalidLoopTarget { span, .. }
+            | Self::BreakValueNotAllowed { span, .. }
+            | Self::MissingBreakValue { span, .. }
+            | Self::InvalidBreakValue { span, .. }
             | Self::UnknownVariable { span, .. }
             | Self::UninitializedVariable { span, .. }
             | Self::UnsupportedLocalType { span, .. }

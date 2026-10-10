@@ -178,14 +178,13 @@ never execute host calls or other side effects. Boolean operations treat any
 nonzero `i32` as true and produce canonical `0`/`1` results; numeric comparisons
 follow IEEE-754 behavior, including NaN and signed zero.
 
-`break;` exits the nearest enclosing `while`; `continue;` skips the rest of its
-body and reevaluates its condition. They work beneath nested `if` statements and
-inside nested loops, but cannot cross function boundaries. Both require an
-active loop, even in unreachable source. Only bare semicolon-terminated transfers
-are supported: value-bearing breaks, loop labels, `for`, and `loop` remain future
-features. `break` and `continue` are now reserved source/host-language names;
-existing bindings or functions using those exact names must be renamed. Host
-import module/field names retain their existing unrestricted nonempty contract.
+`break;` exits the nearest enclosing `while` or statement loop; `continue;`
+skips the rest of the body and starts the next iteration (reevaluating a while
+condition). Transfers work beneath nested branches and expression blocks, but
+cannot cross function boundaries. An active loop is required even in unreachable
+source. `break`, `continue`, and `loop` are reserved source/host-language names;
+rename existing bindings/functions using them. Host import module/field names
+retain their unrestricted nonempty contract. Labels and `for` remain future work.
 
 ```text
 fn main() -> number {
@@ -209,6 +208,54 @@ returns. The typed API adds per-function `LoopId`s to `While` and resolved targe
 to `Break` / `Continue`; public statement matches/construction must account for
 these additions. IDs may be sparse, but must be unique within a function, and
 transfers must refer to its innermost active loop.
+
+### Statement and value loops
+
+`loop` repeats until a break exits it. In statement position, `loop { ... }`
+(optionally followed by `;`) accepts only bare `break;`. In value position, its
+result comes from `break expression;`, not a body tail:
+
+```text
+fn first_positive(values: number[]) -> number {
+    let index = 0;
+    let result = loop {
+        if index >= len(values) { break 0; }
+        let value = values[index];
+        index += 1;
+        if value <= 0 { continue; }
+        break value;
+    };
+
+    return result;
+}
+```
+
+Value loops support numbers, bools, strings, and numeric-array handles. Reachable
+breaks targeting that loop must agree exactly; nested loops do not affect its
+result. Unreachable breaks do not constrain the result but still receive type,
+name, and context checks. A bare break in a value loop, a value break in a
+statement loop/while, or a Void break value is a semantic error. A divergent break
+RHS supplies no value and does not reach its break.
+
+Loop bodies contain strict statements, not implicit tails. Bare loops in function
+or loop bodies are statements, even with `;`; use parentheses to discard a value
+loop, as in `(loop { break 1; });`. In an expression block, a final bare loop
+without `;` is its value tail; a nonfinal or semicolon-terminated bare loop is a
+statement. Bare statement loops end at the closing brace, regardless of trivia.
+Parenthesize a whole loop for arithmetic continuation in these positions.
+
+A loop with no reachable exit is `Never`. `let x = loop {};` cannot infer a storage
+type; `let x: number = loop {};` is accepted, without a reachable store. Explicit
+noncompletion is valid in a nonvoid function: `fn forever() -> number { loop {} }`
+compiles, although it never returns. Later unreachable code is still checked.
+There is no compiler-provided fuel or cancellation; avoid calling an unbounded
+loop unless the embedding supplies its own resource controls.
+
+**AST additions (WP4):** raw/typed expressions and statements add `Loop { body }`
+(with `id: LoopId` in typed nodes). Existing bare `Break` variants are retained;
+raw statements add `BreakValue(Expr)` and typed statements add
+`BreakValue { target, value }`. Update exhaustive matches to handle these additions.
+Loop IDs are unique per function across while, statement, and value loops.
 
 ### Block values and `if` expressions
 
@@ -250,8 +297,9 @@ arithmetically in these positions: `(if true { 2 } else { 3 }) - 1;`.
 
 Branches and loops use structured Wasm control flow and preserve shadowed bindings.
 Transfers also work through expression blocks, including in their own while's
-condition. Continue reevaluates that condition. Nonvoid functions must return on
-every path; `while true { return 1; }` alone is not a guaranteed return. An
+condition. Continue reevaluates that condition. Nonvoid functions must return or
+explicitly diverge on every path; `while true { return 1; }` alone remains
+conservative and is not a guaranteed return. An
 unconditional explicit return in the condition, as in
 `while { return 1; } {}`, does guarantee return before the body. Skipped operands,
 unreachable statements, and forged scope escapes still receive backend checks.

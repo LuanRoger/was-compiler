@@ -15,6 +15,13 @@ fn span(source: &str, text: &str) -> Span {
     Span::new(start, start + text.len())
 }
 
+fn statement_loop(id: usize) -> LoopContext {
+    LoopContext {
+        id: LoopId(id),
+        kind: LoopKind::Statement,
+    }
+}
+
 fn assert_valid(source: &str) {
     let program = parse(source);
 
@@ -1608,7 +1615,7 @@ fn semantic_flow_composes_only_reachable_outcomes_without_pruning_the_tree() {
         let mut analyzer = SemanticAnalyzer::new();
 
         analyzer.scopes.push(HashMap::new());
-        analyzer.loops.push(LoopId(0));
+        analyzer.loops.push(statement_loop(0));
         analyzer.next_loop_id = 1;
 
         let (typed, flow) = analyzer
@@ -1617,7 +1624,7 @@ fn semantic_flow_composes_only_reachable_outcomes_without_pruning_the_tree() {
 
         assert_eq!(flow, expected, "{body}");
         assert_eq!(typed.len(), program.functions[0].body.len(), "{body}");
-        assert_eq!(analyzer.loops, vec![LoopId(0)], "{body}");
+        assert_eq!(analyzer.loops, vec![statement_loop(0)], "{body}");
     }
 }
 
@@ -1632,7 +1639,7 @@ fn nested_loop_errors_restore_the_enclosing_loop_and_scope() {
     analyzer
         .declare_variable("outer", Type::Bool, Span::new(0, 0))
         .unwrap();
-    analyzer.loops.push(LoopId(41));
+    analyzer.loops.push(statement_loop(41));
     analyzer.next_loop_id = 42;
 
     assert!(
@@ -1640,7 +1647,7 @@ fn nested_loop_errors_restore_the_enclosing_loop_and_scope() {
             .analyze_statement(&program.functions[0].body[0], Type::Void)
             .is_err()
     );
-    assert_eq!(analyzer.loops, vec![LoopId(41)]);
+    assert_eq!(analyzer.loops, vec![statement_loop(41)]);
     assert_eq!(analyzer.scopes.len(), 1);
     assert!(analyzer.lookup_variable("inner").is_none());
     assert_eq!(analyzer.lookup_variable("outer").unwrap().ty, Type::Bool);
@@ -2297,7 +2304,7 @@ fn expression_flow_composition_preserves_nested_transfers_and_unreachable_trees(
         let mut analyzer = SemanticAnalyzer::new();
 
         analyzer.scopes.push(HashMap::new());
-        analyzer.loops.push(LoopId(41));
+        analyzer.loops.push(statement_loop(41));
 
         let (typed, flow) = analyzer
             .analyze_block(&program.functions[0].body, Type::Number)
@@ -2305,7 +2312,7 @@ fn expression_flow_composition_preserves_nested_transfers_and_unreachable_trees(
 
         assert_eq!(flow, expected, "{body}");
         assert_eq!(typed.len(), program.functions[0].body.len());
-        assert_eq!(analyzer.loops, vec![LoopId(41)]);
+        assert_eq!(analyzer.loops, vec![statement_loop(41)]);
     }
 }
 
@@ -2358,7 +2365,7 @@ fn while_condition_transfers_are_in_scope_and_errors_restore_analyzer_state() {
         let program = parse(source);
 
         analyzer.scopes.push(HashMap::new());
-        analyzer.loops.push(LoopId(41));
+        analyzer.loops.push(statement_loop(41));
         analyzer.next_loop_id = 42;
         assert!(
             analyzer
@@ -2367,7 +2374,7 @@ fn while_condition_transfers_are_in_scope_and_errors_restore_analyzer_state() {
         );
         assert_eq!(analyzer.scopes.len(), 1);
         assert!(analyzer.lookup_variable("inner").is_none());
-        assert_eq!(analyzer.loops, vec![LoopId(41)]);
+        assert_eq!(analyzer.loops, vec![statement_loop(41)]);
 
         assert!(analyzer.analyze(&program).is_err());
         assert!(analyzer.scopes.is_empty());
@@ -2377,6 +2384,385 @@ fn while_condition_transfers_are_in_scope_and_errors_restore_analyzer_state() {
                 .analyze(&parse("fn test() -> void { while { break; } {} }"))
                 .is_ok()
         );
+    }
+}
+
+#[test]
+fn value_loops_infer_all_concrete_results_and_allow_matching_reachable_exits() {
+    for (ty, value) in [
+        ("number", "1"),
+        ("bool", "true"),
+        ("string", "\"λ\""),
+        ("number[]", "[1, 2]"),
+    ] {
+        assert_valid(&format!(
+            "fn test(flag: bool) -> {ty} {{ let x = loop {{ if flag {{ break {value}; }} else {{ continue; }} break {value}; }}; return x; }}"
+        ));
+        assert_valid(&format!(
+            "fn test(flag: bool) -> {ty} {{ return loop {{ if flag {{ break {value}; }} break {value}; }}; }}"
+        ));
+        assert_valid(&format!(
+            "fn test() -> {ty} {{ return {{ loop {{ break {value}; }} }}; }}"
+        ));
+        assert_valid(&format!(
+            "fn test() -> void {{ (loop {{ break {value}; }}); }}"
+        ));
+    }
+}
+
+#[test]
+fn loop_break_kinds_are_checked_even_after_unreachable_transfers() {
+    for body in [
+        "loop { break 1; }",
+        "loop { break; break 1; }",
+        "loop { return; break 1; }",
+        "loop { continue; break 1; }",
+        "loop { break 1; };",
+        "while false { break 1; }",
+        "while { break 1; } {}",
+        "let x = loop { while false { break 1; } break 2; };",
+        "if false { loop { break 1; } }",
+    ] {
+        let source = format!("fn test() -> void {{ /* é */ {body} }}");
+        let error_span = span(&source, "break 1;");
+        let error = SemanticError::BreakValueNotAllowed { span: error_span };
+
+        assert_eq!(error.span(), Some(error_span));
+        assert_error(&source, error);
+    }
+
+    for body in [
+        "let x = loop { break; };",
+        "let x = loop { break 1; break; };",
+        "let x = loop { return; break; };",
+        "let x = loop { continue; break; };",
+        "(loop { break; });",
+        "let x = { loop { break; } };",
+        "loop { let x = loop { break; }; continue; }",
+    ] {
+        let source = format!("fn test() -> void {{ /* λ */ {body} }}");
+        let error_span = span(&source, "break;");
+        let error = SemanticError::MissingBreakValue { span: error_span };
+
+        assert_eq!(error.span(), Some(error_span));
+        assert_error(&source, error);
+    }
+
+    for body in ["break 1;", "return; break 1;", "if false { break 1; }"] {
+        let source = format!("fn test() -> void {{ {body} }}");
+
+        assert_error(
+            &source,
+            SemanticError::BreakOutsideLoop {
+                span: span(&source, "break 1;"),
+            },
+        );
+    }
+}
+
+#[test]
+fn loop_break_values_reject_void_but_never_rhs_does_not_supply_an_exit() {
+    for body in [
+        "let x = loop { break noop(); };",
+        "let x = loop { break {}; };",
+        "let x = loop { break 1; break noop(); };",
+        "let x = loop { continue; break noop(); };",
+        "let x = loop { return; break noop(); };",
+    ] {
+        let source = format!("fn noop() -> void {{}} fn test() -> void {{ {body} }}");
+        let text = if body.contains("break {};") {
+            "break {};"
+        } else {
+            "break noop();"
+        };
+        let error_span = span(&source, text);
+        let error = SemanticError::InvalidBreakValue { span: error_span };
+
+        assert_eq!(error.span(), Some(error_span));
+        assert_error(&source, error);
+    }
+
+    assert_valid("fn test() -> number { return loop { break { return 1; }; }; }");
+    assert_valid("fn test() -> bool { return loop { break { break true; 1 }; }; }");
+    assert_valid("fn test() -> number { let x: bool = loop { break loop {}; }; }");
+    assert_valid("fn test() -> void { (loop { break { return; }; }); }");
+}
+
+#[test]
+fn value_loop_conflicts_use_first_reachable_type_and_enclosing_loop_span() {
+    for (first, second, expected, found) in [
+        ("1", "true", Type::Number, Type::Bool),
+        ("true", "1", Type::Bool, Type::Number),
+        ("\"s\"", "[1]", Type::String, Type::NumberArray),
+        ("[1]", "\"s\"", Type::NumberArray, Type::String),
+    ] {
+        for body in [
+            format!("if true {{ break {first}; }} break {second};"),
+            format!("if true {{ break {first}; }} else {{ break {second}; }}"),
+            format!("break if true {{ break {first}; }} else {{ {second} }};"),
+            format!("(true && {{ break {first}; }}); break {second};"),
+        ] {
+            let statement = format!("let x = loop {{ {body} }};");
+            let source = format!("fn test() -> void {{ /* é */ {statement} }}");
+
+            assert_error(
+                &source,
+                SemanticError::TypeMismatch {
+                    expected,
+                    found,
+                    span: span(&source, &statement),
+                },
+            );
+        }
+    }
+}
+
+#[test]
+fn unreachable_break_types_do_not_constrain_value_loop_results() {
+    for body in [
+        "break 1; break true;",
+        "if true { break 1; } else { continue; } break true;",
+        "if true { break 1; } else { return 2; } break true;",
+        "break { break 1; true };",
+        "if { break 1; } { break true; } else { break \"x\"; }",
+        "(false && { break 1; }); break 2;",
+        "loop { continue; } break true;",
+        "break loop { continue; }; break true;",
+        "continue; break 1; break true;",
+        "return 2; break 1; break true;",
+    ] {
+        assert_valid(&format!(
+            "fn test() -> number {{ return loop {{ {body} }}; }}"
+        ));
+    }
+
+    for body in [
+        "let x: number = loop {}; break true;",
+        "take(loop {}, { break true; }); break 1;",
+        "[loop {}, { break true; }]; break 1;",
+        "(loop {}) + { break true; }; break 1;",
+    ] {
+        assert_valid(&format!(
+            "fn take(a: number, b: number) -> void {{}} fn test() -> number {{ return loop {{ {body} }}; }}"
+        ));
+    }
+
+    let source = "fn test() -> void { let x = loop { break 1; break missing; }; }";
+
+    assert_error(
+        source,
+        SemanticError::UndefinedVariable {
+            name: "missing".into(),
+            span: span(source, "break missing;"),
+        },
+    );
+}
+
+#[test]
+fn nested_loop_kinds_and_results_do_not_constrain_the_outer_loop() {
+    for source in [
+        "fn test() -> number { return loop { loop { break; } while false { break; } (loop { break true; }); break 1; }; }",
+        "fn test() -> number { return loop { break loop { break 1; }; }; }",
+        "fn test() -> void { loop { let x = loop { break true; }; if x { continue; } break; } }",
+        "fn test() -> number { return loop { while { break; } {} break 1; }; }",
+        "fn test() -> bool { return loop { break { let x = loop { break 1; }; break true; x }; }; }",
+    ] {
+        assert_valid(source);
+    }
+}
+
+#[test]
+fn explicit_loop_divergence_satisfies_nonvoid_completion_without_accepting_fallthrough() {
+    for body in [
+        "loop {}",
+        "loop { continue; }",
+        "loop { return 1; }",
+        "loop { if true { return 1; } else { continue; } }",
+        "if true { return 1; } else { loop {} }",
+        "loop { loop {} break; }",
+        "let x: number = loop {}; x = 2;",
+        "return if true { loop {} } else { 1 };",
+        "while { continue; } { return 1; }",
+        "while { if true { return 1; } else { continue; } } {}",
+        "while loop {} { return 1; }",
+    ] {
+        assert_valid(&format!("fn test() -> number {{ {body} }}"));
+    }
+
+    for body in [
+        "loop { break; }",
+        "loop { if true { break; } else { return 1; } }",
+        "loop { if true { break; } else { continue; } }",
+        "(loop { break 1; });",
+        "while true { loop {} }",
+        "while { break; } { loop {} }",
+        "while { if true { break; } else { continue; } } {}",
+        "(true && loop {});",
+    ] {
+        let source = format!("fn test() -> number {{ {body} }}");
+
+        assert_error(
+            &source,
+            SemanticError::MissingReturn {
+                name: "test".into(),
+                span: parse(&source).functions[0].span,
+            },
+        );
+    }
+}
+
+#[test]
+fn never_loop_inference_requires_annotations_and_keeps_unreachable_checks() {
+    for initializer in [
+        "loop {}",
+        "loop { continue; }",
+        "loop { return 1; }",
+        "loop { break loop {}; }",
+    ] {
+        let statement = format!("let x = {initializer};");
+        let source = format!("fn test() -> number {{ {statement} }}");
+
+        assert_error(
+            &source,
+            SemanticError::CannotInferNeverType {
+                name: "x".into(),
+                span: span(&source, &statement),
+            },
+        );
+        assert_valid(&format!(
+            "fn test() -> number {{ let x: bool = {initializer}; x = true; }}"
+        ));
+    }
+
+    let source = "fn test() -> number { let x: bool = loop {}; x = 1; }";
+
+    assert_error(
+        source,
+        SemanticError::TypeMismatch {
+            expected: Type::Bool,
+            found: Type::Number,
+            span: span(source, "x = 1;"),
+        },
+    );
+    let source = "fn test() -> number { loop {} missing; }";
+
+    assert_error(
+        source,
+        SemanticError::UndefinedVariable {
+            name: "missing".into(),
+            span: span(source, "missing;"),
+        },
+    );
+}
+
+#[test]
+fn loop_body_bindings_shadow_without_leaking_and_still_check_duplicates() {
+    assert_valid(
+        "fn test() -> number { let x = 1; let y = loop { let x = x + 1; break x; }; loop { let x = false; break; } return x + y; }",
+    );
+    assert_valid("fn test() -> void { loop { let x = 1; break; } loop { let x = true; break; } }");
+    let source = "fn test() -> void { loop { let hidden = 1; break; } hidden; }";
+
+    assert_error(
+        source,
+        SemanticError::UndefinedVariable {
+            name: "hidden".into(),
+            span: span(source, "hidden;"),
+        },
+    );
+    let source = "fn test() -> void { let x = loop { let hidden = 1; break hidden; }; hidden; }";
+
+    assert_error(
+        source,
+        SemanticError::UndefinedVariable {
+            name: "hidden".into(),
+            span: span(source, "hidden;"),
+        },
+    );
+    let source = "fn test() -> void { loop { let x = 1; continue; let x = 2; } }";
+
+    assert_error(
+        source,
+        SemanticError::DuplicateVariable {
+            name: "x".into(),
+            span: span(source, "let x = 2;"),
+        },
+    );
+    let source = "fn test() -> void { let x = loop { let x = x; break x; }; }";
+
+    assert_error(
+        source,
+        SemanticError::UndefinedVariable {
+            name: "x".into(),
+            span: span(source, "let x = x;"),
+        },
+    );
+}
+
+#[test]
+fn loop_errors_restore_context_kind_scopes_and_analyzer_reuse() {
+    let mut analyzer = SemanticAnalyzer::new();
+    let outer = LoopContext {
+        id: LoopId(41),
+        kind: LoopKind::Value,
+    };
+
+    for expression in [
+        "loop { let inner = 1; break; }",
+        "loop { let inner = 1; while true { break 1; } break true; }",
+        "loop { if true { break 1; } break true; }",
+        "loop { let inner = 1; break {}; }",
+        "loop { let inner = 1; loop { missing; } break true; }",
+    ] {
+        analyzer.scopes.push(HashMap::new());
+        analyzer.loops.push(outer);
+        analyzer.next_loop_id = 42;
+
+        let source = format!("fn test() -> void {{ ({expression}); }}");
+        let program = parse(&source);
+
+        assert!(
+            analyzer
+                .analyze_statement(&program.functions[0].body[0], Type::Void)
+                .is_err()
+        );
+        assert_eq!(analyzer.scopes.len(), 1);
+        assert!(analyzer.lookup_variable("inner").is_none());
+        assert_eq!(analyzer.loops, vec![outer]);
+        assert!(analyzer.next_loop_id > 42);
+        let transfer = Statement {
+            kind: StatementKind::BreakValue(Expr::Bool(true)),
+            span: Span::new(0, 11),
+        };
+        let (typed, flow) = analyzer.analyze_statement(&transfer, Type::Void).unwrap();
+
+        assert_eq!(
+            typed.kind,
+            TypedStatementKind::BreakValue {
+                target: LoopId(41),
+                value: TypedExpr {
+                    kind: TypedExprKind::Bool(true),
+                    ty: Type::Bool.into()
+                }
+            }
+        );
+        assert_eq!(flow, Flow::value_break(Type::Bool));
+        assert!(analyzer.analyze(&program).is_err());
+        assert!(analyzer.scopes.is_empty());
+        assert!(analyzer.loops.is_empty());
+        let typed = analyzer
+            .analyze(&parse("fn test() -> bool { return loop { break true; }; }"))
+            .unwrap();
+        let TypedStatementKind::Return(Some(value)) = &typed.functions[0].body[0].kind else {
+            panic!("expected return")
+        };
+
+        assert!(matches!(
+            value.kind,
+            TypedExprKind::Loop { id: LoopId(0), .. }
+        ));
+        assert!(analyzer.scopes.is_empty());
+        assert!(analyzer.loops.is_empty());
     }
 }
 

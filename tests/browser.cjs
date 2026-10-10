@@ -170,7 +170,7 @@ async function main() {
                 fails(() => compiler.compile(`fn main() -> void {\n    ${keyword};\n}`),
                     /<browser>:2:5: semantic error:.*only allowed inside a loop/);
                 fails(() => compiler.compile(`fn main() -> void { while true { ${keyword} 1; } }`),
-                    /parse error/);
+                    keyword === 'break' ? /semantic error:.*break value is not allowed/ : /parse error/);
                 fails(() => compiler.compile(`fn main() -> number { while true { ${keyword}; return 1; } }`),
                     /does not return a value on every path/);
             }
@@ -178,6 +178,181 @@ async function main() {
         }
         fails(() => compiler.registerHostFunction('break', 'env', 'run', [], 'void'), /reserved/);
         fails(() => compiler.registerHostFunction('continue', 'env', 'run', [], 'void'), /reserved/);
+    });
+
+    test('statement and value loops preserve types, effects, transfers, Never, diagnostics, and parity', compiler => {
+        fails(() => compiler.registerHostFunction('loop', 'env', 'run', [], 'void'), /reserved/);
+        compiler.registerHostFunction('mark', 'loop', 'loop', ['number'], 'number');
+        compiler.registerHostFunction('bridge', 'module with spaces/λ', 'field:with,delimiters', [], 'number');
+        const source = `
+            fn statements() -> number {
+                let i = 0;
+                let total = 0;
+                loop {
+                    i += 1;
+                    let j = 0;
+                    loop {
+                        j += 1;
+                        if j == 2 { continue; }
+                        if j == 3 { break; }
+                        mark(i * 10 + j);
+                        total += 1;
+                    }
+                    if i == 2 { continue; }
+                    if i == 3 { break; }
+                    total += 10;
+                    mark(i * 100);
+                }
+                return total;
+            }
+            fn numeric() -> number {
+                let i = 0;
+                return loop {
+                    i += 1;
+                    mark(i);
+                    if i == 2 { continue; }
+                    if i == 4 { break { mark(40); i + 2 }; }
+                };
+            }
+            fn boolean(flag: bool) -> bool {
+                return loop { if flag { break true; } else { break false; } };
+            }
+            fn text(flag: bool) -> string {
+                return loop { if flag { break "é🦀"; } break "other"; };
+            }
+            fn items() -> number[] { return loop { break [mark(10), mark(11)]; }; }
+            fn alias(a: number[]) -> number[] {
+                let result = loop {
+                    while true { break; }
+                    loop { break; }
+                    break a;
+                };
+                result[0] += 1;
+                return result;
+            }
+            fn noop() -> void { loop { mark(41); break; }; }
+            fn early(flag: bool) -> number {
+                return loop {
+                    if flag { break { return mark(50); }; }
+                    break mark(51);
+                };
+            }
+            fn statement_return() -> number { loop { return mark(52); } }
+            fn tail() -> number { return { loop { break mark(60); } }; }
+            fn skipped() -> number {
+                let ignored = false && loop {};
+                let other = true || loop { continue; };
+                return mark(7);
+            }
+            fn imported() -> number { return loop { break bridge(); }; }
+        `;
+        // These functions deliberately have no exit and must never be invoked.
+        const noExit = `
+            fn statement() -> number { loop {} }
+            fn value() -> number { return loop { continue; }; }
+            fn annotated() -> bool { let value: string = loop {}; }
+        `;
+        const cases = [
+            ['fn main() -> void {\n    while true {\n        break 1;\n    }\n}',
+                /A break value is not allowed in a statement loop/, 'break 1;', 3, 9],
+            ['fn main() -> void {\n    while true {\n        break outer;\n    }\n}',
+                /A break value is not allowed in a statement loop/, 'break outer;', 3, 9],
+            ['fn main() -> void {\n    loop {\n        break 1;\n    }\n}',
+                /A break value is not allowed in a statement loop/, 'break 1;', 3, 9],
+            ['fn main() -> number {\n    return loop {\n        break;\n    };\n}',
+                /A value loop requires a break value/, 'break;', 3, 9],
+            ['fn main() -> number {\n    return loop {\n        break {};\n    };\n}',
+                /A break value cannot have type void/, 'break {};', 3, 9],
+            ['fn main(flag: bool) -> void {\n    let value = loop { if flag { break 1; } else { break false; } };\n}',
+                /Type mismatch: expected Number, found Bool/,
+                'let value = loop { if flag { break 1; } else { break false; } };', 2, 5],
+            ['fn main() -> void {\n    let value = loop {};\n}',
+                /Cannot infer a concrete type for divergent initializer 'value'/, 'let value = loop {};', 2, 5],
+            ['fn main() -> number {\n    return loop {\n        while false { break 1; }\n        break 2;\n    };\n}',
+                /A break value is not allowed in a statement loop/, 'while false { break 1; }', 3, 23],
+            ['fn main() -> void {\n    loop {\n        let value = loop { break; };\n        break;\n    }\n}',
+                /A value loop requires a break value/, 'let value = loop { break; };', 3, 28],
+            ['fn main() -> number {\n    let value = false && loop { break; };\n    return 1;\n}',
+                /A value loop requires a break value/, 'let value = false && loop { break; };', 2, 33],
+        ];
+        const expected = compile(compiler, source).bytes;
+        const wat = compiler.compileWat(source);
+        const neverBytes = compile(compiler, noExit).bytes;
+        const neverWat = compiler.compileWat(noExit);
+        const diagnostics = new Map();
+        for (const level of [0, 1, 2, 3]) {
+            compiler.setOptimizationLevel(level);
+            const { bytes, module } = compile(compiler, source);
+            assert.deepEqual(bytes, expected);
+            assert.equal(compiler.compileWat(source), wat);
+            assert.deepEqual(compile(compiler, noExit).bytes, neverBytes);
+            assert.equal(compiler.compileWat(noExit), neverWat);
+            assert.deepEqual(WebAssembly.Module.imports(module), [
+                { module: 'loop', name: 'loop', kind: 'function' },
+                { module: 'module with spaces/λ', name: 'field:with,delimiters', kind: 'function' },
+            ]);
+            const events = [];
+            const instance = new WebAssembly.Instance(module, {
+                loop: { loop(value) { events.push(value); return value; } },
+                'module with spaces/λ': { 'field:with,delimiters': () => 19 },
+            });
+            const e = instance.exports;
+            for (const [name, args, result, effects] of [
+                ['statements', [], 13, [11, 100, 21, 31]],
+                ['numeric', [], 6, [1, 2, 3, 4, 40]],
+                ['noop', [], undefined, [41]],
+                ['early', [1], 50, [50]], ['early', [0], 51, [51]],
+                ['statement_return', [], 52, [52]], ['tail', [], 60, [60]],
+                ['skipped', [], 7, [7]], ['imported', [], 19, []],
+            ]) {
+                events.length = 0;
+                assert.equal(e[name](...args), result);
+                assert.deepEqual(events, effects);
+            }
+            for (const flag of [0, 1]) {
+                assert.equal(e.boolean(flag), flag);
+                assert.equal(readDescriptor(instance, 'string', e.text(flag)), flag ? 'é🦀' : 'other');
+            }
+            events.length = 0;
+            const a = e.items(), b = e.items();
+            assert.notEqual(a, b);
+            assert.deepEqual(readDescriptor(instance, 'number[]', a), [10, 11]);
+            assert.deepEqual(readDescriptor(instance, 'number[]', b), [10, 11]);
+            assert.deepEqual(events, [10, 11, 10, 11]);
+            assert.equal(e.alias(a), a);
+            assert.deepEqual(readDescriptor(instance, 'number[]', a), [11, 11]);
+            assert.deepEqual(readDescriptor(instance, 'number[]', b), [10, 11]);
+            for (const [invalid, message, excerpt, line, column] of cases) {
+                for (const method of ['compile', 'compileWat']) {
+                    assert.throws(() => compiler[method](invalid), error => {
+                        assert.ok(error instanceof Error);
+                        assert.equal(error.name, 'Error');
+                        assert.match(error.message, new RegExp(`^<browser>:${line}:${column}: semantic error:`));
+                        assert.match(error.message, message);
+                        assert.ok(error.message.includes(excerpt));
+                        assert.ok(error.message.includes(` |${' '.repeat(column)}^`));
+                        if (diagnostics.has(invalid)) {
+                            assert.equal(error.message, diagnostics.get(invalid));
+                        } else {
+                            diagnostics.set(invalid, error.message);
+                        }
+                        return true;
+                    });
+                    assert.deepEqual(compile(compiler, source).bytes, expected);
+                    assert.equal(compiler.compileWat(source), wat);
+                }
+            }
+            for (const invalid of [
+                'fn loop() -> void {}',
+                'fn main() -> void { outer: loop { break; } }',
+                'fn main() -> void { loop { continue outer; } }',
+            ]) {
+                fails(() => compiler.compile(invalid), /parse error/);
+                fails(() => compiler.compileWat(invalid), /parse error/);
+                assert.deepEqual(compile(compiler, source).bytes, expected);
+                assert.equal(compiler.compileWat(source), wat);
+            }
+        }
     });
 
     test('compound updates preserve old values, target traps, and optimization parity', compiler => {

@@ -33,6 +33,7 @@ pub enum TokenKind<'a> {
     If,
     Else,
     While,
+    Loop,
     Break,
     Continue,
     Return,

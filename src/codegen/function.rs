@@ -138,8 +138,15 @@ impl<'a> Context<'a> {
 pub(super) struct LabelId(usize);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum LoopKind {
+    Statement,
+    Value(ExprResult),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct LoopContext {
     id: LoopId,
+    pub kind: LoopKind,
     pub break_label: LabelId,
     pub continue_label: LabelId,
 }
@@ -319,9 +326,16 @@ impl<'a> BodyEmitter<'a> {
         Ok(())
     }
 
-    pub fn enter_loop(&mut self, id: LoopId, break_label: LabelId, continue_label: LabelId) {
+    pub fn enter_loop(
+        &mut self,
+        id: LoopId,
+        kind: LoopKind,
+        break_label: LabelId,
+        continue_label: LabelId,
+    ) {
         self.loops.push(LoopContext {
             id,
+            kind,
             break_label,
             continue_label,
         });
@@ -439,7 +453,7 @@ pub(super) fn emit(function: &TypedFunction, module: &Layout) -> Result<Function
 
     let flow = emitter.emit_block(&function.body)?;
 
-    if function.return_type != Type::Void && !flow.always_returns() {
+    if function.return_type != Type::Void && !flow.returns_or_diverges() {
         return Err(CodegenError::MissingReturnValue {
             function: function.name.clone(),
             return_type: function.return_type,
@@ -571,7 +585,7 @@ mod tests {
             let mut emitter = BodyEmitter::new(function, &layout).unwrap();
             let exit = emitter.begin_block().unwrap();
             let back = emitter.begin_loop().unwrap();
-            emitter.enter_loop(LoopId(5000), exit, back);
+            emitter.enter_loop(LoopId(5000), LoopKind::Statement, exit, back);
             let labels = emitter.labels.clone();
             let loops = emitter.loops.clone();
             let next_label = emitter.next_label;
@@ -624,6 +638,110 @@ mod tests {
                     .continue_label,
                 back
             );
+        }
+    }
+
+    #[test]
+    fn statement_and_value_loop_cleanup_restores_scopes_on_body_and_result_errors() {
+        use crate::typed_ast::{TypedExpr, TypedExprKind, TypedStatement};
+
+        let program = Compiler::new().analyze(
+            "fn test(param: number) -> void { let inside: number[] = [1]; let after: number[] = [2]; }",
+        ).unwrap();
+        let layout = Layout::new(&program).unwrap();
+        let function = &program.functions[0];
+        let TypedStatementKind::Let { id: inside, .. } = function.body[0].kind else {
+            panic!("let");
+        };
+        let span = Span::new(40, 60);
+
+        for kind in [LoopKind::Statement, LoopKind::Value(Type::Number.into())] {
+            for failure in [None, Some("target"), Some("kind"), Some("result")] {
+                if kind == LoopKind::Statement && failure == Some("result") {
+                    continue;
+                }
+                let mut emitter = BodyEmitter::new(function, &layout).unwrap();
+                let exit = emitter.begin_block().unwrap();
+                let back = emitter.begin_loop().unwrap();
+                emitter.enter_loop(LoopId(5000), LoopKind::Value(Type::Bool.into()), exit, back);
+                let labels = emitter.labels.clone();
+                let loops = emitter.loops.clone();
+                let initialized = emitter.context.initialized.clone();
+                let first_temporary = emitter.context.next_temporary.get();
+                let next_label = emitter.next_label;
+                let target = if failure == Some("target") {
+                    LoopId(999)
+                } else {
+                    LoopId(77)
+                };
+                let break_ = match (kind, failure) {
+                    (LoopKind::Statement, Some("kind")) => TypedStatementKind::BreakValue {
+                        target,
+                        value: TypedExpr {
+                            kind: TypedExprKind::Number("1".into()),
+                            ty: Type::Number.into(),
+                        },
+                    },
+                    (LoopKind::Statement, _) | (LoopKind::Value(_), Some("kind")) => {
+                        TypedStatementKind::Break { target }
+                    }
+                    (LoopKind::Value(_), _) => TypedStatementKind::BreakValue {
+                        target,
+                        value: if failure == Some("result") {
+                            TypedExpr {
+                                kind: TypedExprKind::Bool(true),
+                                ty: Type::Bool.into(),
+                            }
+                        } else {
+                            TypedExpr {
+                                kind: TypedExprKind::Number("1".into()),
+                                ty: Type::Number.into(),
+                            }
+                        },
+                    },
+                };
+                let body = vec![
+                    function.body[0].clone(),
+                    TypedStatement { kind: break_, span },
+                ];
+                let result = super::super::control_flow::emit_loop(
+                    LoopId(77),
+                    &body,
+                    kind,
+                    &mut emitter,
+                    span,
+                );
+                match failure {
+                    None => assert!(result.is_ok()),
+                    Some("target") => assert!(matches!(
+                        result,
+                        Err(CodegenError::InvalidLoopTarget { .. })
+                    )),
+                    Some("kind") => assert!(matches!(
+                        result,
+                        Err(CodegenError::MissingBreakValue { .. }
+                            | CodegenError::BreakValueNotAllowed { .. })
+                    )),
+                    Some("result") => {
+                        assert!(matches!(result, Err(CodegenError::TypeMismatch { .. })))
+                    }
+                    _ => unreachable!(),
+                }
+                assert_eq!(emitter.labels, labels);
+                assert_eq!(emitter.loops, loops);
+                assert_eq!(emitter.context.initialized, initialized);
+                assert_eq!(emitter.context.next_temporary.get(), first_temporary + 1);
+                assert!(emitter.next_label >= next_label + 2);
+                assert!(emitter.seen_loops.contains(&LoopId(77)));
+                assert!(matches!(
+                    emitter.resolve(inside, Type::NumberArray, span),
+                    Err(CodegenError::UninitializedVariable { .. })
+                ));
+                assert_eq!(emitter.label_depth(exit).unwrap().raw(), 1);
+                assert_eq!(emitter.label_depth(back).unwrap().raw(), 0);
+                emitter.emit_block(&vec![function.body[1].clone()]).unwrap();
+                assert_eq!(emitter.context.next_temporary.get(), first_temporary + 2);
+            }
         }
     }
 

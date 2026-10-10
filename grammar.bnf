@@ -30,6 +30,7 @@
               | <compound_assignment>
               | <if_statement>
               | <while_statement>
+              | <loop_statement>
               | <break_statement>
               | <continue_statement>
               | <return_statement>
@@ -68,11 +69,14 @@
                     ( <ws> "else" <ws> ( <value_block> | <if_expression> ) )?
 
 # A value block's final expression has no semicolon. A semicolon discards its
-# result. Only a nonfinal bare if can separate statements without a semicolon;
+# result. Nonfinal bare if/loop forms can separate statements without a semicolon;
 # all other adjacent expressions require explicit semicolons, regardless of lines.
-# A final bare if in a value block is its tail and requires else semantically.
+# A final bare if/loop in a value block is its expression tail. A value if requires
+# else semantically. Bare loop with a semicolon is a statement loop in all statement
+# positions, including value blocks; `(loop { break 1; });` discards a value loop.
 # In statement position and when classifying value-block statements/tails, a bare
-# if ends at its last arm, before any following binary operator. Thus
+# if ends at its last arm and loop at its closing brace, before any following
+# binary operator. Thus
 # `if true {} -1;` and `if true {} --1;` contain two statements, with or without
 # else, independent of whitespace/comments. Parenthesize the whole if for binary
 # continuation there: `(if true { 1 } else { 2 }) - 1;` (or a block tail without `;`).
@@ -82,20 +86,31 @@
 # Statement-if branch tails are discarded, including nested statement else-if.
 # Every expression-form if requires else and exactly matching arm results, with
 # divergent Never arms compatible with the other result. Never is not a source type.
-# Function and while bodies remain statement blocks: non-if tails need semicolons.
-# Named functions never implicitly return a tail; nonvoid results need return.
+# Function, while, and loop bodies remain strict statement blocks: ordinary tails
+# need semicolons. A loop expression gets its result only from reachable breaks.
+# Named functions never implicitly return a tail; nonvoid functions must return
+# or explicitly diverge on every path, never complete normally.
 
 
 <while_statement> ::= "while" <ws1> <expression>
                       <ws> <block>
 
 
+<loop_statement> ::= "loop" <ws> <block> ( <ws> ";" )?
+
+<loop_expression> ::= "loop" <ws> <block>
+
 <break_statement> ::= "break" <ws> ";"
+                    | "break" <ws> <expression> <ws> ";"
 
 <continue_statement> ::= "continue" <ws> ";"
 
-# Loop transfers are statement-only, without labels or values, and target the
-# nearest enclosing while in the same function. Both words are reserved keywords.
+# Loop transfers are statement-only, without labels, and target the nearest
+# enclosing while/loop in the same function. Statement loops and while accept only
+# bare break; value loops require a nonvoid break value, even in unreachable code.
+# Reachable value breaks must have exactly matching types. No reachable exit gives
+# Never; divergent RHS expressions do not supply an actual break result.
+# loop, break, and continue are reserved keywords.
 
 
 <return_statement> ::= "return" <ws> ";"
@@ -167,6 +182,7 @@
                        | <array_literal>
                        | <value_block>
                        | <if_expression>
+                       | <loop_expression>
                        | "(" <ws> <expression> <ws> ")"
 
 

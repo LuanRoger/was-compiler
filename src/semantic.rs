@@ -75,6 +75,15 @@ pub enum SemanticError {
     #[error("Break is only allowed inside a loop at {span:?}")]
     BreakOutsideLoop { span: Span },
 
+    #[error("A break value is not allowed in a statement loop at {span:?}")]
+    BreakValueNotAllowed { span: Span },
+
+    #[error("A value loop requires a break value at {span:?}")]
+    MissingBreakValue { span: Span },
+
+    #[error("A break value cannot have type void at {span:?}")]
+    InvalidBreakValue { span: Span },
+
     #[error("Continue is only allowed inside a loop at {span:?}")]
     ContinueOutsideLoop { span: Span },
 
@@ -102,6 +111,9 @@ impl SemanticError {
             | Self::InvalidAssignmentTarget { span }
             | Self::InvalidCompoundAssignmentOperator { span, .. }
             | Self::BreakOutsideLoop { span }
+            | Self::BreakValueNotAllowed { span }
+            | Self::MissingBreakValue { span }
+            | Self::InvalidBreakValue { span }
             | Self::ContinueOutsideLoop { span }
             | Self::UnexpectedReturnValue { span }
             | Self::MissingReturn { span, .. } => Some(*span),
@@ -121,13 +133,25 @@ struct VariableBinding {
     ty: Type,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LoopKind {
+    Statement,
+    Value,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LoopContext {
+    id: LoopId,
+    kind: LoopKind,
+}
+
 #[derive(Default)]
 pub struct SemanticAnalyzer {
     host_functions: HostFunctions,
     functions: HashMap<String, FunctionSignature>,
     scopes: Vec<HashMap<String, VariableBinding>>,
     next_variable_id: usize,
-    loops: Vec<LoopId>,
+    loops: Vec<LoopContext>,
     next_loop_id: usize,
 }
 
@@ -253,7 +277,7 @@ impl SemanticAnalyzer {
 
         let (body, flow) = self.analyze_block(&function.body, function.return_type)?;
 
-        if function.return_type != Type::Void && !flow.always_returns() {
+        if function.return_type != Type::Void && !flow.returns_or_diverges() {
             return Err(SemanticError::MissingReturn {
                 name: function.name.clone(),
                 span: function.span,
@@ -429,7 +453,10 @@ impl SemanticAnalyzer {
                 let id = LoopId(self.next_loop_id);
 
                 self.next_loop_id += 1;
-                self.loops.push(id);
+                self.loops.push(LoopContext {
+                    id,
+                    kind: LoopKind::Statement,
+                });
 
                 let result = (|| {
                     let (cond, cond_flow) = self.analyze_expr(cond, span, return_type)?;
@@ -445,25 +472,63 @@ impl SemanticAnalyzer {
 
                 let (cond, body, cond_flow, body_flow) = result?;
 
-                flow = if cond_flow.always_returns() {
-                    Flow::RETURN
-                } else {
+                flow = if cond_flow.can_fall_through() {
                     cond_flow.then(body_flow).while_loop()
+                } else {
+                    cond_flow.infinite_loop()
                 };
 
                 TypedStatementKind::While { id, cond, body }
             }
 
+            StatementKind::Loop { body } => {
+                let (id, body, body_flow) =
+                    self.analyze_loop_body(body, return_type, LoopKind::Statement)?;
+
+                flow = body_flow.infinite_loop();
+
+                TypedStatementKind::Loop { id, body }
+            }
+
             StatementKind::Break => {
-                let target = self
+                let context = self
                     .loops
                     .last()
                     .copied()
                     .ok_or(SemanticError::BreakOutsideLoop { span })?;
 
+                if context.kind == LoopKind::Value {
+                    return Err(SemanticError::MissingBreakValue { span });
+                }
+
                 flow = Flow::BREAK;
 
-                TypedStatementKind::Break { target }
+                TypedStatementKind::Break { target: context.id }
+            }
+
+            StatementKind::BreakValue(value) => {
+                let context = self
+                    .loops
+                    .last()
+                    .copied()
+                    .ok_or(SemanticError::BreakOutsideLoop { span })?;
+
+                if context.kind == LoopKind::Statement {
+                    return Err(SemanticError::BreakValueNotAllowed { span });
+                }
+
+                let (value, value_flow) = self.analyze_expr(value, span, return_type)?;
+
+                flow = match value.ty {
+                    ExprResult::Value(ty) => value_flow.then(Flow::value_break(ty)),
+                    ExprResult::Never => value_flow,
+                    ExprResult::Void => return Err(SemanticError::InvalidBreakValue { span }),
+                };
+
+                TypedStatementKind::BreakValue {
+                    target: context.id,
+                    value,
+                }
             }
 
             StatementKind::Continue => {
@@ -475,7 +540,7 @@ impl SemanticAnalyzer {
 
                 flow = Flow::CONTINUE;
 
-                TypedStatementKind::Continue { target }
+                TypedStatementKind::Continue { target: target.id }
             }
 
             StatementKind::Return(value) => {
@@ -515,6 +580,26 @@ impl SemanticAnalyzer {
         };
 
         Ok((TypedStatement { kind, span }, flow))
+    }
+
+    fn analyze_loop_body(
+        &mut self,
+        body: &Block,
+        return_type: Type,
+        kind: LoopKind,
+    ) -> Result<(LoopId, TypedBlock, Flow), SemanticError> {
+        let id = LoopId(self.next_loop_id);
+
+        self.next_loop_id += 1;
+        self.loops.push(LoopContext { id, kind });
+
+        let result = self.analyze_scoped_block(body, return_type);
+
+        self.loops.pop();
+
+        let (body, flow) = result?;
+
+        Ok((id, body, flow))
     }
 
     fn analyze_assignment_target(
@@ -625,6 +710,25 @@ impl SemanticAnalyzer {
                         name: name.clone(),
                     },
                     binding.ty.into(),
+                )
+            }
+
+            Expr::Loop { body } => {
+                let (id, body, body_flow) =
+                    self.analyze_loop_body(body, return_type, LoopKind::Value)?;
+                let ty = body_flow.break_type().map_err(|(expected, found)| {
+                    SemanticError::TypeMismatch {
+                        expected,
+                        found,
+                        span,
+                    }
+                })?;
+
+                flow = body_flow.infinite_loop();
+
+                (
+                    TypedExprKind::Loop { id, body },
+                    ty.map_or(ExprResult::Never, ExprResult::Value),
                 )
             }
 
