@@ -668,7 +668,7 @@ fn scalar_local_types_are_checked_before_initialization_or_rhs_emission() {
             TypedStatement {
                 kind: TypedStatementKind::Expression(TypedExpr {
                     kind: TypedExprKind::Bool(true),
-                    ty: Type::Number,
+                    ty: Type::Number.into(),
                 }),
                 span,
             },
@@ -710,17 +710,17 @@ fn non_identifier_assignment_targets_and_index_bases_are_rejected_before_rhs() {
                 name: "bad".to_owned(),
                 args: vec![],
             },
-            ty: Type::Number,
+            ty: Type::Number.into(),
         },
         TypedExpr {
             kind: TypedExprKind::Index {
                 expr: Box::new(TypedExpr {
                     kind: TypedExprKind::Array(vec![number()]),
-                    ty: Type::NumberArray,
+                    ty: Type::NumberArray.into(),
                 }),
                 index: Box::new(number_literal("0")),
             },
-            ty: Type::Number,
+            ty: Type::Number.into(),
         },
     ];
 

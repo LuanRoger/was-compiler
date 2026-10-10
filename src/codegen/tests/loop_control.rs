@@ -283,7 +283,7 @@ fn hidden_skipped_and_unreachable_loop_bodies_and_transfers_are_all_checked() {
     };
     let false_cond = TypedExpr {
         kind: TypedExprKind::Bool(false),
-        ty: Type::Bool,
+        ty: Type::Bool.into(),
     };
 
     for transfer in [break_to, continue_to] {
@@ -359,11 +359,11 @@ fn transfers_preserve_planning_of_unreachable_locals_temporaries_strings_and_hel
     let span = Span::new(12, 34);
     let array = TypedExpr {
         kind: TypedExprKind::Array(vec![number()]),
-        ty: Type::NumberArray,
+        ty: Type::NumberArray.into(),
     };
     let string = TypedExpr {
         kind: TypedExprKind::String("after".into()),
-        ty: Type::String,
+        ty: Type::String.into(),
     };
     let following = vec![
         declaration(99, Type::NumberArray, array, span),

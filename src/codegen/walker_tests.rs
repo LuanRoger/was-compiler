@@ -9,7 +9,7 @@ use crate::{
 fn expr(kind: TypedExprKind) -> TypedExpr {
     TypedExpr {
         kind,
-        ty: Type::Number,
+        ty: Type::Number.into(),
     }
 }
 
@@ -144,6 +144,8 @@ impl Visitor for Recorder {
             TypedExprKind::Call { .. } => "call".into(),
             TypedExprKind::Array(_) => "array".into(),
             TypedExprKind::Index { .. } => "index".into(),
+            TypedExprKind::Block(_) => "value-block".into(),
+            TypedExprKind::If { .. } => "value-if".into(),
         };
 
         self.record(event)
@@ -344,6 +346,65 @@ fn empty_blocks_still_receive_entry_and_exit_hooks() {
         ControlFlow::Continue(())
     );
     assert_eq!(recorder.events, ["block+0", "block-0"]);
+}
+
+#[test]
+fn value_blocks_keep_scope_hooks_open_through_tails_and_visit_both_arms() {
+    use crate::typed_ast::TypedValueBlock;
+
+    let value_block = |id, name: &str| TypedValueBlock {
+        statements: vec![statement(
+            id,
+            TypedStatementKind::Expression(identifier(name)),
+        )],
+        tail: Some(Box::new(identifier("tail"))),
+        span: Span::new(0, 0),
+    };
+    let block = vec![statement(
+        1,
+        TypedStatementKind::Expression(expr(TypedExprKind::If {
+            cond: Box::new(expr(TypedExprKind::Block(value_block(2, "condition")))),
+            then: value_block(3, "then"),
+            else_: Some(value_block(4, "else")),
+        })),
+    )];
+    let expected = [
+        "block+1",
+        "statement:1",
+        "value-if",
+        "value-block",
+        "block+1",
+        "statement:2",
+        "identifier:condition",
+        "identifier:tail",
+        "block-1",
+        "block+1",
+        "statement:3",
+        "identifier:then",
+        "identifier:tail",
+        "block-1",
+        "block+1",
+        "statement:4",
+        "identifier:else",
+        "identifier:tail",
+        "block-1",
+        "block-1",
+    ];
+    let mut recorder = Recorder::default();
+    assert_eq!(walk_block(&block, &mut recorder), ControlFlow::Continue(()));
+    assert_eq!(recorder.events, expected);
+
+    for stop_at in 1..=expected.len() {
+        let mut recorder = Recorder {
+            stop_at: Some(stop_at),
+            ..Recorder::default()
+        };
+        assert_eq!(
+            walk_block(&block, &mut recorder),
+            ControlFlow::Break(stop_at)
+        );
+        assert_eq!(recorder.events, expected[..stop_at]);
+    }
 }
 
 #[test]

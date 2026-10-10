@@ -3,6 +3,7 @@
 pub(crate) struct Flow(u8);
 
 impl Flow {
+    pub(crate) const NONE: Self = Self(0);
     pub(crate) const FALLTHROUGH: Self = Self(1);
     pub(crate) const RETURN: Self = Self(2);
     pub(crate) const BREAK: Self = Self(4);
@@ -15,6 +16,10 @@ impl Flow {
         } else {
             self
         }
+    }
+
+    pub(crate) fn without_fallthrough(self) -> Self {
+        self.then(Self::NONE)
     }
 
     pub(crate) fn join(self, other: Self) -> Self {
@@ -38,6 +43,42 @@ impl Flow {
 #[cfg(test)]
 mod tests {
     use super::Flow;
+
+    #[test]
+    fn empty_outcomes_and_fallthrough_removal_compose() {
+        assert!(!Flow::NONE.can_fall_through());
+        assert!(!Flow::NONE.always_returns());
+        assert_eq!(Flow::NONE.then(Flow::RETURN), Flow::NONE);
+        assert_eq!(Flow::FALLTHROUGH.without_fallthrough(), Flow::NONE);
+
+        for abrupt in [Flow::RETURN, Flow::BREAK, Flow::CONTINUE] {
+            assert_eq!(Flow::NONE.join(abrupt), abrupt);
+            assert_eq!(abrupt.without_fallthrough(), abrupt);
+            assert_eq!(abrupt.join(Flow::FALLTHROUGH).without_fallthrough(), abrupt);
+        }
+    }
+
+    #[test]
+    fn short_circuit_preserves_skipped_rhs_and_lhs_transfers() {
+        for rhs in [
+            Flow::NONE,
+            Flow::FALLTHROUGH,
+            Flow::RETURN,
+            Flow::BREAK,
+            Flow::CONTINUE,
+        ] {
+            let optional_rhs = Flow::FALLTHROUGH.join(rhs.without_fallthrough());
+
+            assert!(optional_rhs.can_fall_through());
+            assert_eq!(Flow::RETURN.then(optional_rhs), Flow::RETURN);
+            assert_eq!(Flow::BREAK.then(optional_rhs), Flow::BREAK);
+        }
+
+        assert_eq!(
+            Flow::FALLTHROUGH.then(Flow::FALLTHROUGH.join(Flow::RETURN.without_fallthrough())),
+            Flow::FALLTHROUGH.join(Flow::RETURN)
+        );
+    }
 
     #[test]
     fn only_a_pure_return_guarantees_function_return() {

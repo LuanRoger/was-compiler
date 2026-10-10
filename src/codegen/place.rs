@@ -1,12 +1,14 @@
 use crate::{
     ast::{BinaryOp, Type},
+    flow::Flow,
     tokens::Span,
     typed_ast::{TypedExpr, TypedExprKind},
 };
 use wasm_encoder::{Instruction, MemArg, ValType};
 
 use super::{
-    CodegenError, abi, expect_type, expression, function::BodyEmitter, indices::LocalIndex, values,
+    CodegenError, abi, expect_operand, expression, function::BodyEmitter, indices::LocalIndex,
+    values,
 };
 
 enum Place<'a> {
@@ -25,7 +27,7 @@ impl<'a> Place<'a> {
     ) -> Result<Self, CodegenError> {
         match &target.kind {
             TypedExprKind::Identifier { id, .. } => {
-                Ok(Self::Local(body.resolve(*id, target.ty, span)?))
+                Ok(Self::Local(body.resolve_expr(*id, target.ty, span)?))
             }
 
             TypedExprKind::Index { expr: base, index } => {
@@ -34,7 +36,7 @@ impl<'a> Place<'a> {
                 };
 
                 values::expect_index_types(base, index, target.ty, body, span)?;
-                body.resolve(*id, base.ty, span)?;
+                body.resolve_expr(*id, base.ty, span)?;
 
                 Ok(Self::Element { base, index })
             }
@@ -56,19 +58,27 @@ pub(super) fn emit_assignment(
     value: &TypedExpr,
     body: &mut BodyEmitter<'_>,
     span: Span,
-) -> Result<(), CodegenError> {
+) -> Result<Flow, CodegenError> {
     let place = Place::check(target, body, span)?;
+    let ty = match &place {
+        Place::Local(_) => target
+            .ty
+            .value_type()
+            .expect("checked local has a storage type"),
+        Place::Element { .. } => Type::Number,
+    };
+    expect_operand(body.name(), ty, value.ty, span)?;
 
-    expect_type(body.name(), target.ty, value.ty, span)?;
+    let target_flow = if let Place::Element { base, index } = &place {
+        values::emit_address(base, index, body, span)?
+    } else {
+        Flow::FALLTHROUGH
+    };
 
-    if let Place::Element { base, index } = &place {
-        values::emit_address(base, index, body, span)?;
-    }
-
-    body.emit_expr(value, span)?;
+    let flow = target_flow.then(body.emit_expr(value, span)?);
     place.store(body);
 
-    Ok(())
+    Ok(flow)
 }
 
 pub(super) fn emit_compound_assignment(
@@ -77,7 +87,7 @@ pub(super) fn emit_compound_assignment(
     value: &TypedExpr,
     body: &mut BodyEmitter<'_>,
     span: Span,
-) -> Result<(), CodegenError> {
+) -> Result<Flow, CodegenError> {
     let instruction = expression::arithmetic_instruction(op, body).map_err(|operator| {
         CodegenError::UnsupportedOperator {
             function: body.name().into(),
@@ -87,21 +97,22 @@ pub(super) fn emit_compound_assignment(
     })?;
     let place = Place::check(target, body, span)?;
 
-    expect_type(body.name(), Type::Number, target.ty, span)?;
-    expect_type(body.name(), Type::Number, value.ty, span)?;
+    expect_operand(body.name(), Type::Number, target.ty, span)?;
+    expect_operand(body.name(), Type::Number, value.ty, span)?;
 
-    match &place {
+    let target_flow = match &place {
         Place::Local(index) => {
             // Calls and nested expressions preserve this live f64 stack prefix.
             // No scratch local is needed to retain the pre-RHS value.
             body.local_get(*index);
+            Flow::FALLTHROUGH
         }
 
         Place::Element { base, index } => {
             let address = body.temporary(ValType::I32);
             let old_value = body.temporary(ValType::F64);
 
-            values::emit_address(base, index, body, span)?;
+            let flow = values::emit_address(base, index, body, span)?;
             body.local_set(address);
             body.local_get(address);
             body.instruction(&Instruction::F64Load(element_arg()));
@@ -111,14 +122,15 @@ pub(super) fn emit_compound_assignment(
             // including aliased element mutation and possible memory growth.
             body.local_get(address);
             body.local_get(old_value);
+            flow
         }
-    }
+    };
 
-    body.emit_expr(value, span)?;
+    let flow = target_flow.then(body.emit_expr(value, span)?);
     body.instruction(&instruction);
     place.store(body);
 
-    Ok(())
+    Ok(flow)
 }
 
 fn invalid_target(body: &BodyEmitter<'_>, span: Span) -> CodegenError {

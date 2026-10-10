@@ -8,11 +8,11 @@ fn host_call_statements_drop_only_scalar_results_and_normalize_bool_returns() {
             name: "host".to_owned(),
             args: vec![],
         },
-        ty,
+        ty: ty.into(),
     });
 
     for expression in expressions {
-        let expression_type = expression.ty;
+        let expression_type = expression.ty.value_type().unwrap_or(Type::Void);
         let mut function = user(0, "bad", &[], Type::Void);
 
         function.body.push(TypedStatement {
@@ -443,7 +443,7 @@ fn calls_require_exact_argument_types_at_first_and_higher_positions() {
 
                     args[position] = TypedExpr {
                         kind: TypedExprKind::Number("NaN".to_owned()),
-                        ty: found,
+                        ty: found.into(),
                     };
 
                     let program = call_program(

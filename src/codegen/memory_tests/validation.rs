@@ -24,15 +24,15 @@ fn memory_expressions_validate_with_live_stack_prefixes_and_nested_calls_at_all_
 fn forged_memory_roots_operands_and_nested_errors_preserve_statement_spans() {
     let span = Span::new(12, 34);
     let mut wrong_string = string("value");
-    wrong_string.ty = Type::Bool;
+    wrong_string.ty = Type::Bool.into();
     let mut wrong_array = array(vec![]);
-    wrong_array.ty = Type::Number;
+    wrong_array.ty = Type::Number.into();
     let mut wrong_index = index(array(vec![]), number("0"));
-    wrong_index.ty = Type::Bool;
+    wrong_index.ty = Type::Bool.into();
     let mut wrong_len = len(vec![array(vec![])]);
-    wrong_len.ty = Type::Bool;
+    wrong_len.ty = Type::Bool.into();
     let mut wrong_equal = equal(string("a"), string("b"), BinaryOp::Equal);
-    wrong_equal.ty = Type::Number;
+    wrong_equal.ty = Type::Number.into();
     let cases = [
         (wrong_string, mismatch(Type::String, Type::Bool, span)),
         (wrong_array, mismatch(Type::NumberArray, Type::Number, span)),
@@ -91,7 +91,9 @@ fn forged_memory_roots_operands_and_nested_errors_preserve_statement_spans() {
                 program.functions[0].body.insert(
                     0,
                     TypedStatement {
-                        kind: TypedStatementKind::Return(Some(value_for_type(value.ty))),
+                        kind: TypedStatementKind::Return(Some(value_for_type(
+                            value.ty.value_type().unwrap(),
+                        ))),
                         span: Span::new(0, 7),
                     },
                 );
@@ -170,7 +172,7 @@ fn indexed_assignment_checks_identifier_base_target_index_and_rhs_types() {
                 *value = number("NaN");
             }
             1 => {
-                target.ty = Type::Bool;
+                target.ty = Type::Bool.into();
                 *value = number("NaN");
             }
             2 => {
@@ -178,7 +180,7 @@ fn indexed_assignment_checks_identifier_base_target_index_and_rhs_types() {
                 *value = number("NaN");
             }
             3 => {
-                expr.ty = Type::Bool;
+                expr.ty = Type::Bool.into();
                 *value = number("NaN");
             }
             _ => unreachable!(),
@@ -247,7 +249,7 @@ fn memory_handle_types_are_not_interchangeable_in_assignments_and_host_calls() {
                 id: a.id,
                 name: a.name.clone(),
             },
-            ty: Type::NumberArray,
+            ty: Type::NumberArray.into(),
         };
         match &mut program.functions[0].body[0].kind {
             TypedStatementKind::Assignment { value, .. } => *value = replacement,

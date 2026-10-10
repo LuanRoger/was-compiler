@@ -51,14 +51,14 @@ fn malformed_memory_expression_statements_keep_their_span_even_after_return() {
                 Type::String,
                 TypedExpr {
                     kind: TypedExprKind::String("bad".to_owned()),
-                    ty: Type::Number,
+                    ty: Type::Number.into(),
                 },
             ),
             (
                 Type::NumberArray,
                 TypedExpr {
                     kind: TypedExprKind::Array(vec![number()]),
-                    ty: Type::Number,
+                    ty: Type::Number.into(),
                 },
             ),
         ] {
@@ -111,7 +111,7 @@ fn arithmetic_requires_numeric_roots_and_operands_even_in_nested_typed_ast() {
     }
 
     for mut value in roots {
-        value.ty = Type::Bool;
+        value.ty = Type::Bool.into();
 
         assert_eq!(
             compile(&return_program(Some(value), Type::Bool, span)),
@@ -127,7 +127,7 @@ fn arithmetic_requires_numeric_roots_and_operands_even_in_nested_typed_ast() {
     for found in [Type::Bool, Type::String, Type::NumberArray, Type::Void] {
         let mut operand = number();
 
-        operand.ty = found;
+        operand.ty = found.into();
 
         let mut expressions = vec![unary(UnaryOp::Negate, operand.clone())];
 
@@ -164,7 +164,7 @@ fn arithmetic_requires_numeric_roots_and_operands_even_in_nested_typed_ast() {
 
     let mut nested_root = binary(number(), BinaryOp::Multiply, number());
 
-    nested_root.ty = Type::Bool;
+    nested_root.ty = Type::Bool.into();
 
     for value in [
         unary(UnaryOp::Negate, nested_root.clone()),
@@ -256,12 +256,12 @@ fn remainder_checks_root_types_before_operands_and_operand_types_before_literals
         let mut operand = boolean();
 
         if ty == Type::Bool {
-            operand.ty = Type::String;
+            operand.ty = Type::String.into();
         }
 
         let mut value = binary(operand, BinaryOp::Remainder, number_literal("NaN"));
 
-        value.ty = ty;
+        value.ty = ty.into();
 
         assert_eq!(
             compile(&return_program(Some(value), ty, span)),
@@ -283,7 +283,7 @@ fn nested_invalid_expressions_and_literals_propagate_in_left_to_right_order() {
         (
             TypedExpr {
                 kind: TypedExprKind::String("bad".to_owned()),
-                ty: Type::Number,
+                ty: Type::Number.into(),
             },
             CodegenError::TypeMismatch {
                 function: "bad".to_owned(),
@@ -306,7 +306,7 @@ fn nested_invalid_expressions_and_literals_propagate_in_left_to_right_order() {
                     id: VariableId(99),
                     name: "x".to_owned(),
                 },
-                ty: Type::Number,
+                ty: Type::Number.into(),
             },
             CodegenError::UnknownVariable {
                 function: "bad".to_owned(),
@@ -321,7 +321,7 @@ fn nested_invalid_expressions_and_literals_propagate_in_left_to_right_order() {
                     name: "numeric".to_owned(),
                     args: vec![],
                 },
-                ty: Type::Number,
+                ty: Type::Number.into(),
             },
             CodegenError::UnknownFunctionReference {
                 function: "bad".to_owned(),
@@ -464,7 +464,7 @@ fn malformed_memory_expression_kinds_are_rejected_with_the_statement_span() {
         let is_index = matches!(&kind, TypedExprKind::Index { .. });
         let value = TypedExpr {
             kind,
-            ty: Type::Number,
+            ty: Type::Number.into(),
         };
 
         for is_statement in [false, true] {
@@ -595,7 +595,7 @@ fn malformed_return_types_and_numeric_expression_types_are_checked() {
         (
             TypedExpr {
                 kind: TypedExprKind::Number("42".to_owned()),
-                ty: Type::Bool,
+                ty: Type::Bool.into(),
             },
             Type::Bool,
             Type::Number,
@@ -628,7 +628,7 @@ fn void_returns_reject_any_value_including_void_typed_expressions() {
                 name: "noop".to_owned(),
                 args: vec![],
             },
-            ty: Type::Void,
+            ty: Type::Void.into(),
         },
     ] {
         let mut program = return_program(Some(value), Type::Void, span);

@@ -1,11 +1,13 @@
 use crate::{
     ast::Type,
     flow::Flow,
-    typed_ast::{TypedBlock, TypedStatement, TypedStatementKind},
+    typed_ast::{ExprResult, TypedBlock, TypedStatement, TypedStatementKind},
 };
 use wasm_encoder::Instruction;
 
-use super::{CodegenError, control_flow, expect_type, function::BodyEmitter, place};
+use super::{
+    CodegenError, control_flow, expect_operand, expect_type, function::BodyEmitter, place,
+};
 
 pub(super) fn emit_block(
     block: &TypedBlock,
@@ -33,38 +35,36 @@ pub(super) fn emit(
         TypedStatementKind::Let { id, ty, value, .. } => {
             let index = emitter.declaration(*id, *ty, span)?;
 
-            expect_type(function, *ty, value.ty, span)?;
-            emitter.emit_expr(value, span)?;
-            emitter.local_set(index);
+            expect_operand(function, *ty, value.ty, span)?;
+            let flow = emitter.emit_expr(value, span)?;
+            if flow.can_fall_through() {
+                emitter.local_set(index);
+            }
             emitter.initialize(*id);
 
-            Ok(Flow::FALLTHROUGH)
+            Ok(flow)
         }
 
         TypedStatementKind::Assignment { target, value } => {
-            place::emit_assignment(target, value, emitter, span)?;
-
-            Ok(Flow::FALLTHROUGH)
+            place::emit_assignment(target, value, emitter, span)
         }
 
         TypedStatementKind::CompoundAssignment { target, op, value } => {
-            place::emit_compound_assignment(target, op, value, emitter, span)?;
-
-            Ok(Flow::FALLTHROUGH)
+            place::emit_compound_assignment(target, op, value, emitter, span)
         }
 
         TypedStatementKind::Expression(expr) => {
-            emitter.emit_expr(expr, span)?;
+            let flow = emitter.emit_expr(expr, span)?;
 
-            if expr.ty != Type::Void {
+            if matches!(expr.ty, ExprResult::Value(_)) {
                 emitter.instruction(&Instruction::Drop);
             }
 
-            Ok(Flow::FALLTHROUGH)
+            Ok(flow)
         }
 
         TypedStatementKind::Return(value) => {
-            match value {
+            let flow = match value {
                 Some(_) if emitter.return_type() == Type::Void => {
                     return Err(CodegenError::UnexpectedReturnValue {
                         function: function.into(),
@@ -73,18 +73,19 @@ pub(super) fn emit(
                 }
 
                 Some(expr) => {
-                    expect_type(function, emitter.return_type(), expr.ty, span)?;
-                    emitter.emit_expr(expr, span)?;
+                    expect_operand(function, emitter.return_type(), expr.ty, span)?;
+                    emitter.emit_expr(expr, span)?
                 }
 
                 None => {
                     expect_type(function, emitter.return_type(), Type::Void, span)?;
+                    Flow::FALLTHROUGH
                 }
-            }
+            };
 
             emitter.instruction(&Instruction::Return);
 
-            Ok(Flow::RETURN)
+            Ok(flow.then(Flow::RETURN))
         }
 
         TypedStatementKind::If { cond, then, else_ } => {

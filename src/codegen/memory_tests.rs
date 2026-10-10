@@ -189,28 +189,28 @@ fn compile_source(source: &str) -> Vec<u8> {
 fn number(text: &str) -> TypedExpr {
     TypedExpr {
         kind: TypedExprKind::Number(text.into()),
-        ty: Type::Number,
+        ty: Type::Number.into(),
     }
 }
 
 fn string(text: &str) -> TypedExpr {
     TypedExpr {
         kind: TypedExprKind::String(text.into()),
-        ty: Type::String,
+        ty: Type::String.into(),
     }
 }
 
 fn boolean() -> TypedExpr {
     TypedExpr {
         kind: TypedExprKind::Bool(true),
-        ty: Type::Bool,
+        ty: Type::Bool.into(),
     }
 }
 
 fn array(elements: Vec<TypedExpr>) -> TypedExpr {
     TypedExpr {
         kind: TypedExprKind::Array(elements),
-        ty: Type::NumberArray,
+        ty: Type::NumberArray.into(),
     }
 }
 
@@ -220,7 +220,7 @@ fn index(base: TypedExpr, index: TypedExpr) -> TypedExpr {
             expr: Box::new(base),
             index: Box::new(index),
         },
-        ty: Type::Number,
+        ty: Type::Number.into(),
     }
 }
 
@@ -231,7 +231,7 @@ fn len(args: Vec<TypedExpr>) -> TypedExpr {
             name: "not_a_lookup".into(),
             args,
         },
-        ty: Type::Number,
+        ty: Type::Number.into(),
     }
 }
 
@@ -242,7 +242,7 @@ fn equal(left: TypedExpr, right: TypedExpr, op: BinaryOp) -> TypedExpr {
             op,
             right: Box::new(right),
         },
-        ty: Type::Bool,
+        ty: Type::Bool.into(),
     }
 }
 
@@ -253,7 +253,7 @@ fn return_program(value: TypedExpr, span: Span) -> TypedProgram {
             id: FunctionId(0),
             name: "bad".into(),
             params: vec![],
-            return_type: value.ty,
+            return_type: value.ty.value_type().unwrap(),
             body: vec![TypedStatement {
                 kind: TypedStatementKind::Return(Some(value)),
                 span,

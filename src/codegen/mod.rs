@@ -2,7 +2,7 @@ use crate::{
     ast::Type,
     exports::ExportOptions,
     tokens::Span,
-    typed_ast::{BuiltinFunction, FunctionRef, LoopId, TypedProgram, VariableId},
+    typed_ast::{BuiltinFunction, ExprResult, FunctionRef, LoopId, TypedProgram, VariableId},
 };
 use thiserror::Error;
 use wasm_encoder::{
@@ -121,6 +121,19 @@ pub enum CodegenError {
         span: Span,
     },
 
+    #[error(
+        "expression result mismatch in function `{function}`: expected {expected:?}, found {found:?} at {span:?}"
+    )]
+    ExprResultMismatch {
+        function: String,
+        expected: ExprResult,
+        found: ExprResult,
+        span: Span,
+    },
+
+    #[error("value-producing if expression requires an else in function `{function}` at {span:?}")]
+    MissingElse { function: String, span: Span },
+
     #[error("unknown function reference {reference:?} in function `{function}` at {span:?}")]
     UnknownFunctionReference {
         function: String,
@@ -216,6 +229,8 @@ impl CodegenError {
             | Self::InvalidNumberLiteral { span, .. }
             | Self::NumberLiteralOutOfRange { span, .. }
             | Self::TypeMismatch { span, .. }
+            | Self::ExprResultMismatch { span, .. }
+            | Self::MissingElse { span, .. }
             | Self::UnknownFunctionReference { span, .. }
             | Self::ArgumentCountMismatch { span, .. }
             | Self::UnsupportedBuiltin { span, .. }
@@ -380,6 +395,48 @@ fn expect_type(
     }
 
     Ok(())
+}
+
+// Operand contexts admit Never, but annotations themselves must match exactly.
+fn expect_operand(
+    function: &str,
+    expected: Type,
+    found: ExprResult,
+    span: Span,
+) -> Result<(), CodegenError> {
+    if found == ExprResult::Never {
+        return Ok(());
+    }
+
+    expect_result(function, expected.into(), found, span)
+}
+
+fn expect_result(
+    function: &str,
+    expected: ExprResult,
+    found: ExprResult,
+    span: Span,
+) -> Result<(), CodegenError> {
+    if expected == found && found != ExprResult::Value(Type::Void) {
+        return Ok(());
+    }
+
+    let concrete = |result| match result {
+        ExprResult::Value(ty) if ty != Type::Void => Some(ty),
+        ExprResult::Void => Some(Type::Void),
+        _ => None,
+    };
+
+    if let (Some(expected), Some(found)) = (concrete(expected), concrete(found)) {
+        return expect_type(function, expected, found, span);
+    }
+
+    Err(CodegenError::ExprResultMismatch {
+        function: function.into(),
+        expected,
+        found,
+        span,
+    })
 }
 
 fn checked_u32(value: usize, what: &'static str) -> Result<u32, CodegenError> {

@@ -86,7 +86,7 @@ mod tests {
     fn expr(kind: TypedExprKind) -> TypedExpr {
         TypedExpr {
             kind,
-            ty: Type::Number,
+            ty: Type::Number.into(),
         }
     }
 

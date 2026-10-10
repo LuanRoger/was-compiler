@@ -1,4 +1,5 @@
 use super::*;
+use crate::typed_ast::{ExprResult, TypedValueBlock};
 
 #[test]
 fn source_numeric_literals_emit_f64_const_return_and_end() {
@@ -570,7 +571,7 @@ fn forged_bool_operator_roots_and_operands_are_type_checked() {
     let mut cases = vec![(bool_not(number()), Type::Bool, Type::Number)];
     let mut wrong_not_root = bool_not(boolean());
 
-    wrong_not_root.ty = Type::Number;
+    wrong_not_root.ty = Type::Number.into();
     cases.push((wrong_not_root, Type::Bool, Type::Number));
 
     for op in [
@@ -587,7 +588,7 @@ fn forged_bool_operator_roots_and_operands_are_type_checked() {
         let operand = if logical { boolean() } else { number() };
         let mut wrong_root = bool_binary(operand.clone(), op, operand);
 
-        wrong_root.ty = Type::Number;
+        wrong_root.ty = Type::Number.into();
         cases.push((wrong_root, Type::Bool, Type::Number));
 
         if logical {
@@ -626,7 +627,11 @@ fn forged_bool_operator_roots_and_operands_are_type_checked() {
 
     for (value, expected, found) in cases {
         assert_eq!(
-            compile(&return_program(Some(value.clone()), value.ty, span)),
+            compile(&return_program(
+                Some(value.clone()),
+                value.ty.value_type().unwrap(),
+                span
+            )),
             Err(CodegenError::TypeMismatch {
                 function: "bad".to_owned(),
                 expected,
@@ -639,6 +644,90 @@ fn forged_bool_operator_roots_and_operands_are_type_checked() {
 }
 
 #[test]
+fn equality_checks_parent_result_before_rejecting_void_left_operand() {
+    let span = Span::new(12, 34);
+
+    for op in [BinaryOp::Equal, BinaryOp::NotEqual] {
+        let left = TypedExpr {
+            kind: TypedExprKind::Block(TypedValueBlock {
+                statements: vec![],
+                tail: None,
+                span,
+            }),
+            ty: ExprResult::Void,
+        };
+        let mut value = bool_binary(left, op, number());
+
+        value.ty = ExprResult::Value(Type::Number);
+
+        assert_eq!(
+            compile(&local_program(vec![TypedStatement {
+                kind: TypedStatementKind::Expression(value),
+                span,
+            }])),
+            Err(CodegenError::TypeMismatch {
+                function: "bad".to_owned(),
+                expected: Type::Bool,
+                found: Type::Number,
+                span,
+            }),
+            "operator {op:?}"
+        );
+    }
+}
+
+#[test]
+fn equality_with_correct_parent_result_retains_number_expected_void_left_error() {
+    let span = Span::new(12, 34);
+    let never = TypedExpr {
+        kind: TypedExprKind::Block(TypedValueBlock {
+            statements: vec![TypedStatement {
+                kind: TypedStatementKind::Return(None),
+                span,
+            }],
+            tail: None,
+            span,
+        }),
+        ty: ExprResult::Never,
+    };
+
+    for op in [BinaryOp::Equal, BinaryOp::NotEqual] {
+        for right in [number(), boolean(), never.clone()] {
+            let left = TypedExpr {
+                kind: TypedExprKind::Block(TypedValueBlock {
+                    statements: vec![],
+                    tail: None,
+                    span,
+                }),
+                ty: ExprResult::Void,
+            };
+            let result = if right.ty == ExprResult::Never {
+                ExprResult::Never
+            } else {
+                ExprResult::Value(Type::Bool)
+            };
+            let mut value = bool_binary(left, op, right);
+
+            value.ty = result;
+
+            assert_eq!(
+                compile(&local_program(vec![TypedStatement {
+                    kind: TypedStatementKind::Expression(value),
+                    span,
+                }])),
+                Err(CodegenError::TypeMismatch {
+                    function: "bad".to_owned(),
+                    expected: Type::Number,
+                    found: Type::Void,
+                    span,
+                }),
+                "operator {op:?}, result {result:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn logical_rhs_is_validated_even_when_runtime_short_circuit_would_skip_it() {
     let span = Span::new(12, 34);
 
@@ -647,7 +736,7 @@ fn logical_rhs_is_validated_even_when_runtime_short_circuit_would_skip_it() {
             BinaryOp::And,
             TypedExpr {
                 kind: TypedExprKind::Bool(false),
-                ty: Type::Bool,
+                ty: Type::Bool.into(),
             },
         ),
         (BinaryOp::Or, boolean()),

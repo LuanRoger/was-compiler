@@ -195,7 +195,7 @@ fn memory_parameter_and_return_abis_use_i32_for_hosts_and_users() {
                             } else {
                                 TypedExprKind::Array(vec![number()])
                             },
-                            ty,
+                            ty: ty.into(),
                         })),
                         span: Span::new(12, 34),
                     });

@@ -447,7 +447,7 @@ fn helper_is_discovered_in_unreachable_and_short_circuited_code() {
 fn number(literal: &str) -> TypedExpr {
     TypedExpr {
         kind: TypedExprKind::Number(literal.into()),
-        ty: Type::Number,
+        ty: Type::Number.into(),
     }
 }
 
@@ -458,7 +458,10 @@ fn value(ty: Type) -> TypedExpr {
         Type::String => TypedExprKind::String("text".into()),
         Type::NumberArray => TypedExprKind::Array(vec![]),
     };
-    TypedExpr { kind, ty }
+    TypedExpr {
+        kind,
+        ty: ty.into(),
+    }
 }
 
 fn binary(left: TypedExpr, op: BinaryOp, right: TypedExpr, ty: Type) -> TypedExpr {
@@ -468,7 +471,7 @@ fn binary(left: TypedExpr, op: BinaryOp, right: TypedExpr, ty: Type) -> TypedExp
             op,
             right: Box::new(right),
         },
-        ty,
+        ty: ty.into(),
     }
 }
 
@@ -492,7 +495,7 @@ fn assert_forged_error(expr: TypedExpr, expected: CodegenError, span: Span) {
                     binary(
                         TypedExpr {
                             kind: TypedExprKind::Bool(context == 3),
-                            ty: Type::Bool,
+                            ty: Type::Bool.into(),
                         },
                         if context == 2 {
                             BinaryOp::And
@@ -575,7 +578,7 @@ fn forged_remainder_validates_nested_operand_kinds_and_reports_left_to_right_err
     let span = Span::new(42, 78);
     for found in [Type::Bool, Type::String, Type::NumberArray] {
         let mut wrong_kind = value(found);
-        wrong_kind.ty = Type::Number;
+        wrong_kind.ty = Type::Number.into();
         for expr in [
             remainder(wrong_kind.clone(), number("2")),
             remainder(number("1"), wrong_kind.clone()),
@@ -659,7 +662,7 @@ fn valid_underflowing_literals_and_unary_negative_zero_remain_valid_remainder_op
                         op: UnaryOp::Negate,
                         expr: Box::new(number("0")),
                     },
-                    ty: Type::Number,
+                    ty: Type::Number.into(),
                 },
                 number("1"),
             ),

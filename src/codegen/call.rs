@@ -1,18 +1,19 @@
 use crate::{
     ast::Type,
+    flow::Flow,
     tokens::Span,
-    typed_ast::{BuiltinFunction, FunctionRef, TypedExpr},
+    typed_ast::{BuiltinFunction, ExprResult, FunctionRef, TypedExpr},
 };
 
-use super::{CodegenError, expect_type, function::BodyEmitter, memory::Helper};
+use super::{CodegenError, expect_operand, expect_result, function::BodyEmitter, memory::Helper};
 
 pub(super) fn emit(
     reference: FunctionRef,
     args: &[TypedExpr],
-    return_type: Type,
+    annotation: ExprResult,
     body: &mut BodyEmitter<'_>,
     span: Span,
-) -> Result<(), CodegenError> {
+) -> Result<(Flow, Type), CodegenError> {
     let function = body.name();
 
     if let FunctionRef::Builtin(BuiltinFunction::Len) = reference {
@@ -26,13 +27,18 @@ pub(super) fn emit(
             });
         }
 
-        expect_type(function, Type::Number, return_type, span)?;
-        expect_type(function, Type::NumberArray, args[0].ty, span)?;
-        body.emit_expr(&args[0], span)?;
+        expect_result(
+            function,
+            predicted_result(Type::Number, args),
+            annotation,
+            span,
+        )?;
+        expect_operand(function, Type::NumberArray, args[0].ty, span)?;
+        let flow = body.emit_expr(&args[0], span)?;
 
         body.call(body.helper(Helper::ArrayLen));
 
-        return Ok(());
+        return Ok((flow, Type::Number));
     }
 
     let target = body.target(reference, span)?;
@@ -47,13 +53,20 @@ pub(super) fn emit(
         });
     }
 
-    expect_type(function, target.return_type, return_type, span)?;
+    expect_result(
+        function,
+        predicted_result(target.return_type, args),
+        annotation,
+        span,
+    )?;
 
     let is_host = matches!(reference, FunctionRef::Host(_));
 
+    let mut flow = Flow::FALLTHROUGH;
+
     for (arg, expected) in args.iter().zip(&target.params) {
-        expect_type(function, *expected, arg.ty, span)?;
-        body.emit_expr(arg, span)?;
+        expect_operand(function, *expected, arg.ty, span)?;
+        flow = flow.then(body.emit_expr(arg, span)?);
 
         if is_host {
             normalize_host_value(*expected, body);
@@ -66,7 +79,15 @@ pub(super) fn emit(
         normalize_host_value(target.return_type, body);
     }
 
-    Ok(())
+    Ok((flow, target.return_type))
+}
+
+fn predicted_result(ty: Type, args: &[TypedExpr]) -> ExprResult {
+    if args.iter().any(|arg| arg.ty == ExprResult::Never) {
+        ExprResult::Never
+    } else {
+        ty.into()
+    }
 }
 
 fn normalize_host_value(ty: Type, body: &mut BodyEmitter<'_>) {

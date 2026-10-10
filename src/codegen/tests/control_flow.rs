@@ -201,7 +201,7 @@ fn forged_if_and_while_conditions_require_bool_and_preserve_statement_spans() {
                 Err(CodegenError::TypeMismatch {
                     function: "bad".to_owned(),
                     expected: Type::Bool,
-                    found: cond.ty,
+                    found: cond.ty.value_type().unwrap_or(Type::Void),
                     span,
                 })
             );
@@ -210,7 +210,7 @@ fn forged_if_and_while_conditions_require_bool_and_preserve_statement_spans() {
 
     let forged = TypedExpr {
         kind: TypedExprKind::Number("1".to_owned()),
-        ty: Type::Bool,
+        ty: Type::Bool.into(),
     };
 
     for statement in [
@@ -289,7 +289,7 @@ fn missing_return_paths_include_partial_nested_conditionals_and_all_loops() {
             vec![while_loop(
                 TypedExpr {
                     kind: TypedExprKind::Bool(false),
-                    ty: Type::Bool,
+                    ty: Type::Bool.into(),
                 },
                 vec![ret.clone()],
                 span,
@@ -422,7 +422,7 @@ fn scoped_branch_and_loop_declarations_preserve_initialized_outer_bindings() {
         while_loop(
             TypedExpr {
                 kind: TypedExprKind::Bool(false),
-                ty: Type::Bool,
+                ty: Type::Bool.into(),
             },
             loop_body,
             span,
@@ -468,7 +468,7 @@ fn invalid_statements_in_unreachable_branches_loops_and_continuations_are_diagno
         vec![while_loop(
             TypedExpr {
                 kind: TypedExprKind::Bool(false),
-                ty: Type::Bool,
+                ty: Type::Bool.into(),
             },
             vec![invalid.clone()],
             outer,
@@ -521,7 +521,10 @@ fn nested_return_type_errors_keep_inner_statement_spans() {
                 Err(CodegenError::TypeMismatch {
                     function: "bad".to_owned(),
                     expected: Type::Number,
-                    found: value.as_ref().map_or(Type::Void, |expr| expr.ty),
+                    found: value
+                        .as_ref()
+                        .and_then(|expr| expr.ty.value_type())
+                        .unwrap_or(Type::Void),
                     span,
                 })
             );

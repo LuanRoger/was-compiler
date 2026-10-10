@@ -7,7 +7,8 @@ promises**. This document does not propose code optimization.
 ## Status and scope
 
 M0–M9, including CLI/runtime integration, numeric-array equality, and floating-point
-remainder, are implemented. Current behavior below is grounded in
+remainder, are implemented, as are WP1–WP3: compound assignments, while
+transfers, and tail-valued block/if expressions. Current behavior below is grounded in
 the frontend/backend, [CLI](../src/cli.rs), [diagnostics](../src/diagnostic.rs),
 [export policy](../src/exports.rs), [Node runtime](../runtime/index.cjs), and their
 unit/integration tests. See
@@ -55,11 +56,24 @@ after a return or in an unselected function. Value-bearing or labeled transfers
 are parse errors in this release. Unreachable statements remain checked and
 emitted, even though transfers skip their runtime effects and traps.
 
+Tail-valued expression blocks and `if`/`else if` values are implemented. A trailing
+semicolon discards a result; normally completing branches must match exactly,
+and value-context if requires else. `Never` represents no normal completion and
+can join the other branch, but has no source spelling, storage or ABI type. A
+Void initializer is rejected; an inferred Never initializer cannot determine a
+concrete type, while an explicitly typed divergent initializer is accepted.
+Named functions still require explicit returns, not implicit tail results.
+Function/while ordinary expression statements and standalone block statements
+require semicolons. Bare statement-if discards branch tails and may omit else;
+a final bare if in an expression block is instead its tail. Parenthesize the
+whole if for arithmetic continuation in statement/tail-classification positions:
+`if true {} -1;` remains two statements, independent of whitespace.
+
 | Restriction now | Practical effect | Current alternative | Possible future choice and tradeoff |
 | --- | --- | --- | --- |
 | Only `number`, `bool`, `string`, `number[]`, and `void` exist. Parameters and return types require annotations; every `let` requires an initializer. No function inference, whole-program type unification, promotions, implicit coercions, or source `i32` type. | Local inference does not change the `f64` numeric model or allow later assignments of another type. A boolean cannot stand in for a number, and a numeric value cannot serve as a condition; `void` is not a variable/parameter type. | Use inferred or explicitly annotated locals and explicit helper functions, branches, or registered host conversions with matching signatures. | Explicit conversions or broader inference require separate type-system and error-ordering decisions; neither is implied by local initializer inference. |
 | No source modules/import declarations, structs, generics, first-class functions, or closures. Calls resolve named user functions, registered hosts, or the built-in `len`. | The source program is one collection of functions; host registration is an embedding/CLI responsibility. | Put related functions in one source unit and supply external capabilities through host functions. Numeric-array conventions can model simple records, but have no field/type safety. | Modules or dedicated aggregate/function types need name-resolution, type-system, and ABI decisions. Host-side modeling avoids those changes but keeps application-specific conventions outside the language. |
-| Control flow is `if`/`else`, `while`, `return`, and bare `break;` / `continue;` targeting the nearest enclosing while. No labels, value breaks, `loop`, `for`, or `foreach`. Every nonvoid function must return on all statically recognized paths. A while alone is not a guaranteed return, even `while true`. | Transfers work under nested branches but cannot cross function boundaries or yield values. Intentionally non-returning nonvoid functions still need an explicit fallback return. | Use a numeric index and `len(array)`, nearest-loop transfers, nested conditions, and an explicit fallback return. Use `void` where no result is intended. | New loop forms or a non-returning type require separate semantic/control-flow rules and tests. They are not behavior-preserving cleanup. |
+| Control flow is `if`/`else`, `while`, `return`, and bare `break;` / `continue;` targeting the nearest enclosing while. No labels, value breaks, `loop`, `for`, or `foreach`. Every nonvoid function must return on all statically recognized paths. A while body alone is not a guaranteed return, even `while true`; an unconditional explicit return in its condition does guarantee return before the body. | Transfers work under nested branches but cannot cross function boundaries or yield values. Intentionally non-returning nonvoid functions still need an explicit fallback return. | Use a numeric index and `len(array)`, nearest-loop transfers, nested conditions, and an explicit fallback return. Use `void` where no result is intended. | New loop forms require separate semantic/control-flow rules and tests; internal `Never` for expression transfers is already supported. They are not behavior-preserving cleanup. |
 | Array indexing in source starts from an identifier; there is no general postfix chaining. | `make_values()[0]` and `[1, 2][0]` are not supported source forms. | Assign the result/literal to an inferred or annotated `number[]` local, then index that local. | General postfix parsing is a grammar feature and needs explicit assignment-target rules. |
 | Identifiers are ASCII letters/underscore followed by ASCII letters/digits/underscore. | Unicode identifiers are unsupported. | Use ASCII identifiers. | Define a Unicode identifier policy with normalization/confusable-name decisions. |
 | Numeric literals contain digits, optionally a dot with digits on both sides. No exponent notation, `.5`, or `1.`. A leading minus is an operator. | `1e3`, `.5`, and `1.` cannot be used as number literals. | Write `1000`, `0.5`, and `1.0`; use unary `-` for negative values. | Broader literal syntax needs matching lexer and backend validation so forged typed literals do not bypass the grammar. |
@@ -206,6 +220,14 @@ Evidence: [tokens.rs](../src/tokens.rs), [typed_ast.rs](../src/typed_ast.rs),
   `span() -> Option<Span>` accessor, delegated by `CompileError`; accessors return
   raw byte offsets and the renderer alone clamps presentation. Unlocated errors
   remain `None`. Precise expression spans/recovery are separate enhancements.
+- WP3 changes `TypedExpr.ty` from `Type` to `ExprResult::{Value(Type), Void, Never}`.
+  Existing constructors can use `ty.into()`; `Type::Void` converts to `Void`, not
+  `Value(Type::Void)`. The latter is malformed. `Never` compatibility is contextual,
+  not public category equality. Bindings/signatures still use concrete `Type`;
+  statement-vector block aliases remain unchanged. Raw/typed value-block wrappers
+  carry statements, an optional boxed tail, and a span. Individual expressions
+  still have no independent spans, so wrappers do not promise precise locations
+  for every nested expression error.
 - `TypedProgram` and its nodes/IDs/type annotations are public and mutable.
   `Compiler::analyze` creates a checked program, including an owned host-import
   snapshot, but callers can forge inconsistent input before `compile`. The
@@ -233,8 +255,11 @@ invalid indices/descriptors, allocator growth, and trusted raw-host mutation.
 non-export sections/indices, required memory exports, and validation of hidden bodies.
 [Remainder tests](../tests/remainder.rs) cover optional helper layout, result
 types/spans, exact binary64 edge cases against an independent reference, and
-once-only left-to-right operand effects. The compiler-in-Wasm path uses the same
-pipeline; [browser tests](../tests/browser.rs) execute emitted guest modules.
+once-only left-to-right operand effects. [Block-value tests](../tests/block_values.rs)
+cover result categories, scopes, transfers, branch effects, saved compound places,
+trap order, deterministic output, and import/export/optimization contracts.
+The compiler-in-Wasm path uses the same pipeline;
+[browser tests](../tests/browser.rs) execute emitted guest modules.
 
 [CLI integration tests](../tests/cli.rs) cover required source files, format
 inference, raw binary output, exports/imports, exit codes, diagnostics, output

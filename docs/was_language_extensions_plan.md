@@ -1,6 +1,6 @@
 # WAS language extensions implementation plan
 
-**Status:** WP1–WP2 implemented; WP3–WP12 proposed; WP13 requires separate authorization.
+**Status:** WP1–WP3 implemented; WP4–WP12 proposed; WP13 requires separate authorization.
 **Baseline:** Extension specification v0.3.
 
 Follow the [agent guide](../AGENTS.md), [extension specification](was_language_extensions_spec.md),
@@ -11,20 +11,29 @@ The spec defines behavior; this plan defines incremental work. References use nu
 
 Comments, local initializer inference, exact `%`, and export selection are implemented prerequisites.
 WP1 adds numeric compound assignments; WP2 adds bare while transfers and flow/label
-tracking. The baseline implementation notes below reflect those completed packages.
+tracking; WP3 adds block/if values and internal `Never`. The baseline implementation
+notes below reflect those completed packages.
 
 Evidence: `src/lexer.rs`, `src/parser.rs`, `src/semantic.rs`, `src/codegen/numeric.rs`, `src/cli.rs`,
 `tests/comments.rs`, `tests/inference.rs`, `tests/remainder.rs`, `tests/emitter.rs`,
-`tests/compound_assignment.rs`, and `tests/loop_control.rs`.
+`tests/compound_assignment.rs`, `tests/loop_control.rs`, and `tests/block_values.rs`.
 
 - `Type` in `src/ast.rs` is a small `Copy` enum, not an extensible callable/type tree.
   `Block` and `TypedBlock` are currently `Vec<Statement>` / `Vec<TypedStatement>`.
   Function results are concrete and explicitly annotated; calls resolve names/IDs.
-- Semantic/backend blocks share private `Flow` completion sets (fallthrough,
-  return, break, continue). A while conservatively completes and consumes its
-  transfers; every statement still receives checking/emission. Expression `Never`
-  and value-producing regions remain WP3 work, not part of this summary.
-- The locals visitor currently skips expressions. The temporary visitor plans
+- Expressions carry `ExprResult::{Value(Type), Void, Never}`; bindings/signatures
+  retain concrete `Type`. Raw/typed value-block wrappers add optional boxed tails
+  without replacing statement-vector block aliases. Individual expressions still
+  have no independent spans.
+- Semantic expressions propagate transient `(TypedExpr, Flow)`; backend lowering
+  reconstructs completion while emitting, without public flow annotations or a
+  second validator. Every statement/child still receives checking/emission.
+  A while consumes its own transfers; activate its context before the condition.
+  Its body alone is not a guaranteed return, but an unconditional explicit return
+  in its condition is. Do not infer Never from arbitrary calls or possible traps.
+- The locals visitor traverses expressions to collect nested declarations without
+  validating their expression contents. Reserve an outer declaration slot before
+  initializer declarations, preserving declaration preorder. The temporary visitor plans
   ordered array `i32` slots and indexed-compound `i32` address / `f64` old-value
   slots without reuse; local compounds keep the old value on the operand stack.
 - `ValidatedProgram` privately borrows the public, mutable `TypedProgram`, completes
@@ -41,7 +50,7 @@ Evidence: `src/lexer.rs`, `src/parser.rs`, `src/semantic.rs`, `src/codegen/numer
 - Old-source Wasm fixtures must remain unchanged unless an explicit contract decision
   justifies a difference. Never regenerate goldens to conceal incidental drift.
 
-WP1–WP2 are implemented; subsequent extensions below remain proposed. New keywords
+WP1–WP3 are implemented; subsequent extensions below remain proposed. New keywords
 require matching host source-name validation, not restrictions on arbitrary
 nonempty host module/field names. Reserve standalone `_`
 when its syntax arrives, reject its bindings, retain `_temp`, and keep `by` contextual.
@@ -97,12 +106,14 @@ Public-shape gates occur immediately before the package that needs the change:
 2. WP2 adds typed `LoopId`, `While.id`, and resolved `Break` / `Continue` targets,
    requiring public typed consumers to update constructors/matches. Private
    completion sets and loop/label contexts distinguish transfers from returns.
-3. WP3 prefers retaining statement-vector aliases with raw/typed value-block wrappers
-   containing statements plus an optional boxed tail. Approve this API before coding.
-   A small `Copy` result category (`Value(Type)`, `Void`, `Never`) can replace expression
-   annotations; bindings, parameters and resolved function results remain concrete `Type`.
-   `Never` has no source spelling/storage/ABI type. Document the public migration and
-   reject forged inconsistent outcomes in checked lowering, rather than trusting them.
+3. WP3's approved and implemented API retains statement-vector aliases and adds
+   `ValueBlock` / `TypedValueBlock` with statements, optional boxed tail, and span.
+   `TypedExpr.ty` now uses the small `Copy` `ExprResult::{Value(Type), Void, Never}`;
+   migrate old expression constructors with `ty.into()` and extract concrete types
+   with `value_type()`. Bindings/parameters/function results remain `Type`.
+   `Type::Void.into()` is `Void`; `Value(Type::Void)` is malformed. Never has no
+   source spelling/storage/ABI type, and public equality is identity, not Never
+   compatibility. Checked lowering rejects inconsistent outcomes.
 4. WP5 adds `Type::Range`, still `Copy`, with one canonical internal representation.
    WP6 changes raw argument/parameter metadata; WP7 makes only raw function result
    annotations optional. No unresolved inference variables reach `TypedProgram`.
@@ -168,30 +179,44 @@ ifs/blocks/nested whiles. Runtime effects prove nearest-loop exits, condition
 reevaluation and skipped trailing statements; a while alone still does not satisfy
 nonvoid definite return. Preserve old while instruction/golden behavior.
 
-### WP3 — Tail blocks, `if` expressions and internal `Never` (spec §§3, 8)
+### WP3 — Tail blocks, `if` expressions and internal `Never` (spec §§3, 8): implemented
 
-**Entry:** WP2 and the WP3 public-shape gate. Add optional block tails with explicit
-semicolon termination, value-context `if`/`else if`, and exact branch-result joining.
-Statement `if` may omit else; value `if` requires it. Named functions still require
-explicit return for nonvoid results; reject their nonvoid unreturned tails.
-Extend flow summaries without requiring termination proofs; continue to resolve and
-check every statement/operand, even after abrupt control or short-circuit skipping.
+**Completed scope:** Optional block tails, value-context `if`/`else if`, exact
+branch-result joining with Never, and expression completion propagation. Value if
+requires else; statement if may omit else and discards branch tails. Named functions
+retain explicit returns; function/while ordinary expression tails are rejected.
+Standalone block expression statements require semicolons. In a value block a
+final bare if is a tail; a nonfinal bare if is a statement. Bare statement-if ends
+at its last arm before `-1;` / `--1;`, independent of trivia. Parenthesize the whole
+if for arithmetic continuation in these positions. Legacy shapes/spans/bytes stay
+unchanged. Semicolons discard values, Void is not a local value, and inferred Never
+initialization reports `CannotInferNeverType`; annotated Never is accepted.
 
-Change locals' current `visit_expressions = false` policy: declarations inside value
-blocks in initializers, conditions, arguments and tails must receive slots. The
-walker enumerates children; locals collects declarations without type-validating
-expression contents. Preserve sparse IDs, initializer-before-binding, shadowing,
-scoped initialization restoration and parameter/declaration/scratch slot ordering.
-Memory, temporary and remainder policies traverse every new expression child.
-Lower scalar/handle branch values with MVP single-result regions; never initialize
-an artificial result on a divergent path or drop a nonexistent `Never` value.
+The approved public migration is recorded in §3 above. Semantic expression analysis
+returns transient flow alongside the typed node; checked lowering reconstructs it.
+No public flow annotation, second validator, or subtree reanalysis is introduced.
+Unreachable statements, unselected functions, and skipped operands remain checked.
+A divergent logical RHS alone retains the short-circuit normal-completion path.
+While context covers the condition, so its blocks can transfer to that loop;
+an unconditional condition return guarantees return before the body, unlike a
+literal-true body alone.
 
-**Exit tests:** proposed `tests/block_values.rs`; semicolon/adjacency/truncation,
-missing else, void/mismatched arms, bool conditions, shadowing and unseen locals.
-Forge false result/flow annotations and malformed skipped arms. Decode result types,
-drops, scoped slots and nested transfers; execute one selected arm and divergent
-branches. A return/continue/break path can join a concrete value without executing
-later side effects. Annotated divergent initialization needs no reachable store.
+The walker visits value-block statements then tail within block hooks. Locals now
+visit expressions for nested declarations, reserving the outer let before its
+initializer declarations. Sparse IDs, scoped initialization, declaration order,
+separate memory/scratch/remainder policies and no scratch reuse are preserved.
+MVP single-result regions use f64 for numbers and i32 for bool/handles, empty for
+Void/Never. Divergent paths produce no artificial result/store/drop; lowering
+restores stack polymorphism after a region with no normal completion.
+
+**Implemented coverage:** `tests/block_values.rs`, focused frontend/planner/backend
+units, diagnostics and CLI/browser suites. Rejections cover missing else, category
+mismatches, bool conditions, unseen locals, adjacency/truncation and malformed
+hidden/skipped typed input. Independent decoded region/drop/local assertions and
+Validator checks accompany Node execution for selected arms, shadowing,
+short-circuiting, returns/transfers, original compound places and trap order.
+Import snapshots, exports and optimization parity remain tested. Independent
+legacy unary-minus byte expectations are retained. WP4 is next.
 
 ### WP4 — Statement/value `loop` (spec §7)
 

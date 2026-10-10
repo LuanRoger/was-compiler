@@ -1,19 +1,19 @@
 # WAS Language Extensions — Unified Design and Implementation Specification
 
-**Status:** Design baseline with the 13 approved decisions and implementation clarifications (compound assignments/WP1 and while transfers/WP2 implemented; remaining extensions proposed)
+**Status:** Design baseline with the 13 approved decisions and implementation clarifications (WP1–WP3 implemented: compound assignments, while transfers, block/if values and internal Never; remaining extensions proposed)
 **Version:** 0.3 — 9 October 2026 (implementation clarification update)  
 **Target:** Core WebAssembly, initially the MVP-compatible instruction set already used by `was-compiler`, with optional optimizations gated by Wasm features.  
 **Repository:** https://github.com/LuanRoger/was-compiler
 
-> **Normative language.** **MUST**, **SHOULD**, and **MAY** describe requirements, strong recommendations, and optional implementation choices. This document establishes a coherent *proposed* semantic model. Decisions tagged **Open decision** need confirmation before being frozen as language guarantees. Except for implemented compound assignments (§4) and bare `while` transfers (§7/WP2), extension examples are proposed `.was` syntax, not claims about the present compiler.
+> **Normative language.** **MUST**, **SHOULD**, and **MAY** describe requirements, strong recommendations, and optional implementation choices. This document establishes a coherent *proposed* semantic model. Decisions tagged **Open decision** need confirmation before being frozen as language guarantees. Compound assignments (§4/WP1), bare `while` transfers (§7/WP2), and block/if values with internal Never (§§3.2, 8.1/WP3) are implemented. Other extension examples remain proposed `.was` syntax, not claims about the present compiler.
 
 The [concrete implementation plan](was_language_extensions_plan.md) maps this
 specification to ordered work packages, repository files, acceptance tests, and
 validation gates. This revision retains the approved v0.2 direction, including
 shared mutable captures and local-only closures; it clarifies implementation
 safety and corrects the current-language baseline. Compound assignments (§4/WP1)
-and bare `while` transfers (§7/WP2) are implemented; the remaining work packages
-are still proposed.
+and bare `while` transfers (§7/WP2), followed by block/if values and internal Never
+(§§3.2, 8.1/WP3), are implemented; WP4 onward remains proposed.
 
 ## 1. Goals and non-goals
 
@@ -42,7 +42,8 @@ are still proposed.
 The current compiler supports `fn` with required parameter/return annotations,
 annotated `let name: type = value;` and inferred `let name = value;` declarations,
 reassignment, numeric compound assignments, `if`, `while`, bare `break;` /
-`continue;`, `return`, named calls, and `number`, `bool`, `string`, `number[]`, and
+`continue;`, `return`, tail-valued blocks, value-context `if` / `else if`, named
+calls, and `number`, `bool`, `string`, `number[]`, and
 `void`. Every local requires an initializer and retains a fixed type. `//` line comments and non-nesting `/* ... */` block comments are implemented.
 Use the local implementation and tests, alongside README and grammar, as evidence
 of the existing-language baseline rather than assuming a public copy is current.
@@ -100,12 +101,23 @@ Unless explicitly stated otherwise:
 
 ### 3.2 Values, control flow, and divergence
 
-Add semantic categories `Value(T)`, `Void`, and `Never`. `Never` means no normal
-completion of the expression, not necessarily nontermination: a `return`, `break`,
-`continue`, trap, or a loop without an exit can terminate its normal path. Track
-control-transfer targets separately from value types. `Never` is internal and has
-no storage or ABI type. **Do not** require full termination proofs, and never use
-reachability to omit required static checks.
+**Implementation status:** WP3 implements block/if results and semantic categories
+`Value(T)`, `Void`, and `Never`; future `loop` and `match` forms below remain proposed.
+Never means no normal completion, not necessarily nontermination: an explicit
+`return`, `break`, or `continue` can terminate a block's normal path. A possible
+runtime trap or arbitrary call is not inferred as Never. Future loops with no
+reachable exit may also yield Never. Track transfer targets separately from value
+types. Never has no source spelling, storage, or ABI type. **Do not** require full
+termination proofs or omit required static checks based on reachability.
+
+The implemented public `TypedExpr.ty` is `ExprResult::{Value(Type), Void, Never}`;
+`Type::Void.into()` is Void, and `Value(Type::Void)` is malformed. Bindings,
+parameters and function results remain concrete Type. Public category equality is
+identity, not Never compatibility. Keep `Block` and `TypedBlock` statement-vector
+aliases; raw/typed value-block wrappers carry statements, an optional boxed tail,
+and a span. Individual expressions still have no independent spans. Semantic
+expression analysis propagates transient flow; checked lowering reconstructs it
+without public flow annotations, another IR, or an independent second validator.
 
 A block can contain zero or more semicolon-terminated statements and optionally one trailing expression without a semicolon. A trailing expression supplies its block value. Existing statement blocks without a trailing expression continue to have type `void`.
 
@@ -116,8 +128,27 @@ let result: number = {
 };
 ```
 
-- A trailing semicolon discards the expression result.
-- An expression expected to produce a value MUST have a non-`void` type on all reachable paths; `Never` branches are allowed. An unannotated `let value = loop {};` is a type-inference error because `Never` does not identify a concrete storage type. An explicitly typed `let value: number = loop {};` is valid, although it never initializes its unreachable binding.
+- A trailing semicolon discards the expression result. Named-function bodies do
+  not implicitly return tails; function and while bodies require semicolons for
+  ordinary expression statements. Standalone block expression statements require
+  semicolons too. Bare statement-if may omit else and discards branch tails.
+- In an expression block a final bare if is a tail; a nonfinal bare if is a
+  statement. Bare statement-if ends at its final arm, even before adjacent `-1;`
+  or `--1;`. Parenthesize the whole if for arithmetic continuation in these
+  statement/tail-classification positions. Whitespace and newlines never decide
+  whether a token belongs to the if.
+- An expression expected to produce a value MUST have a non-void type on all
+  normally completing paths; Never branches are allowed. In implemented syntax,
+  `let value = { return 1; };` in a number-returning function cannot infer a storage
+  type, whereas `let value: number = { return 1; };` is accepted without a reachable
+  store. Void results cannot initialize locals. Future `loop {}` follows the same
+  inference rule, but loop syntax is not implemented yet.
+- A divergent RHS of `&&` / `||` alone does not make the whole expression Never:
+  the short-circuit path may complete normally. Check all operands regardless.
+- While loop context is active during its condition, so condition blocks can
+  break/continue the nearest loop. An unconditional explicit return in a while
+  condition guarantees return before the body. A literal-true condition plus a
+  returning body alone still does not satisfy definite return.
 - A block expression must not silently read an uninitialized result. Unreachable statements, skipped short-circuit operands, unselected `match` arms, and bodies of otherwise uncalled functions MUST still undergo name resolution, type checking, and contextual validity checks. Runtime evaluation order and static validity are separate concerns.
 
 ### 3.3 Scopes and names
@@ -147,8 +178,9 @@ to source syntax rather than generated scaffolding.
 ## 4. Feature specification: compound assignment
 
 **Implementation status:** All five operators are implemented for numeric local
-and indexed places, with frontend, checked-backend, and integration tests. Shared
-capture and array-binding rebinding scenarios await the closure work package.
+and indexed places, with frontend, checked-backend, and integration tests. WP3
+block effects now test scalar RHS mutation and array-binding rebinding while
+preserving the original place and old value. Shared captures await closure work.
 
 ### 4.1 Syntax
 
@@ -345,7 +377,9 @@ block break_target {
 static/backend rejection outside loops. Typed while nodes carry a per-function
 `LoopId` and transfers carry resolved targets. Value-bearing breaks, labels,
 `for`, and statement/value `loop` remain proposed. Transfers never count as a
-function return; a while alone still requires a fallback return in nonvoid functions.
+function return. WP3 also supports these transfers inside expression regions and
+in a loop's own condition; an unconditional condition return guarantees return
+before the body, whereas a while body alone still requires a fallback return.
 
 ### 7.1 Syntax
 
@@ -398,6 +432,9 @@ closure bindings are not transferable values and cannot be loop results. The emp
 
 ### 8.1 `if` expression
 
+**Implementation status:** Implemented in WP3 for all existing concrete result
+kinds and Void/Never joins. `match` (§8.2 onward) remains proposed.
+
 ```
 let sign: number = if value >= 0 { 1 } else { -1 };
 
@@ -412,7 +449,13 @@ let result: number = if ready {
 - `if` used purely in statement context MAY omit `else` and behaves as before.
 - Conditions MUST be `bool`; numeric truthiness remains disallowed.
 - The trailing expression of a branch supplies the branch value; `return`, `break`, and `continue` may replace a value if they terminate that path.
-- For direct `number`/`bool` results, use WebAssembly `if (result f64/i32)` where appropriate. For composite results, use typed locals or a suitable descriptor representation.
+- Lower through MVP single-result `if` / `block`: f64 for number, i32 for bool and
+  string/array descriptor handles, empty for Void/Never. Never paths must not
+  fabricate a result, store, or drop; preserve stack polymorphism after a region
+  with no normal completion. No new ABI or multi-value feature is required.
+- Two normally completing Void arms produce Void, discardable but not a local
+  value; otherwise normally completing arms match exactly. A Never arm joins
+  its counterpart, and two Never arms produce Never.
 
 ### 8.2 `match` expression syntax
 
@@ -795,6 +838,15 @@ This table is a *parser proposal*, not a universal claim about how other languag
 
 ### 16.1 Raw AST additions
 
+WP3's implemented raw/typed expression enums add `Block` and `If`. `ValueBlock`
+and `TypedValueBlock` hold statements, an optional boxed tail, and span, while
+function/statement bodies retain their vector aliases. The planning walker
+visits statements then tail within block hooks. Locals now traverse expressions
+for nested declarations without validating expression contents, reserving the
+outer let's slot before initializer declarations. Memory, scratch and remainder
+planning remain separate policies. The following broader shapes are illustrative
+future extensions, not a replacement AST or a new core IR.
+
 Suggested nodes (names illustrative; fit existing code style):
 
 ```
@@ -1079,7 +1131,10 @@ The first five milestones are approved **in this exact order**, building only th
 
 1. **Compound assignments:** all five operators including `%=`; introduce typed `Place`/single evaluation.
 2. **`break` and `continue` in `while`:** introduce a minimal stack of loop targets and correct branch-depth calculation.
-3. **Tail-valued blocks and `if` expressions:** add context-sensitive block results and `Never`; retain explicit named-function `return`; check unreachable code.
+3. **Tail-valued blocks and `if` expressions (implemented WP3):** context-sensitive
+   block results and Never; retain explicit named-function return and check all
+   unreachable/skipped children. **Next: WP4 statement/value loop**, not included
+   in the WP3 implementation.
 4. **Statement/value `loop`:** add `break value` typing, unify reachable break results, and reuse the loop-target stack.
 5. **Ranges and `for`:** eager range validation, exact internal `i64`, `for` ranges and `number[]`, correct `continue` latch, range membership.
 

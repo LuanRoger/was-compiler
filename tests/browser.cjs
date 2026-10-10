@@ -326,6 +326,151 @@ async function main() {
         }
     });
 
+    test('value blocks and if preserve concrete results, effects, transfers, errors, and parity', compiler => {
+        compiler.registerHostFunction('mark', 'env', 'mark', ['number'], 'number');
+        const source = `
+            fn numeric(flag: bool) -> number {
+                let base = { mark(1); let n = 4; n + 1 };
+                return base + if { mark(2); flag } { mark(3) }
+                    else if { mark(4); false } { mark(5) } else { mark(6) };
+            }
+            fn boolean(flag: bool) -> bool {
+                return { if flag { true } else { false } };
+            }
+            fn text(flag: bool) -> string {
+                return { if flag { "é🦀" } else { "other" } };
+            }
+            fn items(flag: bool) -> number[] {
+                return { if flag { [mark(10), mark(11)] } else { [] } };
+            }
+            fn mutate(flag: bool, a: number[], b: number[]) -> number {
+                let selected = if flag { a } else { b };
+                selected[0] += { selected[0] = 99; mark(2) };
+                return selected[0];
+            }
+            fn noop(flag: bool) -> void {
+                {};
+                (if flag { mark(40); } else { mark(41); });
+            }
+            fn early(flag: bool) -> number {
+                let n = if flag { return mark(50); } else { mark(51) };
+                return n + mark(1);
+            }
+            fn divergent(flag: bool) -> number {
+                let n: bool = if flag { return mark(70); } else { return mark(71); };
+            }
+            fn skipped() -> number {
+                let ignored = false && { mark(90); return 99; };
+                let other = true || { mark(91); return 98; };
+                return mark(7);
+            }
+            fn transfers() -> number {
+                let i = 0;
+                let total = 0;
+                while i < 4 {
+                    i += 1;
+                    let value: number = {
+                        let j = 0;
+                        while j < 3 {
+                            j += 1;
+                            let inner: number = if j == 2 { continue; }
+                                else if j == 3 { break; } else { mark(i * 10 + j) };
+                            total += inner;
+                        }
+                        if i == 2 { continue; }
+                        if i == 4 { break; }
+                        i
+                    };
+                    total += value;
+                }
+                return total;
+            }
+        `;
+        const cases = [
+            ['fn main() -> number {\n    let value = if true { 1 };\n    return value;\n}',
+                /An if expression requires an else branch/, 'let value = if true { 1 };', 5],
+            ['fn main() -> number {\n    let value = { return 1; };\n}',
+                /Cannot infer a concrete type for divergent initializer 'value'/, 'let value = { return 1; };', 5],
+            ['fn main() -> void {\n    let value = { 1; };\n}',
+                /'value' cannot have type void/, 'let value = { 1; };', 5],
+            ['fn main() -> void {\n    let value = if true { 1 } else { false };\n}',
+                /Type mismatch: expected Number, found Bool/, 'let value = if true { 1 } else { false };', 5],
+            ['fn main() -> void {\n    let value = if true { 1 } else { missing };\n}',
+                /Undefined variable 'missing'/, 'let value = if true { 1 } else { missing };', 36],
+            ['fn main() -> number {\n    let value: number = { return 1; missing };\n}',
+                /Undefined variable 'missing'/, 'let value: number = { return 1; missing };', 25],
+            ['fn main() -> number {\n    let value = false && { missing };\n    return 1;\n}',
+                /Undefined variable 'missing'/, 'let value = false && { missing };', 26],
+        ];
+        const expected = compile(compiler, source).bytes;
+        const wat = compiler.compileWat(source);
+        const diagnostics = new Map();
+        for (const level of [0, 1, 2, 3]) {
+            compiler.setOptimizationLevel(level);
+            const { bytes, module } = compile(compiler, source);
+            assert.deepEqual(bytes, expected);
+            assert.equal(compiler.compileWat(source), wat);
+            const events = [];
+            const instance = new WebAssembly.Instance(module, { env: {
+                mark(value) { events.push(value); return value; },
+            } });
+            const e = instance.exports;
+            for (const [flag, result, effects] of [[1, 8, [1, 2, 3]], [0, 11, [1, 2, 4, 6]]]) {
+                events.length = 0;
+                assert.equal(e.numeric(flag), result);
+                assert.deepEqual(events, effects);
+                assert.equal(e.boolean(flag), flag);
+                assert.equal(readDescriptor(instance, 'string', e.text(flag)), flag ? 'é🦀' : 'other');
+            }
+            events.length = 0;
+            const a = e.items(1), b = e.items(1);
+            assert.notEqual(a, b);
+            assert.deepEqual(readDescriptor(instance, 'number[]', a), [10, 11]);
+            assert.deepEqual(readDescriptor(instance, 'number[]', b), [10, 11]);
+            assert.deepEqual(readDescriptor(instance, 'number[]', e.items(0)), []);
+            assert.deepEqual(events, [10, 11, 10, 11]);
+            events.length = 0;
+            assert.equal(e.mutate(1, a, b), 12);
+            assert.deepEqual(readDescriptor(instance, 'number[]', a), [12, 11]);
+            assert.deepEqual(readDescriptor(instance, 'number[]', b), [10, 11]);
+            assert.equal(e.mutate(0, a, b), 12);
+            assert.deepEqual(readDescriptor(instance, 'number[]', b), [12, 11]);
+            assert.deepEqual(events, [2, 2]);
+            for (const [name, args, result, effects] of [
+                ['noop', [1], undefined, [40]], ['noop', [0], undefined, [41]],
+                ['early', [1], 50, [50]], ['early', [0], 52, [51, 1]],
+                ['divergent', [1], 70, [70]], ['divergent', [0], 71, [71]],
+                ['skipped', [], 7, [7]], ['transfers', [], 108, [11, 21, 31, 41]],
+            ]) {
+                events.length = 0;
+                assert.equal(e[name](...args), result);
+                assert.deepEqual(events, effects);
+            }
+            for (const [invalid, message, excerpt, column] of cases) {
+                for (const method of ['compile', 'compileWat']) {
+                    assert.throws(() => compiler[method](invalid), error => {
+                        assert.ok(error instanceof Error);
+                        assert.equal(error.name, 'Error');
+                        assert.match(error.message, new RegExp(`^<browser>:2:${column}: semantic error:`));
+                        assert.match(error.message, message);
+                        assert.ok(error.message.includes(`2 |     ${excerpt}`));
+                        assert.ok(error.message.includes(` |${' '.repeat(column)}^`));
+                        if (diagnostics.has(invalid)) {
+                            assert.equal(error.message, diagnostics.get(invalid));
+                        } else {
+                            diagnostics.set(invalid, error.message);
+                        }
+                        return true;
+                    });
+                    assert.deepEqual(compile(compiler, source).bytes, expected);
+                    assert.equal(compiler.compileWat(source), wat);
+                }
+            }
+            fails(() => compiler.compile('fn main() -> number { 1 }'), /parse error/);
+            fails(() => compiler.compile('fn main() -> void { let n: never = { return; }; }'), /parse error/);
+        }
+    });
+
     test('remainder arithmetic, IEEE-754 inputs, host order, and guest-only memory', compiler => {
         const source = `
             fn remainder(left: number, right: number) -> number { return left % right; }

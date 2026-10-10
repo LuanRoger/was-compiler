@@ -6,7 +6,7 @@ use crate::{
 };
 use wasm_encoder::{BlockType, Instruction};
 
-use super::{CodegenError, expect_type, function::BodyEmitter};
+use super::{CodegenError, expect_operand, function::BodyEmitter};
 
 pub(super) fn emit_if(
     cond: &TypedExpr,
@@ -15,10 +15,10 @@ pub(super) fn emit_if(
     emitter: &mut BodyEmitter<'_>,
     span: Span,
 ) -> Result<Flow, CodegenError> {
-    expect_type(emitter.name(), Type::Bool, cond.ty, span)?;
+    expect_operand(emitter.name(), Type::Bool, cond.ty, span)?;
 
     emitter.structured(|emitter| {
-        emitter.emit_expr(cond, span)?;
+        let cond_flow = emitter.emit_expr(cond, span)?;
         emitter.begin_if(BlockType::Empty)?;
 
         let then_flow = emitter.scoped(|emitter| emitter.emit_block(then))?;
@@ -34,9 +34,9 @@ pub(super) fn emit_if(
 
         emitter.end();
 
-        let flow = then_flow.join(else_flow);
+        let flow = cond_flow.then(then_flow.join(else_flow));
 
-        if flow.always_returns() {
+        if flow.always_returns() || !cond_flow.can_fall_through() {
             emitter.instruction(&Instruction::Unreachable);
         }
 
@@ -51,7 +51,7 @@ pub(super) fn emit_while(
     emitter: &mut BodyEmitter<'_>,
     span: Span,
 ) -> Result<Flow, CodegenError> {
-    expect_type(emitter.name(), Type::Bool, cond.ty, span)?;
+    expect_operand(emitter.name(), Type::Bool, cond.ty, span)?;
 
     emitter.scoped(|emitter| {
         emitter.register_loop(id, span)?;
@@ -60,7 +60,7 @@ pub(super) fn emit_while(
         let continue_label = emitter.begin_loop()?;
 
         emitter.enter_loop(id, break_label, continue_label);
-        emitter.emit_expr(cond, span)?;
+        let cond_flow = emitter.emit_expr(cond, span)?;
         emitter.instruction(&Instruction::I32Eqz);
         emitter.branch_if(break_label)?;
 
@@ -70,6 +70,11 @@ pub(super) fn emit_while(
         emitter.end();
         emitter.end();
 
-        Ok(flow.while_loop())
+        if cond_flow.always_returns() {
+            emitter.instruction(&Instruction::Unreachable);
+            Ok(Flow::RETURN)
+        } else {
+            Ok(cond_flow.then(flow).while_loop())
+        }
     })
 }

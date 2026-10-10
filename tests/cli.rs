@@ -804,6 +804,195 @@ fn inferred_cli_reassignment_and_void_errors_preserve_diagnostics_and_outputs() 
 }
 
 #[test]
+fn value_blocks_cli_binary_and_wat_match_library_at_every_level() {
+    let scratch = Scratch::new("value_blocks_parity");
+    let source = r#"
+        fn main(flag: bool) -> number {
+            let n = { let inner = 4; inner + 1 };
+            return if flag { n % 3 } else if false { 99 } else { 7 };
+        }
+        fn boolean(flag: bool) -> bool {
+            return { let result = if flag { true } else { false }; result };
+        }
+        fn text(flag: bool) -> string {
+            return { if flag { "é🦀" } else { "other" } };
+        }
+        fn items(flag: bool) -> number[] {
+            return { if flag { [1, 2] } else { [] } };
+        }
+        fn noop() -> void { {}; (if true {} else {}); }
+        fn early(flag: bool) -> number {
+            let n: number = if flag { return 11; } else { 5 };
+            return n;
+        }
+        fn divergent() -> number { let n: bool = { return 13; }; }
+        fn transfers() -> number {
+            let i = 0;
+            let total = 0;
+            while i < 4 {
+                i += 1;
+                let n: number = if i == 2 { continue; } else {
+                    if i == 4 { break; }
+                    { let j = i; j }
+                };
+                total += n;
+            }
+            return total;
+        }
+    "#;
+    let mut compiler = Compiler::new();
+    compiler.set_exports(ExportOptions::Only(vec!["main".into()]));
+    let baseline = compiler.compile_source(source).unwrap();
+    let expected_wat = wasmprinter::print_bytes(&baseline).unwrap();
+    let module = decode(&baseline);
+    assert_eq!(user_exports(&module), ["main"]);
+
+    let bodies = Parser::new(0)
+        .parse_all(&baseline)
+        .filter_map(|payload| match payload.unwrap() {
+            Payload::CodeSectionEntry(body) => Some(body),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    for (body, ty) in bodies.iter().zip([
+        wasmparser::ValType::F64,
+        wasmparser::ValType::I32,
+        wasmparser::ValType::I32,
+        wasmparser::ValType::I32,
+    ]) {
+        let operators = body
+            .get_operators_reader()
+            .unwrap()
+            .into_iter()
+            .map(Result::unwrap)
+            .collect::<Vec<_>>();
+        assert!(operators.iter().any(|op| matches!(
+            op,
+            wasmparser::Operator::Block { blockty }
+                if *blockty == wasmparser::BlockType::Type(ty)
+        )));
+        assert!(operators.iter().any(|op| matches!(
+            op,
+            wasmparser::Operator::If { blockty }
+                if *blockty == wasmparser::BlockType::Type(ty)
+        )));
+    }
+
+    for (flag, level) in [
+        ("-O0", was_compiler::OptimizationLevel::None),
+        ("-O1", was_compiler::OptimizationLevel::Basic),
+        ("-O2", was_compiler::OptimizationLevel::Standard),
+        ("-O3", was_compiler::OptimizationLevel::Aggressive),
+    ] {
+        compiler.set_optimization_level(level);
+        let expected = compiler.compile_source(source).unwrap();
+        assert_eq!(expected, baseline);
+        assert_eq!(
+            scratch.compile(source, &[flag, "--export", "main"]),
+            expected
+        );
+        let wat = success(scratch.cli(
+            &["program.was", flag, "--export", "main", "--emit", "wat"],
+            None,
+        ));
+        assert_eq!(assert_plain_wat(&wat), expected_wat);
+        assert!(
+            success(scratch.cli(
+                &[
+                    "program.was",
+                    flag,
+                    "--export",
+                    "main",
+                    "--emit",
+                    "wat",
+                    "-o",
+                    "program.wat",
+                ],
+                None,
+            ))
+            .is_empty()
+        );
+        assert_eq!(fs::read(scratch.0.join("program.wat")).unwrap(), wat);
+    }
+    scratch.assert_entries(&["program.was", "program.wasm", "program.wat"]);
+}
+
+#[test]
+fn value_blocks_cli_diagnostics_preserve_locations_and_destinations_at_every_level() {
+    let scratch = Scratch::new("value_blocks_errors");
+    let sentinel = b"existing artifact";
+    let cases = [
+        (
+            "fn main() -> number {\n    let value = if true { 1 };\n    return value;\n}",
+            "An if expression requires an else branch",
+            "let value = if true { 1 };",
+            5,
+        ),
+        (
+            "fn main() -> number {\n    let value = { return 1; };\n}",
+            "Cannot infer a concrete type for divergent initializer 'value'",
+            "let value = { return 1; };",
+            5,
+        ),
+        (
+            "fn main() -> void {\n    let value = { 1; };\n}",
+            "'value' cannot have type void",
+            "let value = { 1; };",
+            5,
+        ),
+        (
+            "fn main() -> void {\n    let value = if true { 1 } else { false };\n}",
+            "Type mismatch: expected Number, found Bool",
+            "let value = if true { 1 } else { false };",
+            5,
+        ),
+        (
+            "fn main() -> void {\n    let value = if true { 1 } else { missing };\n}",
+            "Undefined variable 'missing'",
+            "let value = if true { 1 } else { missing };",
+            36,
+        ),
+    ];
+    for existing in [false, true] {
+        for (format, destination) in [("wasm", "program.wasm"), ("wat", "program.wat")] {
+            if existing {
+                scratch.write(destination, sentinel);
+            }
+            for (source, message, excerpt, column) in cases {
+                let input = scratch.write("program.was", source);
+                let location = format!("program.was:2:{column}: semantic error:");
+                let caret = format!(" |{}^", " ".repeat(column));
+                let error = Compiler::new().compile_source(source).unwrap_err();
+                let expected = format!(
+                    "{}\n",
+                    was_compiler::diagnostic::render("program.was", source, &error)
+                );
+                for flag in ["-O0", "-O1", "-O2", "-O3"] {
+                    let before = scratch.entries();
+                    let stderr = failure(
+                        scratch.cli(
+                            &["program.was", flag, "--emit", format, "-o", destination],
+                            None,
+                        ),
+                        1,
+                        &[&location, message, excerpt, &caret],
+                    );
+                    assert_eq!(stderr, expected);
+                    assert_eq!(fs::read(&input).unwrap(), source.as_bytes());
+                    if existing {
+                        assert_eq!(fs::read(scratch.0.join(destination)).unwrap(), sentinel);
+                    } else {
+                        assert!(!scratch.0.join(destination).exists());
+                    }
+                    assert_eq!(scratch.entries(), before, "failed compilation leaked files");
+                }
+            }
+        }
+    }
+    scratch.assert_entries(&["program.was", "program.wasm", "program.wat"]);
+}
+
+#[test]
 fn export_selection_preserves_source_order_bodies_and_memory_abi() {
     let scratch = Scratch::new("memory_exports");
     let all = decode(&scratch.compile(MEMORY_SOURCE, &[]));

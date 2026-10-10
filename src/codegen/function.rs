@@ -4,12 +4,14 @@ use crate::{
     ast::Type,
     flow::Flow,
     tokens::Span,
-    typed_ast::{FunctionRef, LoopId, TypedBlock, TypedExpr, TypedFunction, VariableId},
+    typed_ast::{
+        ExprResult, FunctionRef, LoopId, TypedBlock, TypedExpr, TypedFunction, VariableId,
+    },
 };
 use wasm_encoder::{BlockType, Function, Instruction, ValType};
 
 use super::{
-    CodegenError, checked_u32, expect_type, expression,
+    CodegenError, checked_u32, expect_result, expect_type, expression,
     indices::{FunctionIndex, LabelDepth, LocalIndex},
     layout::{CallTarget, Layout},
     locals::LocalLayout,
@@ -254,6 +256,26 @@ impl<'a> BodyEmitter<'a> {
         self.context.declaration(id, ty, span)
     }
 
+    pub fn resolve_expr(
+        &self,
+        id: VariableId,
+        result: ExprResult,
+        span: Span,
+    ) -> Result<LocalIndex, CodegenError> {
+        let local = self
+            .context
+            .locals
+            .get(id)
+            .ok_or_else(|| CodegenError::UnknownVariable {
+                function: self.name().into(),
+                id,
+                span,
+            })?;
+
+        expect_result(self.name(), local.ty.into(), result, span)?;
+        self.resolve(id, local.ty, span)
+    }
+
     pub fn initialize(&mut self, id: VariableId) {
         self.context.initialized.insert(id);
     }
@@ -347,7 +369,11 @@ impl<'a> BodyEmitter<'a> {
     }
 
     pub fn begin_block(&mut self) -> Result<LabelId, CodegenError> {
-        self.begin_label(&Instruction::Block(BlockType::Empty))
+        self.begin_value_block(BlockType::Empty)
+    }
+
+    pub fn begin_value_block(&mut self, block_type: BlockType) -> Result<LabelId, CodegenError> {
+        self.begin_label(&Instruction::Block(block_type))
     }
 
     pub fn begin_loop(&mut self) -> Result<LabelId, CodegenError> {
@@ -384,7 +410,7 @@ impl<'a> BodyEmitter<'a> {
         Ok(())
     }
 
-    pub fn emit_expr(&mut self, expr: &TypedExpr, span: Span) -> Result<(), CodegenError> {
+    pub fn emit_expr(&mut self, expr: &TypedExpr, span: Span) -> Result<Flow, CodegenError> {
         self.structured(|emitter| expression::emit(expr, emitter, span))
     }
 
@@ -665,6 +691,68 @@ mod tests {
         assert_eq!(emitter.label_depth(block).unwrap().raw(), 2);
         assert_eq!(emitter.label_depth(loop_).unwrap().raw(), 1);
         assert_eq!(emitter.label_depth(next_if).unwrap().raw(), 0);
+    }
+
+    #[test]
+    fn value_expression_scopes_restore_bindings_and_labels_after_tail_errors() {
+        use crate::typed_ast::{TypedExprKind, VariableId};
+
+        let original = Compiler::new().analyze(
+            "fn test(param: number) -> void { { let inside = [1]; 2 }; { let after = [3]; 4 }; }",
+        ).unwrap();
+
+        for fail in [false, true] {
+            let mut program = original.clone();
+            let TypedStatementKind::Expression(first) = &mut program.functions[0].body[0].kind
+            else {
+                panic!("expression");
+            };
+            let TypedExprKind::Block(block) = &mut first.kind else {
+                panic!("value block");
+            };
+            let TypedStatementKind::Let { id: inside, .. } = block.statements[0].kind else {
+                panic!("declaration");
+            };
+            if fail {
+                block.tail.as_mut().unwrap().kind = TypedExprKind::Identifier {
+                    id: VariableId(999),
+                    name: "unknown".into(),
+                };
+            }
+            let layout = Layout::new(&program).unwrap();
+            let function = &program.functions[0];
+            let mut emitter = BodyEmitter::new(function, &layout).unwrap();
+            let initialized = emitter.context.initialized.clone();
+            let first_temporary = emitter.context.first_temporary;
+            let result = statement::emit(&function.body[0], &mut emitter);
+            if fail {
+                assert!(matches!(
+                    result,
+                    Err(CodegenError::UnknownVariable {
+                        id: VariableId(999),
+                        ..
+                    })
+                ));
+            } else {
+                assert_eq!(result, Ok(Flow::FALLTHROUGH));
+            }
+            assert_eq!(emitter.context.initialized, initialized);
+            assert!(emitter.labels.is_empty());
+            assert!(emitter.loops.is_empty());
+            assert_eq!(emitter.context.next_temporary.get(), first_temporary + 1);
+            assert!(matches!(
+                emitter.resolve(inside, Type::NumberArray, function.span),
+                Err(CodegenError::UninitializedVariable { .. })
+            ));
+            let next_label = emitter.next_label;
+            assert_eq!(
+                statement::emit(&function.body[1], &mut emitter),
+                Ok(Flow::FALLTHROUGH)
+            );
+            assert_eq!(emitter.context.initialized, initialized);
+            assert_eq!(emitter.context.next_temporary.get(), first_temporary + 2);
+            assert!(emitter.next_label > next_label);
+        }
     }
 
     #[test]

@@ -3,6 +3,7 @@ use thiserror::Error;
 use crate::{
     ast::{
         BinaryOp, Block, Expr, Function, Param, Program, Statement, StatementKind, Type, UnaryOp,
+        ValueBlock,
     },
     tokens::{Span, Token, TokenKind},
 };
@@ -193,18 +194,192 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
     }
 
     fn parse_if(&mut self) -> Result<StatementKind, ParseError> {
+        // A bare statement-if ends at its last arm; a following minus starts a
+        // new statement. Parenthesize the whole if to continue it as an operand.
+        let expr = self.parse_if_expression()?;
+
+        if self.consume(TokenKind::Semicolon) {
+            Ok(StatementKind::Expression(expr))
+        } else {
+            Ok(self.discard_if(expr))
+        }
+    }
+
+    fn parse_if_expression(&mut self) -> Result<Expr, ParseError> {
         self.expect(TokenKind::If)?;
 
         let cond = Box::new(self.parse_expression()?);
-        let then = self.parse_block()?;
-
+        let then = self.parse_value_block()?;
         let else_ = if self.consume(TokenKind::Else) {
-            Some(self.parse_block()?)
+            if self.check(&TokenKind::If) {
+                let start = self.current_span().start();
+                let tail = self.parse_if_expression()?;
+
+                Some(ValueBlock {
+                    statements: Vec::new(),
+                    tail: Some(Box::new(tail)),
+                    span: self.span_since(start),
+                })
+            } else {
+                Some(self.parse_value_block()?)
+            }
         } else {
             None
         };
 
-        Ok(StatementKind::If { cond, then, else_ })
+        Ok(Expr::If { cond, then, else_ })
+    }
+
+    fn discard_if(&self, expr: Expr) -> StatementKind {
+        let Expr::If { cond, then, else_ } = expr else {
+            unreachable!("discard_if is called only with an if expression");
+        };
+
+        StatementKind::If {
+            cond,
+            then: self.discard_block(then),
+            else_: else_.map(|block| self.discard_block(block)),
+        }
+    }
+
+    fn discard_block(&self, block: ValueBlock) -> Block {
+        if block.tail.is_none() {
+            return block.statements;
+        }
+
+        let tail_span = self.discarded_tail_span(&block);
+        let first = self
+            .tokens
+            .partition_point(|token| token.span.start() < tail_span.start());
+        let starts_with_if = self
+            .tokens
+            .get(first)
+            .is_some_and(|token| token.kind == TokenKind::If);
+        let mut statements = block.statements;
+
+        if let Some(tail) = block.tail {
+            let kind = match *tail {
+                expr @ Expr::If { .. } if starts_with_if => self.discard_if(expr),
+                expr => StatementKind::Expression(expr),
+            };
+
+            statements.push(Statement {
+                kind,
+                span: tail_span,
+            });
+        }
+
+        statements
+    }
+
+    fn discarded_tail_span(&self, block: &ValueBlock) -> Span {
+        // Raw expressions have no spans. Recover the discarded tail's token range
+        // without changing ValueBlock's public shape or old statement-if spans.
+        let opening = self
+            .tokens
+            .partition_point(|token| token.span.start() < block.span.start());
+        let braced = self
+            .tokens
+            .get(opening)
+            .is_some_and(|token| token.kind == TokenKind::LeftBrace);
+        let first = match block.statements.last() {
+            Some(statement) => self
+                .tokens
+                .partition_point(|token| token.span.start() < statement.span.end()),
+            None => opening + usize::from(braced),
+        };
+        let start = self
+            .tokens
+            .get(first)
+            .map_or(block.span.start(), |token| token.span.start());
+        let end = if braced {
+            let after = self
+                .tokens
+                .partition_point(|token| token.span.start() < block.span.end());
+
+            self.tokens
+                .get(after.saturating_sub(2))
+                .map_or(start, |token| token.span.end())
+        } else {
+            // Synthetic else-if blocks cover the nested if rather than braces.
+            block.span.end()
+        };
+
+        Span::new(start, end)
+    }
+
+    fn parse_value_block(&mut self) -> Result<ValueBlock, ParseError> {
+        let start = self.expect(TokenKind::LeftBrace)?.span.start();
+        let mut statements = Vec::new();
+        let mut tail = None;
+
+        while !self.check(&TokenKind::RightBrace) {
+            if self.at_end() {
+                return Err(self.unexpected("}"));
+            }
+
+            if matches!(
+                self.peek().map(|token| &token.kind),
+                Some(
+                    TokenKind::Let
+                        | TokenKind::While
+                        | TokenKind::Break
+                        | TokenKind::Continue
+                        | TokenKind::Return
+                )
+            ) {
+                statements.push(self.parse_statement()?);
+                continue;
+            }
+
+            let statement_start = self.current_span().start();
+            let starts_with_if = self.check(&TokenKind::If);
+            let starts_with_identifier = matches!(
+                self.peek().map(|token| &token.kind),
+                Some(TokenKind::Identifier(_))
+            );
+            let expr = if starts_with_if {
+                self.parse_if_expression()?
+            } else {
+                self.parse_expression()?
+            };
+
+            if self.check(&TokenKind::Equal) || self.compound_assignment_operator().is_some() {
+                let kind = self.finish_expression_statement(
+                    expr,
+                    starts_with_identifier,
+                    statement_start,
+                )?;
+
+                statements.push(Statement {
+                    kind,
+                    span: self.span_since(statement_start),
+                });
+            } else if self.consume(TokenKind::Semicolon) {
+                statements.push(Statement {
+                    kind: StatementKind::Expression(expr),
+                    span: self.span_since(statement_start),
+                });
+            } else if self.check(&TokenKind::RightBrace) {
+                tail = Some(Box::new(expr));
+                break;
+            } else if starts_with_if {
+                statements.push(Statement {
+                    kind: self.discard_if(expr),
+                    span: self.span_since(statement_start),
+                });
+            } else {
+                return Err(self.unexpected(";"));
+            }
+        }
+
+        self.expect(TokenKind::RightBrace)?;
+
+        Ok(ValueBlock {
+            statements,
+            tail,
+            span: self.span_since(start),
+        })
     }
 
     fn parse_while(&mut self) -> Result<StatementKind, ParseError> {
@@ -239,6 +414,16 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
         );
 
         let expr = self.parse_expression()?;
+
+        self.finish_expression_statement(expr, starts_with_identifier, start)
+    }
+
+    fn finish_expression_statement(
+        &mut self,
+        expr: Expr,
+        starts_with_identifier: bool,
+        start: usize,
+    ) -> Result<StatementKind, ParseError> {
         let compound_op = self.compound_assignment_operator();
 
         let kind = if self.check(&TokenKind::Equal) || compound_op.is_some() {
@@ -375,6 +560,9 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
                     Ok(Expr::Identifier(name))
                 };
             }
+
+            Some(TokenKind::LeftBrace) => return Ok(Expr::Block(self.parse_value_block()?)),
+            Some(TokenKind::If) => return self.parse_if_expression(),
 
             Some(TokenKind::LeftBracket) => {
                 self.advance();
@@ -601,6 +789,40 @@ mod tests {
 
     fn identifier(name: &str) -> Expr {
         Expr::Identifier(name.into())
+    }
+
+    fn negate(expr: Expr) -> Expr {
+        Expr::Unary {
+            op: UnaryOp::Negate,
+            expr: Box::new(expr),
+        }
+    }
+
+    fn assert_expression_statement(statement: &Statement, expected: &Expr) {
+        let StatementKind::Expression(actual) = &statement.kind else {
+            panic!("expected expression statement: {statement:?}");
+        };
+
+        assert_eq!(actual, expected);
+    }
+
+    fn assert_if_arithmetic(expr: &Expr, expected_op: BinaryOp, expected_right: &Expr) {
+        let Expr::Binary { left, op, right } = expr else {
+            panic!("expected whole-if arithmetic: {expr:?}");
+        };
+        let Expr::If {
+            cond,
+            then,
+            else_: Some(_),
+        } = &**left
+        else {
+            panic!("expected if/else as the left operand: {left:?}");
+        };
+
+        assert_eq!(**cond, Expr::Bool(true));
+        assert_eq!(then.tail.as_deref(), Some(&number("1")));
+        assert_eq!(*op, expected_op);
+        assert_eq!(&**right, expected_right);
     }
 
     fn binary(left: Expr, op: BinaryOp, right: Expr) -> Expr {
@@ -1249,7 +1471,6 @@ mod tests {
             "fn main() -> void { let x number = 1; }",
             "fn main() -> void { let x: number; }",
             "fn main() -> void { return +1; }",
-            "fn main() -> void { if true {} else if false {} }",
             "fn main() -> void { while {} }",
             "fn main() -> void { call(1,); }",
             "fn main(x: number,) -> void {}",
@@ -1312,6 +1533,564 @@ mod tests {
                 span: Span::new(20, 22),
             }
         );
+    }
+
+    #[test]
+    fn value_blocks_preserve_tails_statements_and_utf8_byte_spans() {
+        let source = "fn test() -> void { let x = { let text = \"é\"; { 2 } }; }";
+        let program = parse(source).unwrap();
+        let StatementKind::Let {
+            value: Expr::Block(block),
+            ..
+        } = &program.functions[0].body[0].kind
+        else {
+            panic!("expected a block initializer");
+        };
+        let start = source.find("{ let text").unwrap();
+        let end = source.find(" }; }").unwrap() + 2;
+
+        assert_eq!(block.span, Span::new(start, end));
+        assert_eq!(block.statements.len(), 1);
+        let Some(tail) = &block.tail else {
+            panic!("expected tail")
+        };
+        let Expr::Block(nested) = &**tail else {
+            panic!("expected nested block")
+        };
+        let start = source.find("{ 2 }").unwrap();
+
+        assert_eq!(nested.span, Span::new(start, start + 5));
+        assert_eq!(nested.tail.as_deref(), Some(&number("2")));
+        assert!(matches!(
+            expression("{ 2; }"),
+            Expr::Block(ValueBlock { tail: None, .. })
+        ));
+        assert!(matches!(
+            expression("{}"),
+            Expr::Block(ValueBlock { tail: None, .. })
+        ));
+    }
+
+    #[test]
+    fn final_if_is_a_tail_but_nonfinal_if_is_a_statement() {
+        let Expr::Block(block) = expression("{ if true { 1 } else { 2 } }") else {
+            panic!("expected block")
+        };
+
+        assert!(block.statements.is_empty());
+        assert!(matches!(
+            block.tail.as_deref(),
+            Some(Expr::If { else_: Some(_), .. })
+        ));
+
+        let Expr::Block(block) = expression("{ if true { 1 } 2 }") else {
+            panic!("expected block")
+        };
+
+        assert!(matches!(
+            block.statements[0].kind,
+            StatementKind::If { else_: None, .. }
+        ));
+        assert_eq!(block.tail.as_deref(), Some(&number("2")));
+        let Expr::Block(block) = expression("{ if true {} }") else {
+            panic!("expected block")
+        };
+
+        assert!(matches!(
+            block.tail.as_deref(),
+            Some(Expr::If { else_: None, .. })
+        ));
+    }
+
+    #[test]
+    fn statement_if_discards_tails_and_else_if_retains_statement_shapes() {
+        let program = parse("fn test() -> void { if true { 1 } else if false { 2 } }").unwrap();
+        let StatementKind::If {
+            then,
+            else_: Some(else_),
+            ..
+        } = &program.functions[0].body[0].kind
+        else {
+            panic!("expected statement if")
+        };
+
+        assert_eq!(then.len(), 1);
+        assert!(matches!(
+            then[0].kind,
+            StatementKind::Expression(Expr::Number(_))
+        ));
+        assert!(matches!(
+            else_[0].kind,
+            StatementKind::If { else_: None, .. }
+        ));
+
+        let Expr::If {
+            else_: Some(else_), ..
+        } = expression("if true { 1 } else if false { 2 } else { 3 }")
+        else {
+            panic!("expected expression if")
+        };
+
+        assert!(else_.statements.is_empty());
+        assert!(matches!(
+            else_.tail.as_deref(),
+            Some(Expr::If { else_: Some(_), .. })
+        ));
+        assert!(matches!(
+            parse("fn test() -> void { if true {} else {}; }")
+                .unwrap()
+                .functions[0]
+                .body[0]
+                .kind,
+            StatementKind::Expression(Expr::If { .. })
+        ));
+    }
+
+    #[test]
+    fn discarded_branch_tails_keep_token_spans_and_parenthesized_if_context() {
+        let source = "fn test() -> void { if true { if false { return; } } else { let x = 1; /* comment */ x + 2 } }";
+        let program = parse(source).unwrap();
+        let StatementKind::If {
+            then,
+            else_: Some(else_),
+            ..
+        } = &program.functions[0].body[0].kind
+        else {
+            panic!("expected if")
+        };
+        let start = source.find("if false").unwrap();
+
+        assert_eq!(
+            then[0].span,
+            Span::new(start, start + "if false { return; }".len())
+        );
+        let start = source.find("x + 2").unwrap();
+
+        assert_eq!(else_[1].span, Span::new(start, start + 5));
+        let program = parse("fn test() -> void { if true { (if false {}) } }").unwrap();
+        let StatementKind::If { then, .. } = &program.functions[0].body[0].kind else {
+            panic!("expected if")
+        };
+
+        assert!(matches!(
+            then[0].kind,
+            StatementKind::Expression(Expr::If { else_: None, .. })
+        ));
+    }
+
+    #[test]
+    fn value_block_adjacency_requires_semicolons_without_newline_heuristics() {
+        for body in [
+            "{ 1 2 }",
+            "{ 1\n2 }",
+            "{ {} {} }",
+            "{ {}\n1 }",
+            "{ call() call() }",
+            "{ (if true {} else {}) 1 }",
+            "{ (if true {} else {})\n1 }",
+        ] {
+            let source = format!("fn test() -> void {{ let x = {body}; }}");
+
+            assert!(
+                matches!(
+                    parse(&source),
+                    Err(ParseError::UnexpectedToken { expected: ";", .. })
+                ),
+                "{source}"
+            );
+        }
+
+        for source in [
+            "fn test() -> number { 1 }",
+            "fn test() -> void { {} }",
+            "fn test() -> void { while true { 1 } }",
+            "fn test() -> void { while true { {} } }",
+        ] {
+            assert!(
+                matches!(
+                    parse(source),
+                    Err(ParseError::UnexpectedToken {
+                        expected: ";",
+                        found: "}",
+                        ..
+                    })
+                ),
+                "{source}"
+            );
+        }
+
+        assert!(parse("fn test() -> void { { 1 }; while true { { 2 }; } }").is_ok());
+        assert!(parse("fn test() -> void { (if true { 1 } else { 2 }) + 3; }").is_ok());
+    }
+
+    #[test]
+    fn bare_if_preserves_following_unary_statements_and_byte_spans() {
+        for else_ in [
+            "",
+            " else {}",
+            " else if false {}",
+            " else if false {} else {}",
+        ] {
+            let if_source = format!("if true {{}}{else_}");
+
+            for (unary_source, expected) in [
+                ("-1;", negate(number("1"))),
+                ("--1;", negate(negate(number("1")))),
+                ("- /* é */ -1;", negate(negate(number("1")))),
+            ] {
+                for trivia in ["", " ", "\n", "\r\n", "/* é */", "// é\r\n"] {
+                    for (opening, closing) in [
+                        ("", ""),
+                        ("while true { ", " }"),
+                        ("if false { ", " }"),
+                        ("if false {} else { ", " }"),
+                    ] {
+                        let source = format!(
+                            "fn main() -> void {{ /* π */ {opening}{if_source}{trivia}{unary_source}{closing} }}"
+                        );
+                        let program = parse(&source).unwrap();
+                        let body = &program.functions[0].body;
+                        let statements = match &body[0].kind {
+                            StatementKind::While { body, .. } => body,
+                            StatementKind::If { then, .. } if !opening.is_empty() => {
+                                if let StatementKind::If {
+                                    else_: Some(else_), ..
+                                } = &body[0].kind
+                                {
+                                    else_
+                                } else {
+                                    then
+                                }
+                            }
+                            _ => body,
+                        };
+
+                        assert_eq!(statements.len(), 2, "{source}");
+                        let StatementKind::If {
+                            cond,
+                            then,
+                            else_: parsed_else,
+                        } = &statements[0].kind
+                        else {
+                            panic!("expected bare statement-if: {source}");
+                        };
+
+                        assert_eq!(**cond, Expr::Bool(true), "{source}");
+                        assert!(then.is_empty(), "{source}");
+                        assert_eq!(parsed_else.is_some(), !else_.is_empty(), "{source}");
+                        assert_expression_statement(&statements[1], &expected);
+                        let if_start = source.find(&if_source).unwrap();
+                        let unary_start = source.find(unary_source).unwrap();
+
+                        assert_eq!(
+                            statements[0].span,
+                            Span::new(if_start, if_start + if_source.len()),
+                            "{source}"
+                        );
+                        assert_eq!(
+                            statements[1].span,
+                            Span::new(unary_start, unary_start + unary_source.len()),
+                            "{source}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn value_block_bare_if_stops_before_unary_statements_and_tails() {
+        for else_ in [
+            "",
+            " else {}",
+            " else if false {}",
+            " else if false {} else {}",
+        ] {
+            let if_source = format!("if true {{}}{else_}");
+
+            for (unary_source, expected) in [
+                ("-1", negate(number("1"))),
+                ("--1", negate(negate(number("1")))),
+                ("- /* é */ -1", negate(negate(number("1")))),
+            ] {
+                for trivia in ["", " ", "\n", "\r\n", "/* é */", "// é\r\n"] {
+                    for semicolon in ["", ";"] {
+                        let source = format!(
+                            "{{ /* π */ {if_source}{trivia}{unary_source}{semicolon} /* end */ }}"
+                        );
+                        let Expr::Block(block) = expression(&source) else {
+                            panic!("expected value block");
+                        };
+                        let if_start = source.find(&if_source).unwrap();
+
+                        assert_eq!(block.span, Span::new(0, source.len()), "{source}");
+                        assert_eq!(
+                            block.statements[0].span,
+                            Span::new(if_start, if_start + if_source.len()),
+                            "{source}"
+                        );
+                        assert!(
+                            matches!(block.statements[0].kind, StatementKind::If { .. }),
+                            "{source}"
+                        );
+
+                        if semicolon.is_empty() {
+                            assert_eq!(block.statements.len(), 1, "{source}");
+                            assert_eq!(block.tail.as_deref(), Some(&expected), "{source}");
+                        } else {
+                            assert_eq!(block.statements.len(), 2, "{source}");
+                            assert!(block.tail.is_none(), "{source}");
+                            assert_expression_statement(&block.statements[1], &expected);
+                            let unary_start = source.find(unary_source).unwrap();
+
+                            assert_eq!(
+                                block.statements[1].span,
+                                Span::new(unary_start, unary_start + unary_source.len() + 1),
+                                "{source}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn discarded_nested_unary_tails_keep_their_shapes_and_token_spans() {
+        for else_ in ["", " else {}"] {
+            for (unary_source, expected) in [
+                ("-1", negate(number("1"))),
+                ("--1", negate(negate(number("1")))),
+            ] {
+                let nested_if = format!("if false {{}}{else_}");
+                let source = format!(
+                    "fn main() -> void {{ if true {{ {nested_if} /* é */ {unary_source} /* end */ }} }}"
+                );
+                let program = parse(&source).unwrap();
+                let StatementKind::If { then, .. } = &program.functions[0].body[0].kind else {
+                    panic!("expected outer statement-if");
+                };
+                let if_start = source.find(&nested_if).unwrap();
+                let unary_start = source.find(unary_source).unwrap();
+
+                assert_eq!(then.len(), 2, "{source}");
+                assert!(matches!(then[0].kind, StatementKind::If { .. }));
+                assert_eq!(
+                    then[0].span,
+                    Span::new(if_start, if_start + nested_if.len())
+                );
+                assert_eq!(then[1].kind, StatementKind::Expression(expected));
+                assert_eq!(
+                    then[1].span,
+                    Span::new(unary_start, unary_start + unary_source.len())
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn whole_if_binary_continuation_in_statement_positions_requires_parentheses() {
+        for (operator, op) in [
+            ("+", BinaryOp::Add),
+            ("-", BinaryOp::Subtract),
+            ("*", BinaryOp::Multiply),
+            ("/", BinaryOp::Divide),
+            ("%", BinaryOp::Remainder),
+        ] {
+            let if_source = "if true { 1 } else { 2 }";
+            let source = format!("fn main() -> void {{ ({if_source}) {operator} 3; }}");
+            let program = parse(&source).unwrap();
+
+            assert_eq!(program.functions[0].body.len(), 1);
+            let StatementKind::Expression(expr) = &program.functions[0].body[0].kind else {
+                panic!("expected expression statement");
+            };
+
+            assert_if_arithmetic(expr, op, &number("3"));
+
+            for semicolon in ["", ";"] {
+                let Expr::Block(block) =
+                    expression(&format!("{{ ({if_source}) {operator} 3{semicolon} }}"))
+                else {
+                    panic!("expected block");
+                };
+
+                if semicolon.is_empty() {
+                    assert!(block.statements.is_empty());
+                    assert_if_arithmetic(block.tail.as_deref().unwrap(), op, &number("3"));
+                } else {
+                    assert!(block.tail.is_none());
+                    assert_eq!(block.statements.len(), 1);
+                    let StatementKind::Expression(expr) = &block.statements[0].kind else {
+                        panic!("expected expression statement");
+                    };
+
+                    assert_if_arithmetic(expr, op, &number("3"));
+                }
+            }
+
+            if operator != "-" {
+                for source in [
+                    format!("fn main() -> void {{ {if_source} {operator} 3; }}"),
+                    format!("fn main() -> void {{ let x = {{ {if_source} {operator} 3 }}; }}"),
+                ] {
+                    let start = source.find(operator).unwrap();
+                    assert_eq!(
+                        parse(&source),
+                        Err(ParseError::UnexpectedToken {
+                            expected: "expression",
+                            found: operator,
+                            span: Span::new(start, start + operator.len()),
+                        }),
+                        "{source}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ordinary_value_contexts_keep_unparenthesized_if_arithmetic() {
+        let if_source = "if true { 1 } else if false { 2 } else { 3 }";
+
+        for (operator, op) in [
+            ("+", BinaryOp::Add),
+            ("-", BinaryOp::Subtract),
+            ("*", BinaryOp::Multiply),
+            ("/", BinaryOp::Divide),
+            ("%", BinaryOp::Remainder),
+        ] {
+            let value = format!("{if_source} {operator} --4");
+            let expected = binary(expression(if_source), op, negate(negate(number("4"))));
+
+            assert_eq!(expression(&value), expected);
+            let source = format!(
+                "fn main() -> number {{ let x = {value}; x = {value}; x += {value}; call({value}); return {value}; }}"
+            );
+            let program = parse(&source).unwrap();
+            let body = &program.functions[0].body;
+
+            assert_eq!(body.len(), 5);
+            let StatementKind::Let { value, .. } = &body[0].kind else {
+                panic!("expected initializer");
+            };
+
+            assert_if_arithmetic(value, op, &negate(negate(number("4"))));
+            let StatementKind::Assignment { value, .. } = &body[1].kind else {
+                panic!("expected assignment");
+            };
+
+            assert_if_arithmetic(value, op, &negate(negate(number("4"))));
+            let StatementKind::CompoundAssignment { value, .. } = &body[2].kind else {
+                panic!("expected compound assignment");
+            };
+
+            assert_if_arithmetic(value, op, &negate(negate(number("4"))));
+            let StatementKind::Expression(Expr::Call { func, args }) = &body[3].kind else {
+                panic!("expected call");
+            };
+
+            assert_eq!(func, "call");
+            assert_eq!(args.len(), 1);
+            assert_if_arithmetic(&args[0], op, &negate(negate(number("4"))));
+            let StatementKind::Return(Some(value)) = &body[4].kind else {
+                panic!("expected return value");
+            };
+
+            assert_if_arithmetic(value, op, &negate(negate(number("4"))));
+        }
+    }
+
+    #[test]
+    fn legacy_if_followed_by_unary_statements_preserves_head_wasm_bytes() {
+        // Literal bytes captured by separately compiling these sources with an
+        // isolated archive of HEAD feb869075147, not the working-tree compiler.
+        let prefix = [
+            0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x04, 0x01, 0x60, 0x00, 0x00,
+            0x02, 0x01, 0x00, 0x03, 0x02, 0x01, 0x00, 0x07, 0x08, 0x01, 0x04, 0x6d, 0x61, 0x69,
+            0x6e, 0x00, 0x00,
+        ];
+        let cases: [(&str, &[u8]); 6] = [
+            (
+                "fn main() -> void { if true {} -1; }",
+                &[
+                    0x0a, 0x14, 0x01, 0x12, 0x00, 0x41, 0x01, 0x04, 0x40, 0x0b, 0x44, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0xf0, 0x3f, 0x9a, 0x1a, 0x0b,
+                ],
+            ),
+            (
+                "fn main() -> void { if true {} --1; }",
+                &[
+                    0x0a, 0x15, 0x01, 0x13, 0x00, 0x41, 0x01, 0x04, 0x40, 0x0b, 0x44, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0xf0, 0x3f, 0x9a, 0x9a, 0x1a, 0x0b,
+                ],
+            ),
+            (
+                "fn main() -> void { if true {} else {} -1; }",
+                &[
+                    0x0a, 0x15, 0x01, 0x13, 0x00, 0x41, 0x01, 0x04, 0x40, 0x05, 0x0b, 0x44, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x3f, 0x9a, 0x1a, 0x0b,
+                ],
+            ),
+            (
+                "fn main() -> void { if true {} else {} --1; }",
+                &[
+                    0x0a, 0x16, 0x01, 0x14, 0x00, 0x41, 0x01, 0x04, 0x40, 0x05, 0x0b, 0x44, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x3f, 0x9a, 0x9a, 0x1a, 0x0b,
+                ],
+            ),
+            (
+                "fn main() -> void { if true { if false {} -1; } --1; }",
+                &[
+                    0x0a, 0x25, 0x01, 0x23, 0x00, 0x41, 0x01, 0x04, 0x40, 0x41, 0x00, 0x04, 0x40,
+                    0x0b, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x3f, 0x9a, 0x1a, 0x0b,
+                    0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x3f, 0x9a, 0x9a, 0x1a, 0x0b,
+                ],
+            ),
+            (
+                "fn main() -> void { if true { if false {} else {} --1; } else { if false {} -1; } -1; }",
+                &[
+                    0x0a, 0x37, 0x01, 0x35, 0x00, 0x41, 0x01, 0x04, 0x40, 0x41, 0x00, 0x04, 0x40,
+                    0x05, 0x0b, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x3f, 0x9a, 0x9a,
+                    0x1a, 0x05, 0x41, 0x00, 0x04, 0x40, 0x0b, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0xf0, 0x3f, 0x9a, 0x1a, 0x0b, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0xf0, 0x3f, 0x9a, 0x1a, 0x0b,
+                ],
+            ),
+        ];
+
+        for (source, code_section) in cases {
+            let expected = [prefix.as_slice(), code_section].concat();
+
+            for source in [source.to_owned(), source.replace(' ', " /* é */\n")] {
+                let actual = crate::Compiler::new().compile_source(&source).unwrap();
+
+                wasmparser::Validator::new().validate_all(&actual).unwrap();
+                assert_eq!(actual, expected, "{source}");
+            }
+        }
+    }
+
+    #[test]
+    fn truncated_value_blocks_and_if_expressions_never_panic() {
+        let source = "fn test() -> number { let x = { if true { 1 } else if false { return 2; } else { let y = 3; y } }; return x; }";
+        let tokens = Lexer::new(source).tokenize();
+
+        for end in 0..tokens.len() - 1 {
+            assert!(
+                Parser::new(&tokens[..end]).parse_program().is_err(),
+                "token {end}"
+            );
+        }
+
+        for source in [
+            "fn test() -> void { let x = { 1",
+            "fn test() -> void { let x = if true { 1 } else",
+            "fn test() -> void { let x = if true { 1 } else if",
+            "fn test() -> void { let x = { let a = 1;",
+        ] {
+            assert!(parse(source).is_err());
+        }
     }
 
     #[test]

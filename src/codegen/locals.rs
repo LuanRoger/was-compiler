@@ -116,10 +116,6 @@ impl Visitor for LocalVisitor<'_> {
 
         ControlFlow::Continue(())
     }
-
-    fn visit_expressions(&self) -> bool {
-        false
-    }
 }
 
 #[cfg(test)]
@@ -176,14 +172,14 @@ mod tests {
     }
 
     #[test]
-    fn local_collection_does_not_validate_or_descend_into_initializers_and_conditions() {
+    fn local_collection_traverses_without_validating_initializers_and_conditions() {
         let mut program = Compiler::new()
             .analyze("fn test() -> void { let a: number = 1; if true { let b: bool = false; } }")
             .unwrap();
         let function = &mut program.functions[0];
         let invalid = TypedExpr {
             kind: TypedExprKind::Number("invalid".into()),
-            ty: Type::Void,
+            ty: Type::Void.into(),
         };
         let TypedStatementKind::Let { value, .. } = &mut function.body[0].kind else {
             panic!("let");
@@ -199,6 +195,35 @@ mod tests {
         assert_eq!(layout.types, [ValType::F64, ValType::I32]);
         assert_eq!(layout.get(VariableId(0)).unwrap().index.raw(), 0);
         assert_eq!(layout.get(VariableId(1)).unwrap().index.raw(), 1);
+    }
+
+    #[test]
+    fn expression_declarations_are_planned_even_when_their_contents_and_results_are_forged() {
+        use crate::typed_ast::ExprResult;
+
+        let mut program = Compiler::new().analyze(
+            "fn test() -> void { let outer = { let inner = 1; inner }; if { let condition = true; condition } {} }",
+        ).unwrap();
+        let function = &mut program.functions[0];
+        let TypedStatementKind::Let { value, .. } = &mut function.body[0].kind else {
+            panic!("let")
+        };
+        value.ty = ExprResult::Value(Type::Void);
+        let TypedExprKind::Block(block) = &mut value.kind else {
+            panic!("block")
+        };
+        block.tail.as_mut().unwrap().kind = TypedExprKind::Number("NaN".into());
+        let TypedStatementKind::If { cond, .. } = &mut function.body[1].kind else {
+            panic!("if")
+        };
+        cond.ty = ExprResult::Never;
+
+        let layout = LocalLayout::new(function).unwrap();
+        assert_eq!(layout.types, [ValType::F64, ValType::F64, ValType::I32]);
+        // Semantic IDs follow initializer analysis, slots retain declaration preorder.
+        assert_eq!(layout.get(VariableId(1)).unwrap().index.raw(), 0);
+        assert_eq!(layout.get(VariableId(0)).unwrap().index.raw(), 1);
+        assert_eq!(layout.get(VariableId(2)).unwrap().index.raw(), 2);
     }
 
     #[test]

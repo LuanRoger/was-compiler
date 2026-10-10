@@ -41,7 +41,10 @@ fn compiler() -> Compiler {
 }
 
 fn expr(kind: TypedExprKind, ty: Type) -> TypedExpr {
-    TypedExpr { kind, ty }
+    TypedExpr {
+        kind,
+        ty: ty.into(),
+    }
 }
 
 fn invalid_number() -> TypedExpr {

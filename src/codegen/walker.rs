@@ -1,6 +1,8 @@
 use std::ops::ControlFlow;
 
-use crate::typed_ast::{TypedBlock, TypedExpr, TypedExprKind, TypedStatement, TypedStatementKind};
+use crate::typed_ast::{
+    TypedBlock, TypedExpr, TypedExprKind, TypedStatement, TypedStatementKind, TypedValueBlock,
+};
 
 pub(super) trait Visitor {
     type Break;
@@ -28,7 +30,11 @@ pub(super) trait Visitor {
 
 pub(super) fn walk_block<V: Visitor>(block: &TypedBlock, visitor: &mut V) -> ControlFlow<V::Break> {
     visitor.enter_block(block)?;
+    walk_statements(block, visitor)?;
+    visitor.exit_block(block)
+}
 
+fn walk_statements<V: Visitor>(block: &TypedBlock, visitor: &mut V) -> ControlFlow<V::Break> {
     for statement in block {
         visitor.enter_statement(statement)?;
 
@@ -67,7 +73,18 @@ pub(super) fn walk_block<V: Visitor>(block: &TypedBlock, visitor: &mut V) -> Con
         }
     }
 
-    visitor.exit_block(block)
+    ControlFlow::Continue(())
+}
+
+fn walk_value_block<V: Visitor>(block: &TypedValueBlock, visitor: &mut V) -> ControlFlow<V::Break> {
+    visitor.enter_block(&block.statements)?;
+    walk_statements(&block.statements, visitor)?;
+
+    if let Some(tail) = &block.tail {
+        walk_expression(tail, visitor)?;
+    }
+
+    visitor.exit_block(&block.statements)
 }
 
 fn walk_expression<V: Visitor>(expr: &TypedExpr, visitor: &mut V) -> ControlFlow<V::Break> {
@@ -100,6 +117,17 @@ fn walk_expression<V: Visitor>(expr: &TypedExpr, visitor: &mut V) -> ControlFlow
         TypedExprKind::Index { expr, index } => {
             walk_expression(expr, visitor)?;
             walk_expression(index, visitor)?;
+        }
+
+        TypedExprKind::Block(block) => walk_value_block(block, visitor)?,
+
+        TypedExprKind::If { cond, then, else_ } => {
+            walk_expression(cond, visitor)?;
+            walk_value_block(then, visitor)?;
+
+            if let Some(block) = else_ {
+                walk_value_block(block, visitor)?;
+            }
         }
 
         TypedExprKind::Number(_)

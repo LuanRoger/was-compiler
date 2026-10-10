@@ -1,13 +1,20 @@
-use crate::{ast::Type, tokens::Span, typed_ast::TypedExpr};
+use crate::{
+    ast::Type,
+    flow::Flow,
+    tokens::Span,
+    typed_ast::{ExprResult, TypedExpr},
+};
 use wasm_encoder::{Instruction, MemArg, ValType};
 
-use super::{CodegenError, abi, expect_type, function::BodyEmitter, memory::Helper};
+use super::{
+    CodegenError, abi, expect_operand, expect_result, function::BodyEmitter, memory::Helper,
+};
 
 pub(super) fn emit_array(
     elements: &[TypedExpr],
     body: &mut BodyEmitter<'_>,
     span: Span,
-) -> Result<(), CodegenError> {
+) -> Result<Flow, CodegenError> {
     let limit = || CodegenError::LimitExceeded {
         what: "array allocation size",
     };
@@ -39,12 +46,14 @@ pub(super) fn emit_array(
         abi::DESCRIPTOR_FIELD_ALIGN_LOG2,
     )));
 
+    let mut flow = Flow::FALLTHROUGH;
+
     for (index, element) in (0..length).zip(elements) {
-        expect_type(body.name(), Type::Number, element.ty, span)?;
+        expect_operand(body.name(), Type::Number, element.ty, span)?;
 
         body.local_get(temporary);
 
-        body.emit_expr(element, span)?;
+        flow = flow.then(body.emit_expr(element, span)?);
 
         body.instruction(&Instruction::F64Store(memory_arg(
             u64::from(abi::DESCRIPTOR_SIZE)
@@ -55,19 +64,24 @@ pub(super) fn emit_array(
 
     body.local_get(temporary);
 
-    Ok(())
+    Ok(flow)
 }
 
 pub(super) fn expect_index_types(
     base: &TypedExpr,
     index: &TypedExpr,
-    result_type: Type,
+    result_type: ExprResult,
     body: &mut BodyEmitter<'_>,
     span: Span,
 ) -> Result<(), CodegenError> {
-    expect_type(body.name(), Type::Number, result_type, span)?;
-    expect_type(body.name(), Type::NumberArray, base.ty, span)?;
-    expect_type(body.name(), Type::Number, index.ty, span)
+    let expected = if base.ty == ExprResult::Never || index.ty == ExprResult::Never {
+        ExprResult::Never
+    } else {
+        Type::Number.into()
+    };
+    expect_result(body.name(), expected, result_type, span)?;
+    expect_operand(body.name(), Type::NumberArray, base.ty, span)?;
+    expect_operand(body.name(), Type::Number, index.ty, span)
 }
 
 pub(super) fn emit_address(
@@ -75,13 +89,13 @@ pub(super) fn emit_address(
     index: &TypedExpr,
     body: &mut BodyEmitter<'_>,
     span: Span,
-) -> Result<(), CodegenError> {
-    body.emit_expr(base, span)?;
-    body.emit_expr(index, span)?;
+) -> Result<Flow, CodegenError> {
+    let base_flow = body.emit_expr(base, span)?;
+    let index_flow = body.emit_expr(index, span)?;
 
     body.call(body.helper(Helper::ArrayAddress));
 
-    Ok(())
+    Ok(base_flow.then(index_flow))
 }
 
 fn memory_arg(offset: u64, align: u32) -> MemArg {

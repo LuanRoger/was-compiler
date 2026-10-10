@@ -25,10 +25,48 @@ pub enum FunctionRef {
     Builtin(BuiltinFunction),
 }
 
+/// An expression's normal result, separate from storage and ABI types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExprResult {
+    Value(Type),
+    Void,
+    Never,
+}
+
+impl From<Type> for ExprResult {
+    fn from(ty: Type) -> Self {
+        match ty {
+            Type::Void => Self::Void,
+            ty => Self::Value(ty),
+        }
+    }
+}
+
+impl ExprResult {
+    pub fn value_type(self) -> Option<Type> {
+        match self {
+            Self::Value(ty) => Some(ty),
+            Self::Void | Self::Never => None,
+        }
+    }
+}
+
+impl PartialEq<Type> for ExprResult {
+    fn eq(&self, other: &Type) -> bool {
+        *self == Self::from(*other)
+    }
+}
+
+impl PartialEq<ExprResult> for Type {
+    fn eq(&self, other: &ExprResult) -> bool {
+        ExprResult::from(*self) == *other
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypedExpr {
     pub kind: TypedExprKind,
-    pub ty: Type,
+    pub ty: ExprResult,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -59,6 +97,13 @@ pub enum TypedExprKind {
         args: Vec<TypedExpr>,
     },
 
+    Block(TypedValueBlock),
+    If {
+        cond: Box<TypedExpr>,
+        then: TypedValueBlock,
+        else_: Option<TypedValueBlock>,
+    },
+
     Array(Vec<TypedExpr>),
 
     Index {
@@ -74,6 +119,13 @@ pub struct TypedStatement {
 }
 
 pub type TypedBlock = Vec<TypedStatement>;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypedValueBlock {
+    pub statements: TypedBlock,
+    pub tail: Option<Box<TypedExpr>>,
+    pub span: Span,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypedStatementKind {

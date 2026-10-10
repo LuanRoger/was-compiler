@@ -26,7 +26,10 @@ fn analyze(source: &str) -> TypedProgram {
 }
 
 fn expr(kind: ExprKind, ty: Type) -> TypedExpr {
-    TypedExpr { kind, ty }
+    TypedExpr {
+        kind,
+        ty: ty.into(),
+    }
 }
 
 fn number(value: &str) -> TypedExpr {
@@ -1251,6 +1254,163 @@ fn typed_program_owns_names_literals_and_bodies_after_inputs_are_dropped() {
                 span: Span::new(0, source_text.len()),
             }],
         }
+    );
+}
+
+#[test]
+fn expression_results_keep_identity_separate_from_never_compatibility() {
+    for ty in [
+        Type::Number,
+        Type::Bool,
+        Type::String,
+        Type::NumberArray,
+        Type::Void,
+    ] {
+        let result = ExprResult::from(ty);
+
+        assert_eq!(result, ty);
+        assert_eq!(ty, result);
+        assert_ne!(ExprResult::Never, ty);
+        assert_ne!(ty, ExprResult::Never);
+        assert_eq!(
+            result.value_type(),
+            if ty == Type::Void { None } else { Some(ty) }
+        );
+    }
+
+    assert_eq!(ExprResult::from(Type::Void), ExprResult::Void);
+    assert_eq!(ExprResult::Never.value_type(), None);
+    assert_eq!(ExprResult::Value(Type::Void).value_type(), Some(Type::Void));
+    assert_ne!(ExprResult::Value(Type::Void), Type::Void);
+}
+
+#[test]
+fn typed_value_blocks_preserve_spans_tails_and_shadow_initializer_ids() {
+    let source = "fn test(x: number) -> number { let y = { let x = x + 1; x }; return x + y; }";
+    let typed = analyze(source);
+    let StmtKind::Let { id, ty, value, .. } = &typed.functions[0].body[0].kind else {
+        panic!("expected let")
+    };
+
+    assert_eq!(*id, VariableId(2));
+    assert_eq!(*ty, Type::Number);
+    assert_eq!(value.ty, ExprResult::Value(Type::Number));
+    let ExprKind::Block(block) = &value.kind else {
+        panic!("expected block")
+    };
+    let start = source.find("{ let x").unwrap();
+    let end = source.find(" }; return").unwrap() + 2;
+
+    assert_eq!(block.span, Span::new(start, end));
+    assert_let(
+        &block.statements[0],
+        1,
+        "x",
+        Type::Number,
+        binary(
+            identifier(0, "x", Type::Number),
+            BinaryOp::Add,
+            number("1"),
+            Type::Number,
+        ),
+    );
+    assert_eq!(
+        block.tail.as_deref(),
+        Some(&identifier(1, "x", Type::Number))
+    );
+    assert_eq!(
+        returned(&typed.functions[0].body[1]),
+        &binary(
+            identifier(0, "x", Type::Number),
+            BinaryOp::Add,
+            identifier(2, "y", Type::Number),
+            Type::Number
+        )
+    );
+}
+
+#[test]
+fn typed_if_results_distinguish_value_void_and_never_without_flow_annotations() {
+    let typed = analyze(
+        "fn test() -> number { let x = if true { return 1; } else { 2 }; (if true {} else {}); let y: bool = { return 3; false }; }",
+    );
+    let StmtKind::Let { value, .. } = &typed.functions[0].body[0].kind else {
+        panic!("expected let")
+    };
+
+    assert_eq!(value.ty, ExprResult::Value(Type::Number));
+    let ExprKind::If {
+        then,
+        else_: Some(else_),
+        ..
+    } = &value.kind
+    else {
+        panic!("expected if")
+    };
+
+    assert!(then.tail.is_none());
+    assert!(matches!(then.statements[0].kind, StmtKind::Return(Some(_))));
+    assert_eq!(else_.tail.as_deref(), Some(&number("2")));
+    let StmtKind::Expression(value) = &typed.functions[0].body[1].kind else {
+        panic!("expected expression")
+    };
+
+    assert_eq!(value.ty, ExprResult::Void);
+    let StmtKind::Let { ty, value, .. } = &typed.functions[0].body[2].kind else {
+        panic!("expected let")
+    };
+
+    assert_eq!(*ty, Type::Bool);
+    assert_eq!(value.ty, ExprResult::Never);
+    let ExprKind::Block(block) = &value.kind else {
+        panic!("expected block")
+    };
+
+    assert_eq!(
+        block.tail.as_ref().unwrap().ty,
+        ExprResult::Value(Type::Bool)
+    );
+}
+
+#[test]
+fn while_condition_blocks_resolve_transfers_to_their_own_loop() {
+    let typed = analyze(
+        "fn test() -> void { while true { while { break; } { continue; } ({ continue; }); } }",
+    );
+    let StmtKind::While {
+        id: outer, body, ..
+    } = &typed.functions[0].body[0].kind
+    else {
+        panic!("expected outer loop")
+    };
+    let StmtKind::While {
+        id: inner,
+        cond,
+        body: inner_body,
+    } = &body[0].kind
+    else {
+        panic!("expected inner loop")
+    };
+
+    assert_eq!(*outer, LoopId(0));
+    assert_eq!(*inner, LoopId(1));
+    assert_eq!(cond.ty, ExprResult::Never);
+    let ExprKind::Block(block) = &cond.kind else {
+        panic!("expected condition block")
+    };
+
+    assert_eq!(block.statements[0].kind, StmtKind::Break { target: *inner });
+    assert_eq!(inner_body[0].kind, StmtKind::Continue { target: *inner });
+    let StmtKind::Expression(value) = &body[1].kind else {
+        panic!("expected expression")
+    };
+    let ExprKind::Block(block) = &value.kind else {
+        panic!("expected block")
+    };
+
+    assert_eq!(
+        block.statements[0].kind,
+        StmtKind::Continue { target: *outer }
     );
 }
 

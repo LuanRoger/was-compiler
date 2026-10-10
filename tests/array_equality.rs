@@ -282,7 +282,7 @@ fn scalar_only_equality_keeps_the_exact_module_bytes_without_memory_helpers() {
 fn array() -> TypedExpr {
     TypedExpr {
         kind: TypedExprKind::Array(Vec::new()),
-        ty: Type::NumberArray,
+        ty: Type::NumberArray.into(),
     }
 }
 
@@ -293,7 +293,10 @@ fn value(ty: Type) -> TypedExpr {
         Type::NumberArray => return array(),
         Type::Bool | Type::Void => TypedExprKind::Bool(false),
     };
-    TypedExpr { kind, ty }
+    TypedExpr {
+        kind,
+        ty: ty.into(),
+    }
 }
 
 fn binary(left: TypedExpr, op: BinaryOp, right: TypedExpr, ty: Type) -> TypedExpr {
@@ -303,7 +306,7 @@ fn binary(left: TypedExpr, op: BinaryOp, right: TypedExpr, ty: Type) -> TypedExp
             op,
             right: Box::new(right),
         },
-        ty,
+        ty: ty.into(),
     }
 }
 
@@ -317,7 +320,7 @@ fn assert_forged_error(expr: TypedExpr, expected: CodegenError, span: Span) {
                 3 => binary(
                     TypedExpr {
                         kind: TypedExprKind::Bool(true),
-                        ty: Type::Bool,
+                        ty: Type::Bool.into(),
                     },
                     BinaryOp::Or,
                     expr.clone(),
@@ -419,7 +422,7 @@ fn forged_array_equality_checks_nested_elements_even_when_unreachable_or_skipped
     for op in [BinaryOp::Equal, BinaryOp::NotEqual] {
         let bad_array = TypedExpr {
             kind: TypedExprKind::Array(vec![value(Type::Bool)]),
-            ty: Type::NumberArray,
+            ty: Type::NumberArray.into(),
         };
         for expr in [
             binary(bad_array.clone(), op, array(), Type::Bool),

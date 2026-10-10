@@ -37,6 +37,12 @@ matching untyped declarations must account for this API change. Semantic analysi
 resolves both forms to `TypedStatementKind::Let.ty: Type`; the typed AST retains
 concrete types, with no walker, backend, or ABI changes for local inference.
 
+WP3 separately changes `TypedExpr.ty` from `Type` to
+`ExprResult::{Value(Type), Void, Never}`. Use `ty.into()` in existing expression
+constructors; `Type::Void` maps to `Void`. Bindings/signatures still use `Type`.
+Raw/typed `ValueBlock` wrappers add statements, an optional boxed tail, and span;
+function and statement-block vector aliases remain unchanged.
+
 The compiler emits bytes. The embedding application decides whether to write a
 `.wasm` file, instantiate it in a browser, or pass it to another runtime.
 
@@ -67,11 +73,11 @@ The compiler emits bytes. The embedding application decides whether to write a
 | `src/codegen/call.rs` | Validate resolved call references/signatures, emit user/host calls and built-in `len`, normalize host booleans, and validate memory handles. |
 | `src/codegen/function.rs` | Per-function emission context, scoped initialized bindings, unique labels/loop contexts, return-path checks, and function termination. |
 | `src/codegen/control_flow.rs` | Emit structured branches and loops, preserve scope boundaries, and track guaranteed returns. |
-| `src/codegen/locals.rs` | Map typed variable IDs to dense Wasm slots and declare value/handle local types. |
+| `src/codegen/locals.rs` | Collect declarations, including inside expressions, and map typed variable IDs to dense Wasm slots in declaration preorder. |
 | `src/codegen/temporaries.rs` | Preallocate ordered typed scratch slots for array construction and indexed compounds, including nested and unreachable expressions. |
 | `src/codegen/mod.rs` | Validate raw typed input through the private checked constructor, then assemble Type, Import, Function, optional Memory/Global, Export, Code, and optional Data sections from checked state. |
 | `src/codegen/tests.rs` | Inspect and validate emitted modules with `wasmparser`. |
-| `src/codegen/expression.rs` | Emit scalar literals, variable reads, arithmetic/comparisons, short-circuit boolean operators, and user/host calls. |
+| `src/codegen/expression.rs` | Check result categories and emit literals, reads, operators, calls, and MVP block/if value regions while reconstructing expression completion. |
 | `src/codegen/statement.rs` | Emit blocks, scalar declarations/assignments, expression cleanup, returns, and delegate control flow. |
 | `src/codegen/values.rs` | Emit fresh array construction and checked element addressing. |
 | `src/codegen/place.rs` | Shared checked local/index places and ordinary/compound assignment lowering. |
@@ -551,7 +557,44 @@ Acceptance covers syntax and spans, keyword host validation, per-function neares
 targets, flow composition, forged IDs, cleanup, independent decoded branch depths,
 validator checks, recursion, condition effects, skipped calls/traps, numeric-array
 scratch planning, optimization/export/import-snapshot parity, and CLI/browser
-behavior. WP3 (tail blocks, `if` expressions, and internal `Never`) is next.
+behavior. WP3 extends these transfers through expression regions and conditions.
+
+## Implemented language extension: block/if values and `Never` (WP3)
+
+Expression blocks yield an optional unterminated tail; a semicolon discards it.
+Value-context `if` / `else if` requires else, with exact branch-category joins
+except that Never joins its counterpart. All existing concrete types work; Void
+is discardable, not a local value. Statement-if may omit else and discards branch
+tails. Named functions still require explicit return; function/while ordinary
+expression tails and standalone block statements without semicolons are rejected.
+A final bare if in a value block is a tail, a nonfinal one is a statement. Bare
+statement-if ends before a following unary-minus statement, regardless of trivia;
+parenthesize the whole if for arithmetic continuation in those positions.
+
+`ValueBlock` / `TypedValueBlock` wrap statements, an optional boxed tail, and span.
+`TypedExpr.ty` now carries `ExprResult::{Value(Type), Void, Never}`; parameters,
+bindings and function signatures retain Type. Never means no normal completion,
+not a source/ABI/storage type or termination proof. Inferred Never initialization
+is rejected; annotated divergent initialization emits no reachable store.
+`Value(Type::Void)` is malformed. Public result equality is identity, not join
+compatibility. Semantic analysis propagates transient expression flow; checked
+lowering reconstructs it, checking every child even after abrupt control.
+
+MVP single-result block/if regions use f64 for numbers, i32 for bool/handles, and
+empty for Void/Never. No artificial result or drop is introduced on divergent
+paths. While loop context is active before its condition, so condition blocks
+can break/continue that loop. An unconditional explicit return in the condition
+guarantees return before the body; a literal-true body alone still does not.
+The walker visits value-block statements then tail within scope hooks. Locals
+traverse expressions for declarations, reserving an outer let slot before its
+initializer declarations. Separate memory, scratch and remainder discovery,
+helper ordering, host ABI, and optimization no-op behavior are unchanged.
+
+Coverage includes `tests/block_values.rs`, frontend/planner/checked-backend units,
+independent decoded MVP region/local/drop checks plus Validator, legacy byte
+expectations, and Node tests of effects, scopes, transfers, saved compound places
+and trap order. CLI/browser parity and diagnostics, forged annotations, hidden
+bodies and skipped operands remain covered. WP4 (statement/value `loop`) is next.
 
 ## Remaining work
 

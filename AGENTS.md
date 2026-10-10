@@ -81,7 +81,8 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
 
 - The planning walker is sequential and structural, not semantic analysis or code
   emission. Keep exhaustive node traversal centralized and policies separate.
-  Locals skip expressions; remainder discovery stops at the first `%` expression
+  Locals traverse expressions to collect nested declarations, without validating
+  expression contents; remainder discovery stops at the first `%` expression
   or `%=` statement before visiting its children. Successful block-exit hooks are not unwind cleanup.
 - `ValidatedProgram` privately borrows the original typed tree, completes layout
   first, then checks/lowers every user function in source order and caches encoded
@@ -100,8 +101,9 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
 - Types: `number`, `bool`, `string`, `number[]`, and `void`. Parameters and results
   require explicit types. Locals accept `let name = initializer;` or
   `let name: type = initializer;`; every declaration requires an initializer.
-  All nonvoid expressions infer concrete existing types; `[]` infers `number[]`
-  because only numeric arrays exist. Explicit annotations require exact matches.
+  Value-producing expressions infer concrete existing types; `[]` infers `number[]`
+  because only numeric arrays exist. An inferred `Never` initializer is rejected;
+  an explicitly typed divergent initializer is accepted. No coercions are added.
 - Local inference adds no source `i32` type, promotions, implicit coercions,
   function inference, or whole-program type unification. `number` remains `f64`.
 - Named functions support forward, nested, self-recursive, mutual, and registered
@@ -111,6 +113,9 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
 - Expressions support literals, parentheses, unary `-`/`!`, arithmetic
   `+ - * / %`, numeric comparisons, boolean equality and short-circuit `&&`/`||`,
   string equality, numeric-array equality, indexing, and built-in `len(array)`.
+  Tail-valued blocks and `if`/`else if` expressions support all concrete result
+  types. Value-context if requires else and exact branch joins, allowing `Never`.
+  Statement-if may omit else and discards branch tails. No `match` expressions yet.
 - Strings are immutable raw UTF-8 values. Numeric arrays have fixed lengths and
   mutable shared storage; every evaluated array literal allocates fresh storage.
 - `//` line comments and non-nesting `/* ... */` block comments are supported
@@ -155,6 +160,39 @@ refactors; specify and test any intentional behavior change explicitly.
   `TypedStatementKind::Let.ty` remains concrete `Type`. Resolve inference in
   semantic analysis; do not change the walker, backend, or ABI for this feature.
 
+### Expression values and divergence
+
+- Preserve `Block = Vec<Statement>` and `TypedBlock = Vec<TypedStatement>` for
+  function and statement bodies. `ValueBlock` / `TypedValueBlock` wrap statements,
+  an optional boxed tail, and a span; `Expr` / `TypedExprKind` add `Block` and `If`.
+- `TypedExpr.ty` is `ExprResult::{Value(Type), Void, Never}`. Bindings, parameters,
+  and function signatures retain concrete `Type`. `Type::Void.into()` is `Void`;
+  `Value(Type::Void)` is malformed. Public category equality is identity, not
+  Never compatibility. There is no `Type::Never` or source spelling for it.
+- A tail without a semicolon supplies a value; a semicolon discards it. Function
+  and while bodies remain strict for ordinary expression tails, and a standalone
+  block expression statement needs a semicolon. No implicit function return.
+- Bare statement-if ends at its final arm, even before `-1;` with no whitespace.
+  In value blocks, a final bare if is a tail; a nonfinal bare if is a statement.
+  Parenthesize a whole if for arithmetic continuation in these positions. Never
+  use newline-sensitive parsing. Retain legacy statement shapes, spans, and bytes.
+- `Never` means no normal completion, not a storage/ABI type or a proof that an
+  arbitrary call/trapping operation diverges. Join it with the other branch's
+  category; otherwise branch results match exactly. Void is discardable, not a
+  local value. Inferred Never initialization reports `CannotInferNeverType`.
+- Semantic expression analysis propagates transient `(TypedExpr, Flow)`; checked
+  lowering reconstructs flow while emitting. Do not add public flow annotations,
+  rewalk each subtree, or trust forged result categories. Check all children even
+  after a transfer and in skipped logical operands. A divergent logical RHS alone
+  does not make the whole logical expression Never because of short-circuiting.
+- Use MVP single-result block/if regions: f64 for numbers, i32 for bool/handles,
+  empty for Void/Never. No artificial result, store, or drop on Never paths;
+  restore stack polymorphism after a region with no normal completion.
+- The walker visits value-block statements then tail within block hooks. Locals
+  now traverse expressions to find nested declarations; reserve an outer let's
+  slot before initializer declarations, preserving legacy declaration preorder.
+  Memory, scratch and remainder policies remain separate and exhaustive.
+
 ### Evaluation, scopes, and module layout
 
 - Evaluate operands, call arguments, and array elements exactly once, left-to-right.
@@ -176,6 +214,10 @@ refactors; specify and test any intentional behavior change explicitly.
   functions require guaranteed return; transfers and a loop alone do not satisfy
   it, even with a literal `true` condition. Returns after transfers are unreachable
   and cannot change their summary. Consume transfers at each while boundary.
+  Activate a while's loop context before analyzing/emitting its condition, so
+  condition blocks can transfer to that loop. An unconditional explicit return
+  in the condition guarantees return before the body; a literal-true body alone
+  still does not. Summaries include expression effects without pruning checks.
 - `BodyEmitter` tracks unique labels for every structured `if`, `block`, and `loop`,
   including short-circuit expressions. Resolve `LabelDepth` from active target
   identity and nesting, never fixed loop depths. Restore labels/loop contexts and

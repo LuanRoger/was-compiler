@@ -63,8 +63,9 @@ are evaluated left-to-right.
 Local declarations support both `let name = initializer;` and the existing
 `let name: type = initializer;`. Without an annotation, the initializer determines
 the local's concrete type: `number`, `bool`, `string`, or `number[]`. This works for
-all nonvoid expressions, including calls; `[]` infers `number[]` because numeric
-arrays are the only array type. Explicit annotations still require an exact match.
+all value-producing expressions, including calls, blocks, and `if`; `[]` infers
+`number[]` because numeric arrays are the only array type. Explicit annotations
+still require an exact match.
 
 ```text
 fn main() -> number {
@@ -209,12 +210,60 @@ to `Break` / `Continue`; public statement matches/construction must account for
 these additions. IDs may be sparse, but must be unique within a function, and
 transfers must refer to its innermost active loop.
 
-Branches and loops use structured Wasm control flow, support nested returns, and
-preserve shadowed local bindings. Nonvoid functions must return on every path;
-a loop alone is not considered a guaranteed return, even with a literal `true`
-condition. The backend still validates statements after returns and runtime-skipped
-operands, and rejects forged typed ASTs that access branch/loop locals outside
-of their scopes.
+### Block values and `if` expressions
+
+An expression block's final expression supplies its value; a trailing semicolon
+discards it. Value-context `if` requires `else` (including `else if` chains), and
+normally completing branches must have exactly the same type. Numbers, booleans,
+strings, and numeric-array handles are supported without changing their ABI.
+
+```text
+fn choose(ready: bool) -> number {
+    let result = if ready {
+        let base = 20;
+        base * 2
+    } else {
+        return 0;
+    };
+
+    return { let extra = 2; result + extra };
+}
+```
+
+Block-local bindings do not escape. Both branches and unreachable statements are
+still checked, although only the selected branch executes. Two normally completing
+branches without values produce `void`, which can be discarded but cannot initialize
+a local. A path that unconditionally returns, breaks, or continues is internally
+`Never`: it has no normal result, storage, or host ABI type. It can join another
+branch's concrete result. `let x = { return 1; };` cannot infer a storage type;
+`let x: number = { return 1; };` is accepted without storing a nonexistent value.
+A possible runtime trap alone does not infer `Never`.
+
+Named functions still require explicit `return` for results;
+`fn f() -> number { 42 }` is not an implicit return. Function and while bodies require semicolons
+for ordinary expression statements. A standalone block expression also requires
+`;`. Bare statement-if may omit `else` and discards branch tails. Within an
+expression block, a final bare `if` is a tail, while a nonfinal bare `if` is a
+statement. A bare statement-if ends at its final arm: `if true {} -1;` is two
+statements regardless of whitespace. Parenthesize the whole if to continue it
+arithmetically in these positions: `(if true { 2 } else { 3 }) - 1;`.
+
+Branches and loops use structured Wasm control flow and preserve shadowed bindings.
+Transfers also work through expression blocks, including in their own while's
+condition. Continue reevaluates that condition. Nonvoid functions must return on
+every path; `while true { return 1; }` alone is not a guaranteed return. An
+unconditional explicit return in the condition, as in
+`while { return 1; } {}`, does guarantee return before the body. Skipped operands,
+unreachable statements, and forged scope escapes still receive backend checks.
+
+**Typed-AST migration (WP3):** `TypedExpr.ty` is now `ExprResult::Value(Type)`,
+`ExprResult::Void`, or `ExprResult::Never`, rather than `Type`. Use `ty.into()`
+for existing expression constructors (`Type::Void` converts to `Void`), and
+`value_type()` to extract a concrete value type. `Never` is not a source `Type`;
+`Value(Type::Void)` is malformed. Bindings and function signatures retain `Type`.
+Handle the new raw/typed `Block` and `If` expression variants. `ValueBlock` and
+`TypedValueBlock` hold statement vectors, an optional boxed tail, and a span;
+existing function/statement-block vector aliases are unchanged.
 
 Strings support literals, parameters/locals/returns, and content-based `==`/`!=`.
 Numeric arrays support literals (including `[]`), reference assignment, parameters,

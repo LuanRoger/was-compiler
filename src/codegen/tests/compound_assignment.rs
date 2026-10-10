@@ -22,7 +22,7 @@ fn element(base: TypedExpr, index: TypedExpr) -> TypedExpr {
             expr: Box::new(base),
             index: Box::new(index),
         },
-        ty: Type::Number,
+        ty: Type::Number.into(),
     }
 }
 
@@ -359,7 +359,7 @@ fn forged_compound_places_types_ids_and_nested_expressions_are_checked() {
     let array_local = || identifier(0, "a", Type::NumberArray);
     let indexed = || element(array_local(), number());
     let mut wrong_root = indexed();
-    wrong_root.ty = Type::Bool;
+    wrong_root.ty = Type::Bool.into();
     let invalid_number = || CodegenError::InvalidNumberLiteral {
         function: "bad".into(),
         literal: "invalid".into(),
@@ -444,7 +444,7 @@ fn forged_compound_places_types_ids_and_nested_expressions_are_checked() {
             identifier(0, "n", Type::Number),
             TypedExpr {
                 kind: TypedExprKind::Bool(true),
-                ty: Type::Number,
+                ty: Type::Number.into(),
             },
             mismatch(Type::Bool, Type::Number),
         ),
@@ -490,7 +490,7 @@ fn forged_compound_places_types_ids_and_nested_expressions_are_checked() {
         let value = if ty == Type::NumberArray {
             TypedExpr {
                 kind: TypedExprKind::Array(vec![]),
-                ty,
+                ty: ty.into(),
             }
         } else {
             number()

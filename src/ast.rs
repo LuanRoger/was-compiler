@@ -58,6 +58,13 @@ pub enum Expr {
         args: Vec<Expr>,
     },
 
+    Block(ValueBlock),
+    If {
+        cond: Box<Expr>,
+        then: ValueBlock,
+        else_: Option<ValueBlock>,
+    },
+
     Array(Vec<Expr>),
     Index {
         expr: Box<Expr>,
@@ -72,6 +79,13 @@ pub struct Statement {
 }
 
 pub type Block = Vec<Statement>;
+
+#[derive(Debug, PartialEq)]
+pub struct ValueBlock {
+    pub statements: Block,
+    pub tail: Option<Box<Expr>>,
+    pub span: Span,
+}
 
 #[derive(Debug, PartialEq)]
 pub enum StatementKind {

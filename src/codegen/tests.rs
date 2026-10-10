@@ -232,7 +232,7 @@ fn number() -> TypedExpr {
 fn number_literal(literal: &str) -> TypedExpr {
     TypedExpr {
         kind: TypedExprKind::Number(literal.to_owned()),
-        ty: Type::Number,
+        ty: Type::Number.into(),
     }
 }
 
@@ -242,7 +242,7 @@ fn unary(op: UnaryOp, expr: TypedExpr) -> TypedExpr {
             op,
             expr: Box::new(expr),
         },
-        ty: Type::Number,
+        ty: Type::Number.into(),
     }
 }
 
@@ -253,7 +253,7 @@ fn binary(left: TypedExpr, op: BinaryOp, right: TypedExpr) -> TypedExpr {
             op,
             right: Box::new(right),
         },
-        ty: Type::Number,
+        ty: Type::Number.into(),
     }
 }
 
@@ -277,7 +277,7 @@ fn identifier(id: usize, name: &str, ty: Type) -> TypedExpr {
             id: VariableId(id),
             name: name.to_owned(),
         },
-        ty,
+        ty: ty.into(),
     }
 }
 
@@ -329,7 +329,7 @@ fn run_node(bytes: &[u8], script: &str) {
 fn boolean() -> TypedExpr {
     TypedExpr {
         kind: TypedExprKind::Bool(true),
-        ty: Type::Bool,
+        ty: Type::Bool.into(),
     }
 }
 
@@ -340,7 +340,7 @@ fn call(reference: FunctionRef, name: &str, args: Vec<TypedExpr>, ty: Type) -> T
             name: name.to_owned(),
             args,
         },
-        ty,
+        ty: ty.into(),
     }
 }
 
@@ -373,14 +373,14 @@ fn call_program(value: TypedExpr, params: &[Type], return_type: Type, span: Span
 fn bool_binary(left: TypedExpr, op: BinaryOp, right: TypedExpr) -> TypedExpr {
     let mut expr = binary(left, op, right);
 
-    expr.ty = Type::Bool;
+    expr.ty = Type::Bool.into();
     expr
 }
 
 fn bool_not(value: TypedExpr) -> TypedExpr {
     let mut expr = unary(UnaryOp::Not, value);
 
-    expr.ty = Type::Bool;
+    expr.ty = Type::Bool.into();
     expr
 }
 
@@ -446,6 +446,7 @@ fn run_guest_at_all_optimization_levels(source: &str, script: &str) {
     }
 }
 
+mod block_values;
 mod calls;
 mod compound_assignment;
 mod control_flow;

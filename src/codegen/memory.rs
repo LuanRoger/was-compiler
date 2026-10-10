@@ -172,7 +172,7 @@ impl Visitor for MemoryVisitor<'_> {
     }
 
     fn enter_expression(&mut self, expr: &TypedExpr) -> ControlFlow<CodegenError> {
-        *self.used |= memory_type(expr.ty);
+        *self.used |= expr.ty.value_type().is_some_and(memory_type);
 
         match &expr.kind {
             TypedExprKind::String(value) => {
@@ -663,7 +663,10 @@ mod tests {
     };
 
     fn expr(kind: TypedExprKind, ty: Type) -> TypedExpr {
-        TypedExpr { kind, ty }
+        TypedExpr {
+            kind,
+            ty: ty.into(),
+        }
     }
 
     fn string(value: &str) -> TypedExpr {

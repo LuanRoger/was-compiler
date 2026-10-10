@@ -5,7 +5,7 @@ use was_compiler::{
     parser::ParseError,
     semantic::SemanticError,
     tokens::Span,
-    typed_ast::{BuiltinFunction, FunctionRef, LoopId, VariableId},
+    typed_ast::{BuiltinFunction, ExprResult, FunctionRef, LoopId, VariableId},
 };
 
 #[path = "support/process.rs"]
@@ -43,6 +43,11 @@ fn semantic_errors(span: Span) -> Vec<SemanticError> {
             span,
         },
         SemanticError::InvalidVoidType {
+            name: "name".into(),
+            span,
+        },
+        SemanticError::MissingElse { span },
+        SemanticError::CannotInferNeverType {
             name: "name".into(),
             span,
         },
@@ -105,6 +110,22 @@ fn located_codegen_errors(span: Span) -> Vec<CodegenError> {
             function: "main".into(),
             expected: Type::Number,
             found: Type::Bool,
+            span,
+        },
+        CodegenError::ExprResultMismatch {
+            function: "main".into(),
+            expected: ExprResult::Value(Type::Number),
+            found: ExprResult::Never,
+            span,
+        },
+        CodegenError::ExprResultMismatch {
+            function: "main".into(),
+            expected: ExprResult::Void,
+            found: ExprResult::Value(Type::Bool),
+            span,
+        },
+        CodegenError::MissingElse {
+            function: "main".into(),
             span,
         },
         CodegenError::UnknownFunctionReference {

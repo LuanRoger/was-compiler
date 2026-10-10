@@ -2038,6 +2038,349 @@ fn manually_constructed_index_checks_void_base_and_preserves_statement_span() {
 }
 
 #[test]
+fn value_blocks_and_if_expressions_join_exact_results_and_discard_statement_tails() {
+    for source in [
+        "fn test() -> number { return { let x = 2; x + 1 }; }",
+        "fn test() -> number { return if true { 1 } else if false { 2 } else { 3 }; }",
+        "fn test() -> bool { return if true { true } else { false }; }",
+        "fn test() -> string { return if true { \"a\" } else { \"b\" }; }",
+        "fn test() -> number[] { return if true { [] } else { [1] }; }",
+        "fn test() -> void { (if true {} else {}); { 1; }; }",
+        "fn test() -> void { if true { 1 } else if false { \"different discarded type\" } }",
+        "fn test() -> number { return if true { return 1; } else { 2 }; }",
+        "fn test() -> number { (if true { return 1; } else { return 2; }); }",
+        "fn test() -> number { while { return 1; } {} }",
+    ] {
+        assert_valid(source);
+    }
+}
+
+#[test]
+fn expression_if_requires_else_even_with_divergent_conditions_and_branches() {
+    for initializer in [
+        "if true { 1 }",
+        "{ if true { 1 } }",
+        "if { return 1; } { 1 }",
+        "if true { return 1; }",
+        "if true { 1 } else if false { 2 }",
+        "{ if true { (if false {}) } 1 }",
+    ] {
+        let source = format!("fn test() -> number {{ let x: number = {initializer}; return x; }}");
+        let error = SemanticAnalyzer::new()
+            .analyze(&parse(&source))
+            .unwrap_err();
+
+        assert!(
+            matches!(error, SemanticError::MissingElse { .. }),
+            "{source}: {error:?}"
+        );
+        assert!(error.span().is_some());
+    }
+
+    let source = "fn test() -> void { let x = if true { 1 }; }";
+
+    assert_error(
+        source,
+        SemanticError::MissingElse {
+            span: span(source, "let x = if true { 1 };"),
+        },
+    );
+}
+
+#[test]
+fn value_conditions_arm_mismatches_and_void_initializers_keep_type_diagnostics() {
+    assert_body_mismatch(
+        "let x = if 1 { 2 } else { 3 };",
+        "let x = if 1 { 2 } else { 3 };",
+        Type::Bool,
+        Type::Number,
+    );
+    assert_body_mismatch(
+        "let x = if true { 1 } else { false };",
+        "let x = if true { 1 } else { false };",
+        Type::Number,
+        Type::Bool,
+    );
+    assert_body_mismatch(
+        "let x: number = if true {} else {};",
+        "let x: number = if true {} else {};",
+        Type::Number,
+        Type::Void,
+    );
+    assert_body_mismatch(
+        "let x = if true { 1 } else {};",
+        "let x = if true { 1 } else {};",
+        Type::Number,
+        Type::Void,
+    );
+
+    for initializer in ["{}", "{ 1; }", "if true {} else {}"] {
+        let statement = format!("let x = {initializer};");
+        let source = format!("fn test() -> void {{ {statement} }}");
+
+        assert_error(
+            &source,
+            SemanticError::InvalidVoidType {
+                name: "x".into(),
+                span: span(&source, &statement),
+            },
+        );
+    }
+}
+
+#[test]
+fn never_initializers_require_annotations_but_unreachable_bindings_remain_checked() {
+    for initializer in [
+        "{ return 1; }",
+        "{ return 1; false }",
+        "if true { return 1; } else { return 2; }",
+    ] {
+        let statement = format!("let x = {initializer};");
+        let source = format!("fn test() -> number {{ {statement} }}");
+
+        assert_error(
+            &source,
+            SemanticError::CannotInferNeverType {
+                name: "x".into(),
+                span: span(&source, &statement),
+            },
+        );
+        assert_valid(&format!(
+            "fn test() -> number {{ let x: bool = {initializer}; x = true; }}"
+        ));
+    }
+
+    let source = "fn test() -> number { let x: bool = { return 1; }; x = 2; }";
+
+    assert_error(
+        source,
+        SemanticError::TypeMismatch {
+            expected: Type::Bool,
+            found: Type::Number,
+            span: span(source, "x = 2;"),
+        },
+    );
+    let source = "fn test() -> void { let x: void = { return; }; }";
+
+    assert_error(
+        source,
+        SemanticError::InvalidVoidType {
+            name: "x".into(),
+            span: span(source, "let x: void = { return; };"),
+        },
+    );
+}
+
+#[test]
+fn eager_never_operands_propagate_transfers_without_hiding_later_errors() {
+    for expression in [
+        "-{ return 1; }",
+        "!{ return 1; }",
+        "{ return 1; } + 2",
+        "2 + { return 1; }",
+        "{ return 1; } == \"text\"",
+        "\"text\" == { return 1; }",
+        "{ return 1; } == { return 2; }",
+        "[{ return 1; }, 2]",
+        "len({ return 1; })",
+        "take({ return 1; }, 2)",
+    ] {
+        assert_valid(&format!(
+            "fn take(a: bool, b: number) -> void {{}} fn test() -> number {{ ({expression}); }}"
+        ));
+    }
+
+    for expression in [
+        "{ return 1; } + false",
+        "[{ return 1; }, false]",
+        "take({ return 1; }, false)",
+        "{ return 1; } == noop()",
+        "{ return 1; } + missing",
+    ] {
+        let source = format!(
+            "fn noop() -> void {{}} fn take(a: bool, b: number) -> void {{}} fn test() -> number {{ ({expression}); }}"
+        );
+
+        assert!(
+            SemanticAnalyzer::new().analyze(&parse(&source)).is_err(),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn short_circuit_never_rhs_keeps_normal_completion_and_all_static_checks() {
+    for op in ["&&", "||"] {
+        let source = format!("fn test() -> number {{ (true {op} {{ return 1; }}); }}");
+
+        assert!(matches!(
+            SemanticAnalyzer::new().analyze(&parse(&source)),
+            Err(SemanticError::MissingReturn { .. })
+        ));
+        assert_valid(&format!(
+            "fn test() -> number {{ let x = true {op} {{ return 1; }}; return 2; }}"
+        ));
+        assert_valid(&format!(
+            "fn test() -> number {{ ({{ return 1; }} {op} true); }}"
+        ));
+        let source = format!("fn test() -> number {{ ({{ return 1; }} {op} 2); }}");
+
+        assert!(matches!(
+            SemanticAnalyzer::new().analyze(&parse(&source)),
+            Err(SemanticError::InvalidBinaryOperands { .. })
+        ));
+        let source = format!("fn test() -> void {{ (false {op} {{ missing; true }}); }}");
+
+        assert!(matches!(
+            SemanticAnalyzer::new().analyze(&parse(&source)),
+            Err(SemanticError::UndefinedVariable { .. })
+        ));
+    }
+}
+
+#[test]
+fn expression_flow_reaches_initializers_assignments_indices_and_returns() {
+    for body in [
+        "let x: bool = { return 1; };",
+        "let x = 0; x = { return 1; };",
+        "let x = 0; x += { return 1; };",
+        "let xs = [0]; xs[{ return 1; }] = 2;",
+        "let xs = [0]; xs[{ return 1; }] += 2;",
+        "let xs = [0]; xs[{ return 1; }];",
+        "return { return 1; };",
+        "if { return 1; } { 2 }",
+    ] {
+        assert_valid(&format!("fn test() -> number {{ {body} }}"));
+    }
+
+    let source = "fn test() -> number { let xs = [0]; xs[{ return 1; }] = false; }";
+
+    assert!(matches!(
+        SemanticAnalyzer::new().analyze(&parse(source)),
+        Err(SemanticError::TypeMismatch {
+            expected: Type::Number,
+            found: Type::Bool,
+            ..
+        })
+    ));
+    let source = "fn test() -> number { while true { return { break; }; } }";
+
+    assert!(matches!(
+        SemanticAnalyzer::new().analyze(&parse(source)),
+        Err(SemanticError::MissingReturn { .. })
+    ));
+}
+
+#[test]
+fn expression_flow_composition_preserves_nested_transfers_and_unreachable_trees() {
+    for (body, expected) in [
+        ("({ break; } + { return 1; });", Flow::BREAK),
+        ("return { continue; };", Flow::CONTINUE),
+        (
+            "let x: number = if true { break; } else { 1 }; return 2;",
+            Flow::BREAK.join(Flow::RETURN),
+        ),
+        (
+            "(true && { continue; }); return 1;",
+            Flow::CONTINUE.join(Flow::RETURN),
+        ),
+        (
+            "(if { break; } { return 1; } else { return 2; });",
+            Flow::BREAK,
+        ),
+        (
+            "let xs = [0]; xs[{ continue; }] = { return 1; };",
+            Flow::CONTINUE,
+        ),
+    ] {
+        let program = parse(&format!("fn test() -> number {{ {body} }}"));
+        let mut analyzer = SemanticAnalyzer::new();
+
+        analyzer.scopes.push(HashMap::new());
+        analyzer.loops.push(LoopId(41));
+
+        let (typed, flow) = analyzer
+            .analyze_block(&program.functions[0].body, Type::Number)
+            .unwrap();
+
+        assert_eq!(flow, expected, "{body}");
+        assert_eq!(typed.len(), program.functions[0].body.len());
+        assert_eq!(analyzer.loops, vec![LoopId(41)]);
+    }
+}
+
+#[test]
+fn scoped_value_blocks_preserve_initializer_shadowing_and_check_unreachable_nodes() {
+    assert_valid("fn test() -> number { let x = 1; let y = { let x = x + 1; x }; return x + y; }");
+    assert_valid(
+        "fn test() -> number { let x = { let y = 1; y }; let z = { let y = 2; y }; return x + z; }",
+    );
+
+    for source in [
+        "fn test() -> void { let x = { let x = x; x }; }",
+        "fn test() -> void { let x = { let y = 1; y }; y; }",
+        "fn test() -> void { let x = { let y = 1; let y = 2; y }; }",
+        "fn test() -> number { let x: number = { return 1; missing }; }",
+        "fn test() -> number { let x: number = { return 1; let bad = false + 1; 2 }; }",
+        "fn test() -> number { (if { return 1; } { missing } else { 2 }); }",
+        "fn test() -> number { (if true { return 1; } else { false + 1 }); }",
+        "fn unused() -> void { ({ break; }); } fn test() -> void {}",
+    ] {
+        assert!(
+            SemanticAnalyzer::new().analyze(&parse(source)).is_err(),
+            "{source}"
+        );
+    }
+
+    let source = "fn test() -> number { ({ 1 }); }";
+
+    assert_error(
+        source,
+        SemanticError::MissingReturn {
+            name: "test".into(),
+            span: parse(source).functions[0].span,
+        },
+    );
+}
+
+#[test]
+fn while_condition_transfers_are_in_scope_and_errors_restore_analyzer_state() {
+    assert_valid("fn test() -> void { while { break; } {} while { continue; } {} }");
+    assert_valid("fn test() -> void { while true { while { break; } {} ({ continue; }); } }");
+    let mut analyzer = SemanticAnalyzer::new();
+
+    for source in [
+        "fn test() -> void { while { let inner = 1; break; missing } {} }",
+        "fn test() -> void { while { continue; } { missing; } }",
+        "fn test() -> void { while { let inner = 1; 2 } { missing; } }",
+        "fn test() -> void { let x = { let inner = 1; missing }; }",
+    ] {
+        let program = parse(source);
+
+        analyzer.scopes.push(HashMap::new());
+        analyzer.loops.push(LoopId(41));
+        analyzer.next_loop_id = 42;
+        assert!(
+            analyzer
+                .analyze_statement(&program.functions[0].body[0], Type::Void)
+                .is_err()
+        );
+        assert_eq!(analyzer.scopes.len(), 1);
+        assert!(analyzer.lookup_variable("inner").is_none());
+        assert_eq!(analyzer.loops, vec![LoopId(41)]);
+
+        assert!(analyzer.analyze(&program).is_err());
+        assert!(analyzer.scopes.is_empty());
+        assert!(analyzer.loops.is_empty());
+        assert!(
+            analyzer
+                .analyze(&parse("fn test() -> void { while { break; } {} }"))
+                .is_ok()
+        );
+    }
+}
+
+#[test]
 fn semantic_error_implements_the_standard_error_contract() {
     fn assert_error_traits<T: std::error::Error + std::fmt::Debug + PartialEq>() {}
 

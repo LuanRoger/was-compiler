@@ -59,8 +59,31 @@
 
 
 <if_statement> ::= "if" <ws1> <expression>
-                   <ws> <block>
-                   ( <ws> "else" <ws> <block> )?
+                   <ws> <value_block>
+                   ( <ws> "else" <ws> ( <value_block> | <if_statement> ) )?
+
+<value_block> ::= "{" <ws> <statement_list>? <ws> <expression>? <ws> "}"
+
+<if_expression> ::= "if" <ws1> <expression> <ws> <value_block>
+                    ( <ws> "else" <ws> ( <value_block> | <if_expression> ) )?
+
+# A value block's final expression has no semicolon. A semicolon discards its
+# result. Only a nonfinal bare if can separate statements without a semicolon;
+# all other adjacent expressions require explicit semicolons, regardless of lines.
+# A final bare if in a value block is its tail and requires else semantically.
+# In statement position and when classifying value-block statements/tails, a bare
+# if ends at its last arm, before any following binary operator. Thus
+# `if true {} -1;` and `if true {} --1;` contain two statements, with or without
+# else, independent of whitespace/comments. Parenthesize the whole if for binary
+# continuation there: `(if true { 1 } else { 2 }) - 1;` (or a block tail without `;`).
+# Ordinary value contexts such as initializers, returns, arguments, and operands
+# still allow `if true { 1 } else { 2 } - 1` without whole-if parentheses.
+# A semicolon immediately after a bare if makes it an expression statement.
+# Statement-if branch tails are discarded, including nested statement else-if.
+# Every expression-form if requires else and exactly matching arm results, with
+# divergent Never arms compatible with the other result. Never is not a source type.
+# Function and while bodies remain statement blocks: non-if tails need semicolons.
+# Named functions never implicitly return a tail; nonvoid results need return.
 
 
 <while_statement> ::= "while" <ws1> <expression>
@@ -142,6 +165,8 @@
                        | <boolean_literal>
                        | <identifier>
                        | <array_literal>
+                       | <value_block>
+                       | <if_expression>
                        | "(" <ws> <expression> <ws> ")"
 
 
