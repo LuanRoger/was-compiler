@@ -882,6 +882,154 @@ fn range_children_plan_nested_locals_memory_remainder_and_abrupt_flow() {
     ));
 }
 
+#[test]
+fn forged_membership_annotations_and_children_are_checked_even_when_skipped() {
+    for context in ["1 in 0..3", "{ return; 1 } in 0..3", "false && (1 in 0..3)"] {
+        let source = format!("fn hidden() -> void {{ return; {context}; }} fn main() -> void {{}}");
+        let mut compiler = compiler();
+        let original = compiler.analyze(&source).unwrap();
+        for corruption in 0..9 {
+            let mut forged = original.clone();
+            let TypedStatementKind::Expression(expr) = &mut forged.functions[0].body[1].kind else {
+                panic!("expression");
+            };
+            let member = if context.starts_with("false") {
+                let TypedExprKind::Binary { right, .. } = &mut expr.kind else {
+                    panic!("logical");
+                };
+                right.as_mut()
+            } else {
+                expr
+            };
+            let TypedExprKind::Binary { left, right, .. } = &mut member.kind else {
+                panic!("membership");
+            };
+            match corruption {
+                0 => member.ty = Type::Number.into(),
+                1 => member.ty = ExprResult::Void,
+                2 => member.ty = ExprResult::Value(Type::Void),
+                3 => {
+                    **left = TypedExpr {
+                        kind: TypedExprKind::Bool(true),
+                        ty: Type::Bool.into(),
+                    }
+                }
+                4 => {
+                    **right = TypedExpr {
+                        kind: TypedExprKind::Number("1".into()),
+                        ty: Type::Number.into(),
+                    }
+                }
+                5 => {
+                    left.kind = TypedExprKind::Bool(true);
+                    left.ty = Type::Number.into();
+                }
+                6 => {
+                    right.kind = TypedExprKind::Bool(true);
+                    right.ty = Type::Range.into();
+                }
+                7 => {
+                    right.kind = TypedExprKind::Bool(true);
+                    right.ty = ExprResult::Never;
+                }
+                _ => {
+                    left.kind = TypedExprKind::Number("bad".into());
+                    left.ty = Type::Number.into();
+                }
+            }
+            assert_forged_rejected(&mut compiler, &forged);
+        }
+    }
+}
+
+fn decoded_operators(bytes: &[u8]) -> Vec<Vec<Operator<'_>>> {
+    let mut bodies = Vec::new();
+    for payload in Parser::new(0).parse_all(bytes) {
+        if let Payload::CodeSectionEntry(body) = payload.unwrap() {
+            bodies.push(
+                body.get_operators_reader()
+                    .unwrap()
+                    .into_iter()
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap(),
+            );
+        }
+    }
+    bodies
+}
+
+#[test]
+fn membership_discovery_in_hidden_skipped_and_never_children_preserves_helper_order() {
+    for expression in [
+        "1 in 0..3",
+        "false && (1 in 0..3)",
+        "{ return; 1 } in 0..3",
+        "(loop {}) in (loop {})",
+    ] {
+        let source = format!(
+            "fn hidden() -> void {{ return; 5 % 2; {expression}; }} fn main() -> void {{}}"
+        );
+        let bytes = compile(&compiler(), &source);
+        let decoded = decode(&bytes);
+        assert_eq!(decoded.bodies.len(), 13); // two users, seven memory, remainder, three range
+        let bodies = decoded_operators(&bytes);
+        assert!(bodies[12].iter().any(|op| matches!(op, Operator::I64RemS)));
+        assert!(
+            bodies[12]
+                .iter()
+                .any(|op| matches!(op, Operator::Call { function_index: 11 }))
+        );
+        assert!(decoded.calls[0].contains(&9));
+        assert!(decoded.calls[0].contains(&12));
+    }
+}
+
+#[test]
+fn divergent_membership_reconstructs_flow_and_validates_without_an_artificial_result() {
+    for expression in [
+        "(loop {}) in 0..3",
+        "1 in (loop {})",
+        "(loop {}) in (loop {})",
+        "{ return 7; 1 } in 0..3",
+        "1 in { return 7; 0..3 }",
+    ] {
+        let source = format!("fn main() -> number {{ let member: bool = {expression}; }}");
+        let bytes = compile(&Compiler::new(), &source);
+        let decoded = decode(&bytes);
+        assert!(decoded.calls[0].contains(&10));
+    }
+}
+
+#[test]
+fn membership_lowers_to_exact_integer_congruence_without_floating_remainder() {
+    let mut compiler = Compiler::new();
+    let source =
+        "fn main(n: number) -> bool { return n in -9007199254740991..=9007199254740991 by 3; }";
+    let bytes = compile(&compiler, source);
+    let decoded = decode(&bytes);
+    assert_eq!(decoded.bodies.len(), 11); // user, seven memory, construct, validate, contains
+    let bodies = decoded_operators(&bytes);
+    let ops = bodies
+        .iter()
+        .find(|ops| ops.iter().any(|op| matches!(op, Operator::I64RemS)))
+        .expect("signed integer congruence helper");
+    assert!(ops.iter().any(|op| matches!(op, Operator::I64Sub)));
+    assert!(ops.iter().any(|op| matches!(op, Operator::I64TruncF64S)));
+    assert!(
+        ops.iter()
+            .any(|op| matches!(op, Operator::Call { function_index: 9 }))
+    );
+    assert!(
+        !ops.iter()
+            .any(|op| matches!(op, Operator::F64Div | Operator::F64Mul))
+    );
+    assert_eq!(decoded.calls[0], vec![8, 10]);
+    for level in LEVELS {
+        compiler.set_optimization_level(level);
+        assert_eq!(compile(&compiler, source), bytes);
+    }
+}
+
 fn run_node_at_all_levels(compiler: &mut Compiler, source: &str, script: &str) {
     for level in LEVELS {
         compiler.set_optimization_level(level);

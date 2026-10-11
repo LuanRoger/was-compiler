@@ -405,7 +405,7 @@ string/array descriptor handles use `i32`. Native strings/arrays are not marshal
 automatically. Use `createAbi` from `runtime/abi.cjs` for explicit conversion, or
 access memory directly when reference mutation is required.
 
-### Range construction and internal calls (WP5 first checkpoint)
+### Range construction, internal calls, and numeric membership (partial WP5)
 
 `range` values support `start..end` and `start..=end`, with an optional contextual
 `by step`; the default step is `+1`. Range operators bind below arithmetic and
@@ -437,9 +437,23 @@ See the [private layout and validation contract](docs/memory-abi.md#private-rang
 
 Range locals, assignments, parameters/results, blocks, `if` values, and value loops
 use exact type joins with `Never` compatibility. Range `==`/`!=` are prohibited.
-This is **only the first WP5 checkpoint**, not full range support: `for`, `in`,
-membership, and iteration remain proposed. No optimization passes were added;
-programs without ranges retain their existing bytes and helper order.
+
+`number in range` returns `bool`: `6 in (0..10 by 2)` is true, while
+`5 in (0..10 by 2)` is false. `in` is a reserved source/host-language name, not a
+restriction on host module/field names. It binds at comparison precedence with
+existing left associativity. Both operands evaluate once, left-to-right, with
+exact `number`/`range` types and Never compatibility; all children remain checked,
+including unreachable or runtime-skipped code. Membership validates the consumed
+record before checking the candidate, so malformed records trap even for invalid
+candidates. Nonfinite, fractional, or out-of-safe-domain candidates return false;
+both signed zeros are accepted. Interval and congruence checks use exact signed
+`i64` arithmetic, not floating remainder.
+
+This is **partial WP5**, not full range support: `for`, progression advancement,
+and iteration remain proposed. No optimization passes were added. The optional
+`Contains` helper follows `Construct` and `Validate` only when membership exists;
+construction-only programs retain their bytes, as do programs without ranges.
+Membership alone needs no floating remainder helper or host callback.
 
 ## Optimization levels
 

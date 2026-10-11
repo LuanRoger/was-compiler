@@ -1,7 +1,7 @@
 use std::{collections::HashMap, ops::ControlFlow};
 
 use crate::{
-    ast::Type,
+    ast::{BinaryOp, Type},
     typed_ast::{
         BuiltinFunction, FunctionRef, TypedExpr, TypedExprKind, TypedProgram, TypedStatement,
         TypedStatementKind,
@@ -187,9 +187,12 @@ impl Visitor for MemoryVisitor<'_> {
                 *self.used |= matches!(func, FunctionRef::Builtin(BuiltinFunction::Len));
             }
 
-            TypedExprKind::Array(_) | TypedExprKind::Index { .. } | TypedExprKind::Range { .. } => {
-                *self.used = true
-            }
+            TypedExprKind::Array(_)
+            | TypedExprKind::Index { .. }
+            | TypedExprKind::Range { .. }
+            | TypedExprKind::Binary {
+                op: BinaryOp::In, ..
+            } => *self.used = true,
 
             _ => {}
         }

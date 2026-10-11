@@ -35,8 +35,8 @@ these checks are not an isolation mechanism against a host that violates the ABI
 
 ## Private range record
 
-WP5's **first checkpoint** implements range construction and internal calls only;
-`for`, `in`, membership, and progression/iteration remain proposed. `range` uses an
+WP5 implements range construction, internal calls, and exact numeric membership;
+`for` and progression advancement/iteration remain proposed. `range` uses an
 `i32` handle internally, but is **not** a public string/array descriptor or host
 marshaling type. Every successfully completed construction allocates an immutable,
 eight-byte-aligned 32-byte record with the existing bump allocator:
@@ -59,6 +59,25 @@ Assignment, internal parameter passing, and returns share the immutable handle.
 At internal range-parameter entry, validate a handle of at least eight, alignment,
 complete record bounds with widened arithmetic, all three safe-integer fields,
 nonzero step, canonical inclusivity, and zero padding. Invalid records trap.
+Membership evaluates candidate and range once, left-to-right, then validates the
+consumed record **before** the candidate guard. A malformed record therefore traps
+even for NaN, infinity, fractional, or out-of-safe-domain candidates. For a valid
+record, candidates must be finite integers with magnitude ≤ `2^53−1`; other
+candidates return false. Both signed zeros convert exactly to integer zero.
+
+For candidate `n`, start `a`, end `b`, and step `s`, positive steps require
+`n >= a` and `n < b` (or `n <= b` for inclusive ends); negative steps require
+`n <= a` and `n > b` (or `n >= b` for inclusive ends). Membership also requires
+`(n - a) rem_s s == 0`, emitted with signed `I64Sub`/`I64RemS`; a zero remainder
+works for either step sign without modulus normalization. This allocates nothing
+and needs no floating remainder helper.
+
+**Bounds proof:** Let `M = 2^53−1`. The validated candidate and record fields
+satisfy `|n|, |a|, |b|, |s| <= M`, with `s != 0`. Exact conversion to signed `i64`
+is safe, and `|n - a| <= 2M = 2*(2^53−1) < 2^54`, well below the signed `i64`
+limit. Subtraction cannot overflow. The divisor is nonzero and neither operand
+can be `i64::MIN`, excluding division-by-zero and the `MIN / -1` corner; signed
+remainder is safe. No progression advancement or iteration follows from this proof.
 These checks do not isolate a malicious host with access to exported memory.
 
 All range host-import signatures are rejected, including unused imports and forged
@@ -133,9 +152,13 @@ helper indices. See [M9](compilation-roadmap.md#m9--floating-point-remainder--im
 
 When ranges occur in signatures, locals, or expressions, the memory runtime is
 required. Private `Construct` and `Validate` range helpers follow the memory helpers
-and optional remainder helper, in that order. Modules without ranges acquire no
-range helpers or changed bytes; existing host/user/memory/remainder indices remain
-unchanged.
+and optional remainder helper, in that order. Optional `Contains` with signature
+`(f64, i32) -> i32` follows `Validate` only when membership occurs anywhere in the
+typed AST, including unexported, unreachable, or runtime-skipped code.
+Construction-only modules acquire no `Contains` helper and retain their bytes;
+membership alone does not require the floating remainder helper. Modules without
+ranges acquire no range helpers or changed bytes; existing host/user/memory/remainder
+indices remain unchanged.
 
 In memory-backed modules, selecting a user function named `memory` or `__alloc`
 as an export fails with an export-name collision; unexported functions may use

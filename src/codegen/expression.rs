@@ -107,6 +107,7 @@ pub(super) fn emit(
                 | BinaryOp::GreaterThan
                 | BinaryOp::GreaterThanOrEqual => (Type::Number, Type::Bool),
                 BinaryOp::And | BinaryOp::Or => (Type::Bool, Type::Bool),
+                BinaryOp::In => (Type::Number, Type::Bool),
                 BinaryOp::Equal | BinaryOp::NotEqual => {
                     let ty = left
                         .ty
@@ -137,7 +138,16 @@ pub(super) fn emit(
                 expect_operand(function, Type::Number, left.ty, span)?;
             }
             expect_operand(function, operand_type, left.ty, span)?;
-            expect_operand(function, operand_type, right.ty, span)?;
+            expect_operand(
+                function,
+                if *op == BinaryOp::In {
+                    Type::Range
+                } else {
+                    operand_type
+                },
+                right.ty,
+                span,
+            )?;
 
             let left_flow = body.emit_expr(left, span)?;
             let flow = if logical {
@@ -152,7 +162,9 @@ pub(super) fn emit(
                 if normalize {
                     body.normalize_bool();
                 }
-                if matches!(operand_type, Type::String | Type::NumberArray) {
+                if *op == BinaryOp::In {
+                    body.call(body.range_helper(range::Helper::Contains));
+                } else if matches!(operand_type, Type::String | Type::NumberArray) {
                     body.call(body.helper(if operand_type == Type::String {
                         Helper::StringEqual
                     } else {
@@ -405,6 +417,7 @@ fn binary_instruction(
         BinaryOp::LessThanOrEqual => Ok(Instruction::F64Le),
         BinaryOp::GreaterThan => Ok(Instruction::F64Gt),
         BinaryOp::GreaterThanOrEqual => Ok(Instruction::F64Ge),
+        BinaryOp::In => Err("in"),
         BinaryOp::And => Err("&&"),
         BinaryOp::Or => Err("||"),
     }
@@ -426,6 +439,7 @@ pub(super) fn arithmetic_instruction(
         BinaryOp::LessThanOrEqual => Err("<="),
         BinaryOp::GreaterThan => Err(">"),
         BinaryOp::GreaterThanOrEqual => Err(">="),
+        BinaryOp::In => Err("in"),
         BinaryOp::And => Err("&&"),
         BinaryOp::Or => Err("||"),
     }

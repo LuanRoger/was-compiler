@@ -1,11 +1,11 @@
 # WAS Language Extensions — Unified Design and Implementation Specification
 
-**Status:** Design baseline with the 13 approved decisions and implementation clarifications (WP1–WP4 and WP5's first checkpoint implemented: compound assignments, while transfers, block/if values, internal Never, statement/value loops, and range construction/internal calls; remaining extensions proposed)
+**Status:** Design baseline with the 13 approved decisions and implementation clarifications (WP1–WP4 and partial WP5 implemented: compound assignments, while transfers, block/if values, internal Never, statement/value loops, and range construction/internal calls plus numeric membership; remaining extensions proposed)
 **Version:** 0.3 — 9 October 2026 (implementation clarification update)  
 **Target:** Core WebAssembly, initially the MVP-compatible instruction set already used by `was-compiler`, with optional optimizations gated by Wasm features.  
 **Repository:** https://github.com/LuanRoger/was-compiler
 
-> **Normative language.** **MUST**, **SHOULD**, and **MAY** describe requirements, strong recommendations, and optional implementation choices. This document establishes a coherent *proposed* semantic model. Decisions tagged **Open decision** need confirmation before being frozen as language guarantees. Compound assignments (§4/WP1), bare `while` transfers (§7/WP2), block/if values with internal Never (§§3.2, 8.1/WP3), and statement/value loops (§7/WP4) are implemented. Range construction and internal calls (§5/WP5 first checkpoint) are also implemented; `for`, `in`, membership, and progression/iteration remain proposed. Other extension examples remain proposed `.was` syntax, not claims about the present compiler.
+> **Normative language.** **MUST**, **SHOULD**, and **MAY** describe requirements, strong recommendations, and optional implementation choices. This document establishes a coherent *proposed* semantic model. Decisions tagged **Open decision** need confirmation before being frozen as language guarantees. Compound assignments (§4/WP1), bare `while` transfers (§7/WP2), block/if values with internal Never (§§3.2, 8.1/WP3), and statement/value loops (§7/WP4) are implemented. Range construction, internal calls, and exact numeric membership (§5/partial WP5) are also implemented; `for` and progression advancement/iteration remain proposed. Other extension examples remain proposed `.was` syntax, not claims about the present compiler.
 
 The [concrete implementation plan](was_language_extensions_plan.md) maps this
 specification to ordered work packages, repository files, acceptance tests, and
@@ -14,8 +14,8 @@ shared mutable captures and local-only closures; it clarifies implementation
 safety and corrects the current-language baseline. Compound assignments (§4/WP1)
 and bare `while` transfers (§7/WP2), followed by block/if values and internal Never
 (§§3.2, 8.1/WP3) and statement/value loops (§7/WP4), are implemented;
-WP5's construction/internal-call checkpoint is implemented; the rest of WP5 and
-WP6 onward remain proposed.
+WP5's construction/internal-call and numeric membership checkpoints are implemented;
+the rest of WP5 and WP6 onward remain proposed.
 
 ## 1. Goals and non-goals
 
@@ -238,8 +238,8 @@ Use a `Place` abstraction (`Local`, `ArrayElement {array_temp, index_temp}`, lat
 **Implemented scope:** WP5's first checkpoint covers construction, immutable
 private records, locals/assignment, and internal parameters/results. Range values
 also work in blocks, ifs, and value loops with exact joins and Never compatibility.
-Range equality is rejected. Full progression, membership (`in`), iteration, and
-`for` below remain proposed, not implemented range support.
+Exact numeric membership (`in`) is implemented; range equality is rejected.
+Progression advancement, iteration, and `for` below remain proposed, not full WP5 support.
 
 ### 5.1 Syntax
 
@@ -250,7 +250,7 @@ let c: range = 10..0 by -2; // 10, 8, 6, 4, 2
 let d: range = 0..10 by 3;  // describes 0, 3, 6, 9; iteration is proposed
 ```
 
-Proposed membership syntax (not implemented):
+Implemented numeric membership syntax:
 
 ```
 let contains: bool = 6 in (0..10 by 2); // true
@@ -258,8 +258,8 @@ let contains: bool = 6 in (0..10 by 2); // true
 
 `..` excludes the end; `..=` includes the end. Contextual `by` supplies a nonzero
 explicit step and binds to the range construct, not arbitrary arithmetic. The default step is `+1`. `in`
-tests progression membership in the proposed continuation of WP5. Construction
-with `..`, `..=`, and optional `by` is implemented; membership and iteration are not.
+tests exact progression membership. Construction with `..`, `..=`, optional `by`,
+and numeric membership are implemented; progression advancement and iteration are not.
 
 ### 5.2 Type and validation
 
@@ -287,9 +287,15 @@ The default step is `+1`; `10..0` with no explicit step is empty. A negative ste
 
 ### 5.3 Grammar and precedence
 
-- `..` and `..=` are lower precedence than arithmetic, higher than comparisons (including proposed `in`), and non-associative.
+- `..` and `..=` are lower precedence than arithmetic, higher than comparisons (including `in`), and non-associative.
 - `by` attaches only to a range expression.
-- Proposed `in` has comparison-level precedence and returns `bool`; it is not implemented.
+- Implemented `in` has comparison-level precedence with existing left associativity.
+  It requires exact `number` left / `range` right operands and returns `bool` on
+  normal completion, with existing Never compatibility. Both operands evaluate
+  once, left-to-right; all children remain statically/backend checked, including
+  skipped or unreachable code. `in` is reserved for source and host-language names,
+  not host module/field names. No new chaining restriction is introduced; chained
+  forms parse left-associatively and must satisfy the existing type rules.
 - Lexer MUST prioritize `..=` over `..`, and detect decimal literals without swallowing `0..10` as `0.`.
 - Chained forms like `0..10..20` are syntax errors unless parentheses explicitly resolve them (even then, endpoints must be numeric).
 
@@ -312,20 +318,42 @@ export-all fails with guidance to use explicit selection. `None` or compatible
 `Only` selection permits internal range functions without pruning their bodies or
 skipping validation. Check private record bounds and fields where consumed and
 at internal parameter boundaries. Private `Construct`, then `Validate` helpers
-append after memory and optional remainder helpers. Feature-free bytes and existing
-helper indices remain unchanged.
+append after memory and optional remainder helpers. Optional `Contains` with
+signature `(f64, i32) -> i32` follows `Validate` only when membership occurs anywhere
+in the typed AST, including unexported, unreachable, or runtime-skipped code.
+Construction-only bytes, feature-free bytes, and existing helper indices remain
+unchanged. Membership alone needs no floating remainder helper.
 
 Range `==` and `!=` are static errors, including for forged typed input.
 Membership does not define handle identity, record equality, or sequence equality.
 
-**Proposed progression and membership:** The remaining exact-arithmetic rules in
-this section specify future WP5 work, not current iteration support.
+**Proposed progression advancement:** The following advancement/yield rules
+specify future WP5 work, not current iteration support.
 
 Allocation-free scalar representations of unescaped ranges are deferred to WP13,
 subject to evidence and semantic proofs. Range arithmetic MUST use exact internal
 signed `i64` after construction-time safe-integer checks. Since each operand has magnitude at most `2^53 - 1`, endpoint differences and steps are representable in `i64`; use overflow-safe termination before advancing. Each yielded element is exposed as language `number` (`f64`) with exact conversion, since it remains within the validated bounds. On advancing beyond the endpoint, iteration terminates normally; it MUST NOT trap or emit an out-of-range element. A `for` over a known progression SHOULD lower directly to a loop with cached bounds; never allocate an array of range elements solely to iterate.
 
-Membership MUST produce the same result as visiting the progression: reject nonintegral, NaN, and infinite candidate values as nonmembers; use the exact `i64` interval and modular congruence checks after verifying the candidate is a safe integer. Normalize the sign of modulus or use an equivalent comparison for descending ranges. Avoid floating-point modulus/rounding errors. No optimization may change behavior for NaN, negative step, or boundary inclusivity.
+**Implemented exact numeric membership:** After both operands evaluate, validate
+consumed record bounds and canonical fields **before** the candidate guard.
+Malformed records MUST trap even for invalid candidates. For valid records,
+nonfinite, fractional, or out-of-safe-domain candidates MUST return false, not trap;
+both signed zeros are accepted and convert to integer zero. For candidate `n`,
+start `a`, end `b`, and step `s`, positive steps require `n >= a` and `n < b`
+(or `n <= b` for inclusive ends); negative steps require `n <= a` and `n > b`
+(or `n >= b` for inclusive ends). Also require `(n - a) rem_s s == 0`, emitted
+with signed `I64Sub`/`I64RemS`. Zero remainder handles both step signs without
+modulus normalization or floating-point remainder. This tests the described
+progression without advancing or iterating it and allocates nothing.
+
+**Bounds proof:** Let `M = 2^53−1`. Validated record fields and a guarded candidate
+satisfy `|n|, |a|, |b|, |s| <= M`, with `s != 0`. Conversion to signed `i64` is
+exact, and `|n - a| <= 2M = 2*(2^53−1) < 2^54`, so subtraction cannot overflow
+signed `i64`. The divisor is nonzero and neither operand can be `i64::MIN`,
+excluding division-by-zero and the `MIN / -1` corner; signed remainder is safe.
+This proof covers membership, not proposed progression advancement. No optimization
+may change behavior for invalid candidates, negative steps, boundary inclusivity,
+or record-validation-before-candidate ordering.
 
 ### 5.5 Acceptance tests
 
@@ -336,8 +364,14 @@ host/selected-export rejection, equality rejection, and forged typed input. Runt
 cases retain the ignored Node-test policy; default tests alone do not establish
 runtime coverage.
 
-**Proposed full-WP5 acceptance:** The yielded-value, membership, and exhaustion
-checks below remain future work.
+**Implemented membership coverage:** `tests/range_frontend.rs` and
+`tests/ranges.rs` cover reserved names, comparison precedence/left associativity,
+exact/Never operand typing, checking both children, and decoded integer congruence
+without floating remainder. Documented runtime behavior is not a claim that ignored
+Node tests ran.
+
+**Proposed full-WP5 acceptance:** Yielded-value, advancement, and exhaustion
+checks below remain future work; membership itself is implemented.
 
 `0..3` yields 0,1,2; `0..=3` yields 0,1,2,3; `3..0 by -1` yields 3,2,1;
 `5..5` is empty; `5..=5` has one item. Fractional/NaN/infinite/out-of-domain
@@ -924,7 +958,7 @@ CallArgument    := (IDENT ':')? Expr ;
 | 3 | `||` | Left, short circuit |
 | 4 | `&&` | Left, short circuit |
 | 5 | `==`, `!=` | Non-chaining recommended |
-| 6 | `<`, `<=`, `>`, `>=`, `in` | Non-chaining recommended |
+| 6 | `<`, `<=`, `>`, `>=`, `in` | Existing left associativity retained, including implemented `in` |
 | 7 | `..`, `..=` and attached `by` | Non-associative range construction |
 | 8 | `+`, `-` | Left |
 | 9 | `*`, `/`, `%` | Left; `%` retains implemented truncating floating remainder |

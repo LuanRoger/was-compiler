@@ -98,6 +98,7 @@ impl HostFunctions {
                 | "string"
                 | "void"
                 | "range"
+                | "in"
                 | "len"
         ) {
             return Err(HostRegistrationError::ReservedName { name });

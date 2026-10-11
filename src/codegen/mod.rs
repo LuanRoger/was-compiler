@@ -387,9 +387,12 @@ fn assemble(validated: &validation::ValidatedProgram<'_>) -> Vec<u8> {
             .expect("range memory planned before assembly")
             .first_function
             .offset(memory::Helper::Alloc.index());
+        let validator_index = usize::try_from(range::Helper::Validate.index())
+            .expect("range helper index fits usize");
+        let validator = layout.ranges[validator_index].function_index;
         for (helper, plan) in range::Helper::ALL.into_iter().zip(&layout.ranges) {
             functions.function(plan.type_index.raw());
-            code.function(&range::emit(helper, allocator));
+            code.function(&range::emit(helper, allocator, validator));
         }
     }
 

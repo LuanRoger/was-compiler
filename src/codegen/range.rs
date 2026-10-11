@@ -1,7 +1,7 @@
 use std::ops::ControlFlow;
 
 use crate::{
-    ast::Type,
+    ast::{BinaryOp, Type},
     flow::Flow,
     tokens::Span,
     typed_ast::{TypedExpr, TypedExprKind, TypedProgram, TypedStatement, TypedStatementKind},
@@ -22,10 +22,11 @@ use super::{
 pub(super) enum Helper {
     Construct,
     Validate,
+    Contains,
 }
 
 impl Helper {
-    pub const ALL: [Self; 2] = [Self::Construct, Self::Validate];
+    pub const ALL: [Self; 3] = [Self::Construct, Self::Validate, Self::Contains];
 
     pub fn index(self) -> u32 {
         let index = Self::ALL
@@ -41,9 +42,43 @@ impl Helper {
             params: match self {
                 Self::Construct => vec![ValType::F64, ValType::F64, ValType::F64, ValType::I32],
                 Self::Validate => vec![ValType::I32],
+                Self::Contains => vec![ValType::F64, ValType::I32],
             },
             result: Some(ValType::I32),
         }
+    }
+}
+
+pub(super) fn helpers(program: &TypedProgram) -> &'static [Helper] {
+    struct Membership;
+    impl Visitor for Membership {
+        type Break = ();
+
+        fn enter_expression(&mut self, expr: &TypedExpr) -> ControlFlow<()> {
+            if matches!(
+                expr.kind,
+                TypedExprKind::Binary {
+                    op: BinaryOp::In,
+                    ..
+                }
+            ) {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
+        }
+    }
+
+    if program
+        .functions
+        .iter()
+        .any(|function| walker::walk_block(&function.body, &mut Membership).is_break())
+    {
+        &Helper::ALL
+    } else if needed(program) {
+        &Helper::ALL[..2]
+    } else {
+        &[]
     }
 }
 
@@ -65,7 +100,14 @@ pub(super) fn needed(program: &TypedProgram) -> bool {
         }
         fn enter_expression(&mut self, expr: &TypedExpr) -> ControlFlow<()> {
             if expr.ty.value_type() == Some(Type::Range)
-                || matches!(expr.kind, TypedExprKind::Range { .. })
+                || matches!(
+                    expr.kind,
+                    TypedExprKind::Range { .. }
+                        | TypedExprKind::Binary {
+                            op: BinaryOp::In,
+                            ..
+                        }
+                )
             {
                 return ControlFlow::Break(());
             }
@@ -101,10 +143,11 @@ pub(super) fn emit_construction(
     Ok(flow)
 }
 
-pub(super) fn emit(helper: Helper, allocator: FunctionIndex) -> Function {
+pub(super) fn emit(helper: Helper, allocator: FunctionIndex, validator: FunctionIndex) -> Function {
     match helper {
         Helper::Construct => construct(allocator),
         Helper::Validate => validate(),
+        Helper::Contains => contains(validator),
     }
 }
 
@@ -211,6 +254,104 @@ fn construct(allocator: FunctionIndex) -> Function {
                 abi::RANGE_FLAG_ALIGN_LOG2,
             )),
             Instruction::LocalGet(4),
+            Instruction::End,
+        ],
+    );
+    body
+}
+
+fn contains(validator: FunctionIndex) -> Function {
+    // Candidate/start/end/step are bounded by M = 2^53 - 1. The largest
+    // difference is 2M < 2^54, well inside signed i64. A validated nonzero
+    // step cannot be i64::MIN, so signed remainder cannot overflow or divide by zero.
+    let mut body = Function::new([(4, ValType::I64), (1, ValType::I32)]);
+    instructions(
+        &mut body,
+        &[
+            Instruction::LocalGet(1),
+            Instruction::Call(validator.raw()),
+            Instruction::Drop,
+            Instruction::LocalGet(0),
+            Instruction::F64Abs,
+            Instruction::F64Const((abi::RANGE_SAFE_INTEGER as f64).into()),
+            Instruction::F64Le,
+            Instruction::LocalGet(0),
+            Instruction::F64Trunc,
+            Instruction::LocalGet(0),
+            Instruction::F64Eq,
+            Instruction::I32And,
+            Instruction::I32Eqz,
+            Instruction::If(BlockType::Empty),
+            Instruction::I32Const(0),
+            Instruction::Return,
+            Instruction::End,
+            Instruction::LocalGet(0),
+            Instruction::I64TruncF64S,
+            Instruction::LocalSet(2),
+        ],
+    );
+    for (local, offset) in [
+        (3, abi::RANGE_START_OFFSET),
+        (4, abi::RANGE_END_OFFSET),
+        (5, abi::RANGE_STEP_OFFSET),
+    ] {
+        instructions(
+            &mut body,
+            &[
+                Instruction::LocalGet(1),
+                Instruction::I64Load(field(offset, abi::RANGE_INTEGER_ALIGN_LOG2)),
+                Instruction::LocalSet(local),
+            ],
+        );
+    }
+    instructions(
+        &mut body,
+        &[
+            Instruction::LocalGet(1),
+            Instruction::I32Load(field(
+                abi::RANGE_INCLUSIVE_OFFSET,
+                abi::RANGE_FLAG_ALIGN_LOG2,
+            )),
+            Instruction::LocalSet(6),
+            Instruction::LocalGet(5),
+            Instruction::I64Const(0),
+            Instruction::I64GtS,
+            Instruction::If(BlockType::Result(ValType::I32)),
+            Instruction::LocalGet(2),
+            Instruction::LocalGet(3),
+            Instruction::I64GeS,
+            Instruction::LocalGet(2),
+            Instruction::LocalGet(4),
+            Instruction::I64LtS,
+            Instruction::LocalGet(2),
+            Instruction::LocalGet(4),
+            Instruction::I64Eq,
+            Instruction::LocalGet(6),
+            Instruction::I32And,
+            Instruction::I32Or,
+            Instruction::I32And,
+            Instruction::Else,
+            Instruction::LocalGet(2),
+            Instruction::LocalGet(3),
+            Instruction::I64LeS,
+            Instruction::LocalGet(2),
+            Instruction::LocalGet(4),
+            Instruction::I64GtS,
+            Instruction::LocalGet(2),
+            Instruction::LocalGet(4),
+            Instruction::I64Eq,
+            Instruction::LocalGet(6),
+            Instruction::I32And,
+            Instruction::I32Or,
+            Instruction::I32And,
+            Instruction::End,
+            Instruction::LocalGet(2),
+            Instruction::LocalGet(3),
+            Instruction::I64Sub,
+            Instruction::LocalGet(5),
+            Instruction::I64RemS,
+            Instruction::I64Eqz,
+            Instruction::I32And,
             Instruction::End,
         ],
     );

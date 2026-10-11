@@ -8,9 +8,9 @@ promises**. This document does not propose code optimization.
 
 M0–M9, including CLI/runtime integration, numeric-array equality, and floating-point
 remainder, are implemented, as are WP1–WP4: compound assignments, while
-transfers, tail-valued block/if expressions, and statement/value loops. WP5's first
-checkpoint implements range construction and internal calls only; membership,
-progression/iteration, and `for` remain proposed. Current behavior below is grounded in
+transfers, tail-valued block/if expressions, and statement/value loops. Partial WP5
+implements range construction, internal calls, and exact numeric membership;
+progression advancement/iteration and `for` remain proposed. Current behavior below is grounded in
 the frontend/backend, [CLI](../src/cli.rs), [diagnostics](../src/diagnostic.rs),
 [export policy](../src/exports.rs), [Node runtime](../runtime/index.cjs), and their
 unit/integration tests. See
@@ -89,8 +89,17 @@ once, left-to-right, all before validation even for invalid, empty, or discarded
 constructions. Runtime checks require finite integers within ±(2^53−1) and reject
 both signed-zero steps; negative-zero endpoints become integer zero. Locals,
 assignments, internal calls/results, blocks, ifs, and value loops support ranges
-with exact/Never joins, but range equality, `in`, membership, and iteration do not
-work. Copies share immutable allocated records; see the
+with exact/Never joins; range equality and iteration remain unsupported.
+`number in range` returns `bool` at comparison precedence with existing left
+associativity. `in` is reserved for source/host-language names, not host module/field
+names. Both operands evaluate once, left-to-right, with exact types and Never
+compatibility; all children remain checked. Membership validates the consumed
+record before the candidate guard, so malformed records trap even for invalid
+candidates. Nonfinite, fractional, or out-of-safe-domain candidates return false;
+both signed zeros are accepted. Exact signed `i64` interval/congruence checks
+need no floating remainder helper. Optional `Contains` appends after `Construct`
+and `Validate` only for membership, preserving construction-only bytes.
+Copies share immutable allocated records; see the
 [private record contract](memory-abi.md#private-range-record). Range signatures
 are rejected in all host imports and only selected user exports. Use explicit
 `ExportOptions::Only` / `None` (CLI `--export` / `--no-exports`) for internal range

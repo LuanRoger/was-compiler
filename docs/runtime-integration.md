@@ -111,6 +111,26 @@ with mandatory ABI exports; unexported functions may use those source names.
 Scalar-only modules may export functions with those names. The Node runtime does
 not reserve function names or hide callable ABI helpers.
 
+## Internal ranges and numeric membership
+
+The CLI/library support `number in range` returning `bool`, with comparison-tier
+precedence and existing left associativity. Both operands evaluate once,
+left-to-right; exact `number`/`range` types allow Never compatibility and all
+children remain checked. `in` is reserved for source/host-language names, not
+host module/field names. Membership validates the consumed record before the
+candidate guard: malformed records trap even for invalid candidates. Nonfinite,
+fractional, or out-of-safe-domain candidates return false; both signed zeros are
+accepted. Exact signed `i64` interval/congruence checks require no host callback
+or floating remainder helper. Optional `Contains` follows `Construct`/`Validate`
+only when membership exists, preserving construction-only bytes.
+
+Range handles remain private: reject all range host imports and selected range
+user exports. Use `--export main` when helpers have internal range signatures;
+default export-all rejects those signatures. A scalar membership function may
+be exported normally; its bool result uses raw `i32` `0`/`1`. There is no public
+range marshaling, progression advancement, iteration, or `for` implementation.
+See the [private record contract](memory-abi.md#private-range-record).
+
 ## Host callbacks
 
 Imports are raw callbacks, not typed marshaling wrappers. A CommonJS provider
