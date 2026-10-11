@@ -44,6 +44,7 @@ pub enum TokenKind<'a> {
     Number,
     Bool,
     String,
+    Range,
     Void,
 
     Identifier(Cow<'a, str>),
@@ -88,6 +89,8 @@ pub enum TokenKind<'a> {
     AndAnd,
     OrOr,
 
+    DotDot,
+    DotDotEqual,
     Arrow,
 
     Eof,

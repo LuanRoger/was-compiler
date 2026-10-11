@@ -70,6 +70,17 @@ impl<'a> Lexer<'a> {
                 b':' => self.make_token(TokenKind::Colon),
                 b';' => self.make_token(TokenKind::Semicolon),
                 b'"' => self.string(),
+                b'.' if self.source_iter.peek() == Some(&&b'.') => {
+                    self.advance();
+                    let kind = if self.source_iter.peek() == Some(&&b'=') {
+                        self.advance();
+                        TokenKind::DotDotEqual
+                    } else {
+                        TokenKind::DotDot
+                    };
+
+                    self.make_token(kind)
+                }
                 char if SYMBOLS.contains(char) => self.par_symbol(char),
                 char if char.is_ascii_digit() || *char == b'.' => self.number(),
                 char if char.is_ascii_alphabetic() || *char == b'_' => self.identifier(),
@@ -226,6 +237,10 @@ impl<'a> Lexer<'a> {
             .peek()
             .is_some_and(|&&char| char.is_ascii_digit() || char == b'.')
         {
+            if self.source_bytes[self.current..].starts_with(b"..") {
+                break;
+            }
+
             self.advance();
         }
 
@@ -280,6 +295,7 @@ impl<'a> Lexer<'a> {
             "true" => self.make_token(TokenKind::True),
             "false" => self.make_token(TokenKind::False),
             "string" => self.make_token(TokenKind::String),
+            "range" => self.make_token(TokenKind::Range),
             "void" => self.make_token(TokenKind::Void),
             _ => self.make_token(TokenKind::Identifier(value)),
         }
@@ -682,7 +698,7 @@ mod tests {
 
     #[test]
     fn rejects_malformed_numbers_as_single_tokens() {
-        for source in [".", ".5", "1.", "1.2.3", "1..2", "..", "1.2."] {
+        for source in [".", ".5", "1.", "1.2.3", "1.2."] {
             let source = format!("{source};");
             assert!(matches!(
                 kinds(&source).as_slice(),

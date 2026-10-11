@@ -112,6 +112,7 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
             Some(TokenKind::Number) => Type::Number,
             Some(TokenKind::Bool) => Type::Bool,
             Some(TokenKind::String) => Type::String,
+            Some(TokenKind::Range) => Type::Range,
             Some(TokenKind::Void) => Type::Void,
             _ => return Err(self.unexpected("type")),
         };
@@ -518,7 +519,11 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
     }
 
     fn parse_binary(&mut self, min_precedence: u8) -> Result<Expr, ParseError> {
-        let mut left = self.parse_unary()?;
+        let mut left = if min_precedence <= 5 {
+            self.parse_range()?
+        } else {
+            self.parse_unary()?
+        };
 
         while let Some((op, precedence)) = self.binary_operator() {
             if precedence < min_precedence {
@@ -538,6 +543,39 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
         Ok(left)
     }
 
+    fn parse_range(&mut self) -> Result<Expr, ParseError> {
+        let start = self.parse_binary(6)?;
+        let inclusive = match self.peek().map(|token| &token.kind) {
+            Some(TokenKind::DotDot) => false,
+            Some(TokenKind::DotDotEqual) => true,
+            _ => return Ok(start),
+        };
+
+        self.advance();
+
+        let end = self.parse_binary(6)?;
+        let step = if matches!(self.peek().map(|token| &token.kind),
+            Some(TokenKind::Identifier(name)) if name == "by")
+        {
+            self.advance();
+
+            Some(Box::new(self.parse_binary(6)?))
+        } else {
+            None
+        };
+
+        if self.check(&TokenKind::DotDot) || self.check(&TokenKind::DotDotEqual) {
+            return Err(self.unexpected("non-chained range"));
+        }
+
+        Ok(Expr::Range {
+            start: Box::new(start),
+            end: Box::new(end),
+            step,
+            inclusive,
+        })
+    }
+
     fn binary_operator(&self) -> Option<(BinaryOp, u8)> {
         Some(match &self.peek()?.kind {
             TokenKind::OrOr => (BinaryOp::Or, 1),
@@ -551,12 +589,12 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
             TokenKind::Greater => (BinaryOp::GreaterThan, 4),
             TokenKind::GreaterEqual => (BinaryOp::GreaterThanOrEqual, 4),
 
-            TokenKind::Plus => (BinaryOp::Add, 5),
-            TokenKind::Minus => (BinaryOp::Subtract, 5),
+            TokenKind::Plus => (BinaryOp::Add, 6),
+            TokenKind::Minus => (BinaryOp::Subtract, 6),
 
-            TokenKind::Star => (BinaryOp::Multiply, 6),
-            TokenKind::Slash => (BinaryOp::Divide, 6),
-            TokenKind::Percent => (BinaryOp::Remainder, 6),
+            TokenKind::Star => (BinaryOp::Multiply, 7),
+            TokenKind::Slash => (BinaryOp::Divide, 7),
+            TokenKind::Percent => (BinaryOp::Remainder, 7),
 
             _ => return None,
         })
@@ -757,6 +795,7 @@ fn token_name(kind: &TokenKind<'_>) -> &'static str {
         TokenKind::Number => "number",
         TokenKind::Bool => "bool",
         TokenKind::String => "string",
+        TokenKind::Range => "range",
         TokenKind::Void => "void",
 
         TokenKind::Identifier(_) => "identifier",
@@ -801,6 +840,8 @@ fn token_name(kind: &TokenKind<'_>) -> &'static str {
         TokenKind::AndAnd => "&&",
         TokenKind::OrOr => "||",
 
+        TokenKind::DotDot => "..",
+        TokenKind::DotDotEqual => "..=",
         TokenKind::Arrow => "->",
 
         TokenKind::Eof => "end of input",

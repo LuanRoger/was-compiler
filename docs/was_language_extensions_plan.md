@@ -1,6 +1,6 @@
 # WAS language extensions implementation plan
 
-**Status:** WP1–WP4 implemented; WP5–WP12 proposed; WP13 requires separate authorization.
+**Status:** WP1–WP4 and WP5's construction/internal-call checkpoint implemented; remaining WP5 and WP6–WP12 proposed; WP13 requires separate authorization.
 **Baseline:** Extension specification v0.3.
 
 Follow the [agent guide](../AGENTS.md), [extension specification](was_language_extensions_spec.md),
@@ -13,12 +13,14 @@ Comments, local initializer inference, exact `%`, and export selection are imple
 WP1 adds numeric compound assignments; WP2 adds bare while transfers and flow/label
 tracking; WP3 adds block/if values and internal `Never`; WP4 adds statement/value
 loops with reachable break-result constraints and explicit divergence. The baseline
-implementation notes below reflect those completed packages.
+implementation notes below reflect those completed packages and WP5's first
+checkpoint: range construction, immutable private records, and internal calls.
 
 Evidence: `src/lexer.rs`, `src/parser.rs`, `src/semantic.rs`, `src/codegen/numeric.rs`, `src/cli.rs`,
 `tests/comments.rs`, `tests/inference.rs`, `tests/remainder.rs`, `tests/emitter.rs`,
 `tests/compound_assignment.rs`, `tests/loop_control.rs`, `tests/block_values.rs`,
-and `tests/value_loops.rs`.
+`tests/value_loops.rs`, `tests/range_frontend.rs`, `tests/ranges.rs`, and
+`src/codegen/range_tests.rs`.
 
 - `Type` in `src/ast.rs` is a small `Copy` enum, not an extensible callable/type tree.
   `Block` and `TypedBlock` are currently `Vec<Statement>` / `Vec<TypedStatement>`.
@@ -52,8 +54,9 @@ and `tests/value_loops.rs`.
 - Old-source Wasm fixtures must remain unchanged unless an explicit contract decision
   justifies a difference. Never regenerate goldens to conceal incidental drift.
 
-WP1–WP4 are implemented; subsequent extensions below remain proposed. New keywords
-require matching host source-name validation, not restrictions on arbitrary
+WP1–WP4 and WP5's first checkpoint are implemented; subsequent checkpoints and
+extensions below remain proposed. New keywords require matching host source-name
+validation, not restrictions on arbitrary
 nonempty host module/field names. Reserve standalone `_`
 when its syntax arrives, reject its bindings, retain `_temp`, and keep `by` contextual.
 
@@ -85,8 +88,11 @@ These paths exist today; ownership denotes responsibility, not mandatory edits f
 | `src/optimization.rs` | Existing no-op boundary through correctness work; WP13 only |
 | `README.md`, `docs/`, `AGENTS.md` | Supported-versus-proposed status, contracts, restrictions and validation workflow |
 
-**Proposed new files, not existing implementation:** `src/codegen/range.rs` in WP5
-for exact operations; `src/semantic/inference.rs` in WP7 and `src/semantic/captures.rs` in WP11 if those policies
+**Implemented WP5 module:** `src/codegen/range.rs` owns range discovery,
+construction, and private-record validation helpers. Exact progression/membership
+operations remain future work.
+
+**Proposed new files, not existing implementation:** `src/semantic/inference.rs` in WP7 and `src/semantic/captures.rs` in WP11 if those policies
 outgrow `semantic.rs`; `src/codegen/closures.rs` in WP11 for direct helpers/cells.
 These are cohesive modules, not another IR. Proposed integration suites appear below;
 create them at their step, not as empty scaffolding now. Keep specialized decoders local.
@@ -265,16 +271,32 @@ independent region/branch/local/helper assertions accompany bounded Node executi
 of all result types, effects, transfers, aliases and saved compound places. Forged
 IDs, loop kinds/results and hidden/unreachable children are checked. Legacy fixtures,
 optimization parity, exports and import snapshots are retained. Unbounded loops
-are compile-only tests; subprocess deadlines are not guest fuel. WP5 is next.
+are compile-only tests; subprocess deadlines are not guest fuel. WP5's first
+checkpoint follows below.
 
 ### WP5 — Safe ranges, range/array `for`, membership (spec §§5–6)
 
 **Entry:** WP4. Range representation/export gates are approved as specified below;
-WP5 is not yet implemented. See [ADR-0001](adr/0001-private-range-representation.md)
+the construction/internal-call checkpoint is implemented, not the full package.
+See [ADR-0001](adr/0001-private-range-representation.md)
 for the representation and external-boundary rationale.
 Split this package into sequential checkpoints: construction/internal calls → exact
 membership/progression → `for` and its latch → adapters/interactions. No partial
 checkpoint is advertised as complete range/for support.
+
+**Implemented first checkpoint:** `Type::Range` and raw/typed range expressions
+carry start/end, optional step, and inclusivity. `..` / `..=` bind below arithmetic
+and above comparisons, non-associatively; `by` remains contextual with default
+`+1`. Numeric operands use existing Never compatibility. Locals/assignment,
+internal parameters/results, blocks/if/value loops and exact/Never joins work.
+Range equality is rejected. Construction and parameter validation follow the
+record/boundary rules below; helpers append `Construct`, then `Validate` after
+memory and optional remainder, leaving feature-free bytes unchanged.
+Coverage lives in `tests/range_frontend.rs`, `tests/ranges.rs`, and
+`src/codegen/range_tests.rs`: frontend rejection, forged trees, Validator plus
+independent record/instruction/layout assertions, export/import gates,
+optimization parity, and ignored bounded Node validation/effect cases.
+`for`, `in`, membership, and progression/iteration are not implemented.
 
 The approved MVP uses a single `i32` handle to an immutable private, eight-byte-aligned
 32-byte record. Validated signed `i64` start/end/step occupy byte offsets 0/8/16;
@@ -288,17 +310,13 @@ range locals. Scalar-record replacement belongs to WP13 after evidence/proofs.
 
 Recognize `..=` before `..`, stop decimal scanning before range punctuation, reject
 chained ranges, retain old malformed decimal behavior and contextual `by`. Evaluate
-start/end/explicit step once left-to-right, cache inputs and eagerly validate at
+start/end/explicit step once left-to-right, all before any validation even if an
+earlier operand is invalid; cache inputs and eagerly validate at
 construction even for discarded/empty ranges. Inputs must be finite integral f64
 with magnitude ≤ 2^53−1; reject both +0 and −0 steps. Canonicalize endpoint −0 to +0
-through exact integer representation. Use exact i64 interval/congruence arithmetic
-for membership; invalid candidate numbers are false, not construction traps.
-Default +1 descending ranges are empty. Each yielded integer converts exactly to
-f64. Valid advancement beyond an endpoint exhausts normally: compare the exact next
-integer before yielding, never trap or expose values beyond bounds. Safe operand
-bounds keep sums/differences within i64; document that proof rather than using f64 `%`.
-Invalid constant constructions remain runtime traps at the original evaluation
-position, never new compile errors; folding later may replace them with that trap.
+through exact integer representation. Invalid constant constructions remain
+runtime traps at the original evaluation position, never new compile errors.
+
 
 Range `==` and `!=` remain static errors, including for forged typed input;
 membership introduces no handle, record, or sequence equality contract.
@@ -311,8 +329,17 @@ with guidance to use existing explicit selection. `None`/compatible `Only` do no
 prune internal range bodies. Check private record bounds/fields where consumed and
 at internal parameter boundaries; do not publish unchecked private-handle APIs.
 
-`for` evaluates its iterable once in the enclosing context, before activating the
-new loop or introducing its iteration binding. Break/continue during evaluation
+**Proposed progression/membership checkpoint:** Use exact i64 interval/congruence
+arithmetic for membership; invalid candidate numbers are false, not construction
+traps. Default +1 descending ranges are empty. Each yielded integer converts exactly
+to f64. Valid advancement beyond an endpoint exhausts normally: compare the exact
+next integer before yielding, never trap or expose values beyond bounds. Safe
+operand bounds keep sums/differences within i64; document that proof rather than
+using f64 `%`. Folding later may replace invalid constant construction with an
+equivalent trap at the original evaluation position while preserving effects.
+
+**Proposed `for`/latch checkpoint:** `for` evaluates its iterable once in the
+enclosing context, before activating the new loop or introducing its iteration binding. Break/continue during evaluation
 target an existing enclosing loop under its usual rules, or are invalid if none
 exists; unlike while conditions, the iterable cannot target the new loop. Preserve
 iterable return/divergence without inventing fallthrough. Range fields or array
@@ -325,7 +352,8 @@ Plan i64 induction/range scratch only here; preserve no-reuse slots and old outp
 Append extension helpers deterministically without reordering `Helper::ALL` or the
 existing optional remainder helper; feature-free modules acquire no new helpers.
 
-**Exit tests:** proposed `tests/ranges.rs`, `tests/for_loops.rs`; token/precedence,
+**Remaining full-package exit tests (proposed):** extend `tests/ranges.rs` and add
+`tests/for_loops.rs`; token/precedence,
 wrong iterable/types, rejected range equality, read-only writes/compound updates,
 iterable transfers to enclosing loops (and rejection without one), binding scope,
 and forged range/for metadata.

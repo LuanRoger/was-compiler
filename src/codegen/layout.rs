@@ -12,7 +12,7 @@ use super::{
     checked_u32,
     indices::{FunctionIndex, TypeIndex},
     memory::{self, MemoryPlan},
-    numeric,
+    numeric, range,
 };
 
 pub(super) struct UserFunctionPlan {
@@ -39,6 +39,7 @@ pub(super) struct Layout {
     pub users: Vec<UserFunctionPlan>,
     pub memory: Option<MemoryLayout>,
     pub remainder: Option<UserFunctionPlan>,
+    pub ranges: Vec<UserFunctionPlan>,
     callees: Vec<CallTarget>,
     host_count: usize,
 }
@@ -68,6 +69,7 @@ impl Layout {
             users: Vec::new(),
             memory: None,
             remainder: None,
+            ranges: Vec::new(),
             callees: Vec::new(),
             host_count: program.host_functions.len(),
         };
@@ -173,6 +175,13 @@ impl Layout {
             plan.exported = export_names.contains(user.name.as_str());
 
             if plan.exported {
+                if user.return_type == Type::Range
+                    || user.params.iter().any(|param| param.ty == Type::Range)
+                {
+                    return Err(CodegenError::RangeExport {
+                        function: user.name.clone(),
+                    });
+                }
                 abi::check_external_signature(
                     &user.name,
                     user.params.iter().map(|param| param.ty),
@@ -240,6 +249,32 @@ impl Layout {
                 function_index: FunctionIndex::new(function_index),
                 exported: false,
             });
+        }
+
+        if range::needed(program) {
+            let memory_helpers = layout
+                .memory
+                .as_ref()
+                .map_or(0, |memory| memory.helpers.len());
+            let extension_start = first_runtime
+                .checked_add(checked_u32(memory_helpers, "runtime function count")?)
+                .and_then(|index| index.checked_add(u32::from(layout.remainder.is_some())))
+                .ok_or(CodegenError::LimitExceeded {
+                    what: "total function count",
+                })?;
+            extension_start
+                .checked_add(checked_u32(range::Helper::ALL.len(), "range helper count")?)
+                .ok_or(CodegenError::LimitExceeded {
+                    what: "total function count",
+                })?;
+            for helper in range::Helper::ALL {
+                let plan = UserFunctionPlan {
+                    type_index: layout.intern(helper.signature(), &mut type_indices)?,
+                    function_index: FunctionIndex::new(extension_start + helper.index()),
+                    exported: false,
+                };
+                layout.ranges.push(plan);
+            }
         }
 
         Ok(layout)

@@ -33,6 +33,42 @@ publishing a value, mutate string payloads, or reinterpret strings as arrays.
 Trusted hosts may modify array elements. Exported memory is shared with the host;
 these checks are not an isolation mechanism against a host that violates the ABI.
 
+## Private range record
+
+WP5's **first checkpoint** implements range construction and internal calls only;
+`for`, `in`, membership, and progression/iteration remain proposed. `range` uses an
+`i32` handle internally, but is **not** a public string/array descriptor or host
+marshaling type. Every successfully completed construction allocates an immutable,
+eight-byte-aligned 32-byte record with the existing bump allocator:
+
+| Offset | Field | Representation |
+| --- | --- | --- |
+| `+0` | Start | Little-endian signed `i64` |
+| `+8` | End | Little-endian signed `i64` |
+| `+16` | Step | Little-endian signed `i64` |
+| `+24` | Inclusive end | Little-endian `u32`, exactly `0` or `1` |
+| `+28` | Reserved padding | Four zero bytes |
+
+Start/end/explicit step evaluate once, left-to-right, all before validation.
+Executed construction traps for nonfinite, fractional, or out-of-safe-domain
+inputs (outside ±(2^53−1)), or either signed-zero step, even for empty/discarded
+ranges or an invalid earlier operand. Exact integer conversion canonicalizes
+negative-zero endpoints to integer zero. The default step is `+1`.
+
+Assignment, internal parameter passing, and returns share the immutable handle.
+At internal range-parameter entry, validate a handle of at least eight, alignment,
+complete record bounds with widened arithmetic, all three safe-integer fields,
+nonzero step, canonical inclusivity, and zero padding. Invalid records trap.
+These checks do not isolate a malicious host with access to exported memory.
+
+All range host-import signatures are rejected, including unused imports and forged
+snapshots. Only selected user range signatures are rejected for export; default
+export-all fails, while compatible `Only` or `None` permits internal signatures
+without pruning bodies or skipping checks. No public range encoder/decoder or
+marshaling API is provided. Allocated records have the same instance lifetime and
+no-free policy as other bump-allocated values. See
+[ADR-0001](adr/0001-private-range-representation.md).
+
 ## Layout ownership and compatibility checks
 
 The compiler's private layout constants live in
@@ -92,8 +128,14 @@ The optional `(f64, f64) -> f64` guest remainder helper follows users and any se
 memory helpers only if `%` occurs anywhere in the typed AST, including unexported,
 unreachable, or runtime-skipped code. It requires no implicit host import or
 Memory/Global/Data sections; scalar-only programs using `%` still omit the memory
-runtime. Programs without `%` retain byte-for-byte output and existing helper
-indices. See [M9](compilation-roadmap.md#m9--floating-point-remainder--implemented).
+runtime. Programs without `%` or ranges retain byte-for-byte output and existing
+helper indices. See [M9](compilation-roadmap.md#m9--floating-point-remainder--implemented).
+
+When ranges occur in signatures, locals, or expressions, the memory runtime is
+required. Private `Construct` and `Validate` range helpers follow the memory helpers
+and optional remainder helper, in that order. Modules without ranges acquire no
+range helpers or changed bytes; existing host/user/memory/remainder indices remain
+unchanged.
 
 In memory-backed modules, selecting a user function named `memory` or `__alloc`
 as an export fails with an export-name collision; unexported functions may use

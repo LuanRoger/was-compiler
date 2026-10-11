@@ -19,6 +19,17 @@ pub(super) const MIN_ADDRESS: u32 = 8;
 pub(super) const ALLOCATION_ALIGNMENT: u32 = 8;
 pub(super) const MIN_ALLOCATION_BYTES: u32 = 8;
 
+pub(super) const RANGE_SIZE: u32 = 32;
+pub(super) const RANGE_ALIGNMENT: u32 = 8;
+pub(super) const RANGE_START_OFFSET: u64 = 0;
+pub(super) const RANGE_END_OFFSET: u64 = 8;
+pub(super) const RANGE_STEP_OFFSET: u64 = 16;
+pub(super) const RANGE_INCLUSIVE_OFFSET: u64 = 24;
+pub(super) const RANGE_RESERVED_OFFSET: u64 = 28;
+pub(super) const RANGE_INTEGER_ALIGN_LOG2: u32 = RANGE_ALIGNMENT.trailing_zeros();
+pub(super) const RANGE_FLAG_ALIGN_LOG2: u32 = 2;
+pub(super) const RANGE_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) struct Signature {
     pub params: Vec<ValType>,
@@ -95,7 +106,7 @@ pub(super) fn value_type(
 ) -> Result<ValType, CodegenError> {
     match ty {
         Type::Number => Ok(ValType::F64),
-        Type::Bool | Type::String | Type::NumberArray => Ok(ValType::I32),
+        Type::Bool | Type::String | Type::NumberArray | Type::Range => Ok(ValType::I32),
         Type::Void => Err(CodegenError::UnsupportedAbiType {
             function: function.to_owned(),
             position,

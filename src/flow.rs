@@ -31,6 +31,7 @@ impl Flow {
             Type::String => 4,
             Type::NumberArray => 8,
             Type::Void => 16,
+            Type::Range => 32,
         }
     }
 
@@ -53,6 +54,7 @@ impl Flow {
             Type::String,
             Type::NumberArray,
             Type::Void,
+            Type::Range,
         ] {
             if found != expected && self.break_types & Self::type_bit(found) != 0 {
                 return Err((expected, found));

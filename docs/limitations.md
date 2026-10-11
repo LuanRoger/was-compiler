@@ -8,7 +8,9 @@ promises**. This document does not propose code optimization.
 
 M0–M9, including CLI/runtime integration, numeric-array equality, and floating-point
 remainder, are implemented, as are WP1–WP4: compound assignments, while
-transfers, tail-valued block/if expressions, and statement/value loops. Current behavior below is grounded in
+transfers, tail-valued block/if expressions, and statement/value loops. WP5's first
+checkpoint implements range construction and internal calls only; membership,
+progression/iteration, and `for` remain proposed. Current behavior below is grounded in
 the frontend/backend, [CLI](../src/cli.rs), [diagnostics](../src/diagnostic.rs),
 [export policy](../src/exports.rs), [Node runtime](../runtime/index.cjs), and their
 unit/integration tests. See
@@ -34,7 +36,7 @@ produces an `Invalid` token spanning the opening slash through EOF, then `Eof`;
 existing parser errors report it, not a new diagnostic stage.
 
 Local `let` annotations are optional: `let name = initializer;` infers the
-initializer's concrete nonvoid type (`number`, `bool`, `string`, or `number[]`),
+initializer's concrete nonvoid type (`number`, `bool`, `string`, `number[]`, or `range`),
 including `number[]` for `[]`. `let name: type = initializer;` remains supported
 with exact type checking. The initializer is analyzed before binding the name,
 so a same-named reference requires an outer binding; nested shadowing is allowed.
@@ -81,9 +83,23 @@ expressions. A no-exit loop yields Never; unannotated Never initialization fails
 while annotated divergent initialization has no reachable store. Compiler resource
 controls remain an embedding responsibility, not a loop feature.
 
+`range` supports `..` / `..=` with optional contextual `by` (default `+1`), below
+arithmetic and above comparisons, non-associatively. Numeric operands evaluate
+once, left-to-right, all before validation even for invalid, empty, or discarded
+constructions. Runtime checks require finite integers within ±(2^53−1) and reject
+both signed-zero steps; negative-zero endpoints become integer zero. Locals,
+assignments, internal calls/results, blocks, ifs, and value loops support ranges
+with exact/Never joins, but range equality, `in`, membership, and iteration do not
+work. Copies share immutable allocated records; see the
+[private record contract](memory-abi.md#private-range-record). Range signatures
+are rejected in all host imports and only selected user exports. Use explicit
+`ExportOptions::Only` / `None` (CLI `--export` / `--no-exports`) for internal range
+functions; default export-all fails rather than silently omitting them. There is
+no public range marshaling or allocation-free representation.
+
 | Restriction now | Practical effect | Current alternative | Possible future choice and tradeoff |
 | --- | --- | --- | --- |
-| Only `number`, `bool`, `string`, `number[]`, and `void` exist. Parameters and return types require annotations; every `let` requires an initializer. No function inference, whole-program type unification, promotions, implicit coercions, or source `i32` type. | Local inference does not change the `f64` numeric model or allow later assignments of another type. A boolean cannot stand in for a number, and a numeric value cannot serve as a condition; `void` is not a variable/parameter type. | Use inferred or explicitly annotated locals and explicit helper functions, branches, or registered host conversions with matching signatures. | Explicit conversions or broader inference require separate type-system and error-ordering decisions; neither is implied by local initializer inference. |
+| Only `number`, `bool`, `string`, `number[]`, `range`, and `void` exist. Parameters and return types require annotations; every `let` requires an initializer. No function inference, whole-program type unification, promotions, implicit coercions, or source `i32` type. | Local inference does not change the `f64` numeric model or allow later assignments of another type. A boolean cannot stand in for a number, and a numeric value cannot serve as a condition; `void` is not a variable/parameter type. | Use inferred or explicitly annotated locals and explicit helper functions, branches, or registered host conversions with matching signatures. | Explicit conversions or broader inference require separate type-system and error-ordering decisions; neither is implied by local initializer inference. |
 | No source modules/import declarations, structs, generics, first-class functions, or closures. Calls resolve named user functions, registered hosts, or the built-in `len`. | The source program is one collection of functions; host registration is an embedding/CLI responsibility. | Put related functions in one source unit and supply external capabilities through host functions. Numeric-array conventions can model simple records, but have no field/type safety. | Modules or dedicated aggregate/function types need name-resolution, type-system, and ABI decisions. Host-side modeling avoids those changes but keeps application-specific conventions outside the language. |
 | No labels, `for`, or `foreach`. Transfers target the nearest while/loop; only value loops allow value breaks. Nonvoid functions must return or explicitly diverge, never fall through. Ordinary while remains conservative even with literal true. | Loops cannot transfer across function boundaries. A no-exit syntactic loop is Never, but arbitrary calls or possible traps do not prove divergence. | Use statement/value `loop`, numeric-index while plus `len(array)`, and explicit returns. Parenthesize loops to discard their values; annotate divergent local initializers. | Range/array iteration requires its own grammar, numeric safety, continuation/latch, and representation tests; it is WP5, not incidental cleanup. |
 | Array indexing in source starts from an identifier; there is no general postfix chaining. | `make_values()[0]` and `[1, 2][0]` are not supported source forms. | Assign the result/literal to an inferred or annotated `number[]` local, then index that local. | General postfix parsing is a grammar feature and needs explicit assignment-target rules. |

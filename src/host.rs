@@ -45,7 +45,7 @@ pub struct HostFunctions {
 pub(crate) fn supports_external_value(ty: Type) -> bool {
     match ty {
         Type::Number | Type::Bool | Type::String | Type::NumberArray => true,
-        Type::Void => false,
+        Type::Void | Type::Range => false,
     }
 }
 
@@ -97,6 +97,7 @@ impl HostFunctions {
                 | "bool"
                 | "string"
                 | "void"
+                | "range"
                 | "len"
         ) {
             return Err(HostRegistrationError::ReservedName { name });
@@ -189,7 +190,7 @@ mod tests {
 
         for name in [
             "fn", "let", "if", "else", "while", "return", "true", "false", "number", "bool",
-            "string", "void", "len", "break", "continue", "loop",
+            "string", "void", "range", "len", "break", "continue", "loop",
         ] {
             assert_eq!(
                 functions.register(name, "env", "run", vec![], Type::Void),

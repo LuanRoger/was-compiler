@@ -1,11 +1,11 @@
 # WAS Language Extensions — Unified Design and Implementation Specification
 
-**Status:** Design baseline with the 13 approved decisions and implementation clarifications (WP1–WP4 implemented: compound assignments, while transfers, block/if values, internal Never and statement/value loops; remaining extensions proposed)
+**Status:** Design baseline with the 13 approved decisions and implementation clarifications (WP1–WP4 and WP5's first checkpoint implemented: compound assignments, while transfers, block/if values, internal Never, statement/value loops, and range construction/internal calls; remaining extensions proposed)
 **Version:** 0.3 — 9 October 2026 (implementation clarification update)  
 **Target:** Core WebAssembly, initially the MVP-compatible instruction set already used by `was-compiler`, with optional optimizations gated by Wasm features.  
 **Repository:** https://github.com/LuanRoger/was-compiler
 
-> **Normative language.** **MUST**, **SHOULD**, and **MAY** describe requirements, strong recommendations, and optional implementation choices. This document establishes a coherent *proposed* semantic model. Decisions tagged **Open decision** need confirmation before being frozen as language guarantees. Compound assignments (§4/WP1), bare `while` transfers (§7/WP2), block/if values with internal Never (§§3.2, 8.1/WP3), and statement/value loops (§7/WP4) are implemented. Other extension examples remain proposed `.was` syntax, not claims about the present compiler.
+> **Normative language.** **MUST**, **SHOULD**, and **MAY** describe requirements, strong recommendations, and optional implementation choices. This document establishes a coherent *proposed* semantic model. Decisions tagged **Open decision** need confirmation before being frozen as language guarantees. Compound assignments (§4/WP1), bare `while` transfers (§7/WP2), block/if values with internal Never (§§3.2, 8.1/WP3), and statement/value loops (§7/WP4) are implemented. Range construction and internal calls (§5/WP5 first checkpoint) are also implemented; `for`, `in`, membership, and progression/iteration remain proposed. Other extension examples remain proposed `.was` syntax, not claims about the present compiler.
 
 The [concrete implementation plan](was_language_extensions_plan.md) maps this
 specification to ordered work packages, repository files, acceptance tests, and
@@ -14,7 +14,8 @@ shared mutable captures and local-only closures; it clarifies implementation
 safety and corrects the current-language baseline. Compound assignments (§4/WP1)
 and bare `while` transfers (§7/WP2), followed by block/if values and internal Never
 (§§3.2, 8.1/WP3) and statement/value loops (§7/WP4), are implemented;
-WP5 onward remains proposed.
+WP5's construction/internal-call checkpoint is implemented; the rest of WP5 and
+WP6 onward remain proposed.
 
 ## 1. Goals and non-goals
 
@@ -45,7 +46,7 @@ annotated `let name: type = value;` and inferred `let name = value;` declaration
 reassignment, numeric compound assignments, `if`, `while`, bare `break;` /
 `continue;`, `return`, statement/value `loop`, value breaks in loop expressions,
 tail-valued blocks, value-context `if` / `else if`, named calls, and `number`,
-`bool`, `string`, `number[]`, and
+`bool`, `string`, `number[]`, `range`, and
 `void`. Every local requires an initializer and retains a fixed type. `//` line comments and non-nesting `/* ... */` block comments are implemented.
 Use the local implementation and tests, alongside README and grammar, as evidence
 of the existing-language baseline rather than assuming a public copy is current.
@@ -234,30 +235,41 @@ Use a `Place` abstraction (`Local`, `ArrayElement {array_temp, index_temp}`, lat
 
 ## 5. Feature specification: first-class ranges
 
+**Implemented scope:** WP5's first checkpoint covers construction, immutable
+private records, locals/assignment, and internal parameters/results. Range values
+also work in blocks, ifs, and value loops with exact joins and Never compatibility.
+Range equality is rejected. Full progression, membership (`in`), iteration, and
+`for` below remain proposed, not implemented range support.
+
 ### 5.1 Syntax
 
 ```
 let a: range = 0..10;       // 0 through 9
 let b: range = 0..=10;      // 0 through 10
 let c: range = 10..0 by -2; // 10, 8, 6, 4, 2
-let d: range = 0..10 by 3;  // 0, 3, 6, 9
+let d: range = 0..10 by 3;  // describes 0, 3, 6, 9; iteration is proposed
+```
 
+Proposed membership syntax (not implemented):
+
+```
 let contains: bool = 6 in (0..10 by 2); // true
 ```
 
 `..` excludes the end; `..=` includes the end. Contextual `by` supplies a nonzero
-explicit step and binds to the range construct, not arbitrary arithmetic. `in`
-tests progression membership. These are approved extension syntax, not currently
-implemented features; construction, iteration, and membership are part of the
-range work package.
+explicit step and binds to the range construct, not arbitrary arithmetic. The default step is `+1`. `in`
+tests progression membership in the proposed continuation of WP5. Construction
+with `..`, `..=`, and optional `by` is implemented; membership and iteration are not.
 
 ### 5.2 Type and validation
 
 A `range` represents a finite, ordered progression of **safe integral `number`
-values**, not all possible `f64` real values. At construction, including for empty
-ranges, endpoints and step MUST be finite integers with magnitude at most
+values**, not all possible `f64` real values. Construction evaluates start, end,
+and explicit step once, left-to-right, all before validation, even if an earlier operand is invalid. At construction,
+including for empty or discarded ranges, endpoints and step MUST be finite
+integers with magnitude at most
 `2^53 - 1`. Endpoint zero is valid; both `+0` and `-0` steps are invalid. Normalize
-`-0` endpoints to integer zero, and expose a yielded zero as canonical `+0`.
+`-0` endpoints to integer zero, and, in proposed iteration, expose a yielded zero as canonical `+0`.
 This range-specific normalization does not change ordinary `number` semantics.
 
 Invalid values MUST trap when range construction executes, even if no iteration
@@ -275,22 +287,23 @@ The default step is `+1`; `10..0` with no explicit step is empty. A negative ste
 
 ### 5.3 Grammar and precedence
 
-- `..` and `..=` are lower precedence than arithmetic, higher than `in`, and non-associative.
+- `..` and `..=` are lower precedence than arithmetic, higher than comparisons (including proposed `in`), and non-associative.
 - `by` attaches only to a range expression.
-- `in` has comparison-level precedence and returns `bool`.
+- Proposed `in` has comparison-level precedence and returns `bool`; it is not implemented.
 - Lexer MUST prioritize `..=` over `..`, and detect decimal literals without swallowing `0..10` as `0.`.
 - Chained forms like `0..10..20` are syntax errors unless parentheses explicitly resolve them (even then, endpoints must be numeric).
 
 ### 5.4 Representation and performance
 
-WP5's approved representation is a single `i32` handle to an immutable private,
-eight-byte-aligned 32-byte record, allocated with the existing bump allocator.
+WP5's implemented construction/internal-call representation is a single `i32`
+handle to an immutable private, eight-byte-aligned 32-byte record, allocated with
+the existing bump allocator.
 Validated signed `i64` start/end/step occupy byte offsets 0/8/16. A `u32`
 inclusivity flag at offset 24 is exactly 0 or 1; four bytes of reserved padding at
 offset 28 are initialized to zero. Copies share the immutable record. This is not
 the public string/array descriptor ABI and adds no host range-marshaling API.
-The representation is approved, not yet implemented; see
-[ADR-0001](adr/0001-private-range-representation.md) for the rationale.
+See [ADR-0001](adr/0001-private-range-representation.md) for the rationale and the
+[private record contract](memory-abi.md#private-range-record) for implemented checks.
 
 Internal functions may accept and return range handles. Reject range parameters
 or results in every host import, including unused imports and forged host
@@ -298,7 +311,15 @@ snapshots. Reject user range signatures only when selected for export; default
 export-all fails with guidance to use explicit selection. `None` or compatible
 `Only` selection permits internal range functions without pruning their bodies or
 skipping validation. Check private record bounds and fields where consumed and
-at internal parameter boundaries.
+at internal parameter boundaries. Private `Construct`, then `Validate` helpers
+append after memory and optional remainder helpers. Feature-free bytes and existing
+helper indices remain unchanged.
+
+Range `==` and `!=` are static errors, including for forged typed input.
+Membership does not define handle identity, record equality, or sequence equality.
+
+**Proposed progression and membership:** The remaining exact-arithmetic rules in
+this section specify future WP5 work, not current iteration support.
 
 Allocation-free scalar representations of unescaped ranges are deferred to WP13,
 subject to evidence and semantic proofs. Range arithmetic MUST use exact internal
@@ -306,10 +327,17 @@ signed `i64` after construction-time safe-integer checks. Since each operand has
 
 Membership MUST produce the same result as visiting the progression: reject nonintegral, NaN, and infinite candidate values as nonmembers; use the exact `i64` interval and modular congruence checks after verifying the candidate is a safe integer. Normalize the sign of modulus or use an equivalent comparison for descending ranges. Avoid floating-point modulus/rounding errors. No optimization may change behavior for NaN, negative step, or boundary inclusivity.
 
-Range `==` and `!=` are static errors in WP5, including for forged typed input.
-Membership does not define handle identity, record equality, or sequence equality.
-
 ### 5.5 Acceptance tests
+
+**Implemented checkpoint coverage:** `tests/range_frontend.rs`, `tests/ranges.rs`,
+and `src/codegen/range_tests.rs` cover syntax/types, exact/Never joins, construction
+validation/effects, independent record bytes and decoded Wasm, internal signatures,
+host/selected-export rejection, equality rejection, and forged typed input. Runtime
+cases retain the ignored Node-test policy; default tests alone do not establish
+runtime coverage.
+
+**Proposed full-WP5 acceptance:** The yielded-value, membership, and exhaustion
+checks below remain future work.
 
 `0..3` yields 0,1,2; `0..=3` yields 0,1,2,3; `3..0 by -1` yields 3,2,1;
 `5..5` is empty; `5..=5` has one item. Fractional/NaN/infinite/out-of-domain
@@ -323,6 +351,9 @@ parameters/results and selected-export/host-import rejection, and reject range
 `==`/`!=` in source and forged typed trees.
 
 ## 6. Feature specification: `for` loops and direct array iteration
+
+**Proposed:** `for` and range/array iteration are not implemented by WP5's
+construction/internal-call checkpoint.
 
 ### 6.1 Syntax
 

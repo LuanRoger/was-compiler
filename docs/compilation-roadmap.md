@@ -83,6 +83,7 @@ The compiler emits bytes. The embedding application decides whether to write a
 | `src/codegen/place.rs` | Shared checked local/index places and ordinary/compound assignment lowering. |
 | `src/codegen/memory.rs` | Plan static strings and emit allocation, descriptor validation, checked array addressing/length, and string/numeric-array equality helpers. |
 | `src/codegen/numeric.rs` | Detect remainder throughout the typed AST and emit the optional memory-independent `(f64, f64) -> f64` guest remainder helper. |
+| `src/codegen/range.rs` | Discover ranges and emit private construction and record-validation helpers. |
 | `tests/remainder.rs` | Validate remainder lowering, optional helper layout, result types/spans, exact binary64 edge cases, and operand effects against an independent reference. |
 | `tests/array_equality.rs` | Validate array comparison lowering and execute IEEE-754, aliasing, evaluation-order, and descriptor-safety cases. |
 | `src/codegen/memory_tests.rs` | Validate memory ABI/layout and execute memory-backed guest/host scenarios. |
@@ -108,6 +109,7 @@ they explicitly update the corresponding metadata and references.
 | `void` | No result value; never a parameter or local value type. |
 | `string` | `i32` handle to an immutable UTF-8 descriptor in the module's linear memory. |
 | `number[]` | `i32` handle to a mutable numeric-array descriptor in the module's linear memory. |
+| `range` | Internal-only `i32` handle to an immutable private record; host imports and selected range user exports are rejected. |
 
 - `HostFunctionId` follows registration order. Host functions occupy the first
   Wasm function indices.
@@ -631,7 +633,40 @@ joins, Never, unreachable checks, forged targets/kinds/annotations, legacy bytes
 exports and owned imports. Independent decoded regions/branches/locals plus
 Validator accompany bounded Node effects/alias/transfer/stack-prefix tests and
 CLI/browser parity/diagnostics. Infinite cases are compile-only; resource controls
-remain the embedding's responsibility. WP5 (ranges and `for`) is next.
+remain the embedding's responsibility. WP5's first checkpoint follows below.
+
+## Implemented language extension: range construction/internal calls (WP5 first checkpoint)
+
+This checkpoint adds public `Type::Range` and raw/typed range expressions with
+boxed start/end, optional boxed step, and inclusivity. Source `..` / `..=` are
+non-associative, below arithmetic and above comparisons; optional contextual `by`
+sets the step, defaulting to `+1`. Numeric operands retain Never compatibility.
+Range locals, assignments, internal parameters/results, blocks, ifs, and value
+loops use exact type joins with Never; range equality is prohibited.
+
+All normally completing operands evaluate once, left-to-right, before validation,
+even with an invalid earlier operand or an empty/discarded range. Executed
+construction requires finite integral values within ±(2^53−1) and nonzero step
+(reject ±0); negative-zero endpoints become integer zero. Invalid constants trap
+at runtime, not as new static errors. Each construction bump-allocates an immutable
+32-byte, eight-byte-aligned private record; copies share its handle. Internal
+parameters/results use `i32`, with record bounds/field validation at parameter
+entry. See the [private layout](memory-abi.md#private-range-record).
+
+Reject every range host-import signature, including unused/forged snapshots, and
+only selected user range signatures for export. Default export-all therefore
+fails; compatible `Only` / `None` permits internal calls without pruning bodies or
+checks. There is no public range marshaling. Private `Construct`, then `Validate`
+helpers append after memory and optional remainder helpers; existing indices and
+feature-free bytes remain unchanged.
+
+`tests/range_frontend.rs`, `tests/ranges.rs`, and `src/codegen/range_tests.rs` cover
+syntax/type rejection, exact/Never joins, forged input, independent record bytes,
+Validator and decoded layout/instructions, internal signatures, export/import
+selection, and optimization parity. Bounded Node effects/trap/record-validation
+cases retain the ignored-test policy; default tests alone do not prove they ran.
+This is **not full WP5**: `for`, `in`, membership, and progression/iteration remain
+proposed in the [extension plan](was_language_extensions_plan.md).
 
 ## Remaining work
 

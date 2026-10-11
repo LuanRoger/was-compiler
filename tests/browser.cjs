@@ -950,6 +950,55 @@ async function main() {
         assert.equal(new WebAssembly.Instance(module, { env: { original: () => 17 } }).exports.main(), 17);
     });
 
+    test('private ranges require explicit exports and allow contextual by host calls', compiler => {
+        const source = `
+            fn identity(value: range) -> range { return value; }
+            fn main() -> number {
+                let value = identity(1..=5 by by());
+                return 65;
+            }
+        `;
+        compiler.registerHostFunction('by', 'env', 'step', [], 'number');
+        const privateRange = /code generation error: function `identity` has a private range signature.*explicit export selection.*ExportOptions::Only.*ExportOptions::None/;
+        for (const method of ['compile', 'compileWat']) {
+            fails(() => compiler[method](source), privateRange);
+        }
+        compiler.setExports(['main']);
+        const selected = compile(compiler, source).module;
+        assert.deepEqual(WebAssembly.Module.exports(selected), [
+            { name: 'main', kind: 'function' },
+            { name: 'memory', kind: 'memory' },
+            { name: '__alloc', kind: 'function' },
+        ]);
+        assert.deepEqual(WebAssembly.Module.imports(selected), [
+            { module: 'env', name: 'step', kind: 'function' },
+        ]);
+        let calls = 0;
+        const instance = new WebAssembly.Instance(selected, { env: { step() { calls += 1; return 2; } } });
+        assert.equal(instance.exports.main(), 65);
+        assert.equal(calls, 1);
+        assert.match(compiler.compileWat(source), /\(export "main"/);
+        compiler.exportNone();
+        const none = compile(compiler, source).module;
+        assert.deepEqual(WebAssembly.Module.exports(none), [
+            { name: 'memory', kind: 'memory' },
+            { name: '__alloc', kind: 'function' },
+        ]);
+        assert.deepEqual(WebAssembly.Module.imports(none), WebAssembly.Module.imports(selected));
+        assert.doesNotMatch(compiler.compileWat(source), /\(export "(?:main|identity)"/);
+        compiler.exportAll();
+        fails(() => compiler.compile(source), privateRange);
+    });
+
+    test('range host parameters, results, and reserved names are rejected atomically', compiler => {
+        fails(() => compiler.registerHostFunction('candidate', 'env', 'run', ['range'], 'void'), /unknown type.*range/i);
+        fails(() => compiler.registerHostFunction('candidate', 'env', 'run', [], 'range'), /unknown type.*range/i);
+        fails(() => compiler.registerHostFunction('range', 'env', 'run', [], 'void'), /reserved/i);
+        compiler.registerHostFunction('candidate', 'env', 'run', [], 'number');
+        const instance = instantiate(compiler, 'fn main() -> number { return candidate(); }', { env: { run: () => 17 } });
+        assert.equal(instance.exports.main(), 17);
+    });
+
     test('all, none, selected, and invalid exports preserve compilation', compiler => {
         const source = `
             fn hidden() -> number { return 9; }
