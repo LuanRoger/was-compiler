@@ -41,6 +41,18 @@ pub struct HostFunctions {
     functions: Vec<HostFunction>,
 }
 
+// External eligibility is independent of the backend's internal representation.
+pub(crate) fn supports_external_value(ty: Type) -> bool {
+    match ty {
+        Type::Number | Type::Bool | Type::String | Type::NumberArray => true,
+        Type::Void => false,
+    }
+}
+
+pub(crate) fn supports_external_result(ty: Type) -> bool {
+    ty == Type::Void || supports_external_value(ty)
+}
+
 impl HostFunctions {
     pub fn new() -> Self {
         Self::default()
@@ -103,9 +115,16 @@ impl HostFunctions {
         }
 
         for ty in &params {
-            if *ty == Type::Void {
+            if !supports_external_value(*ty) {
                 return Err(HostRegistrationError::UnsupportedType { name, ty: *ty });
             }
+        }
+
+        if !supports_external_result(return_type) {
+            return Err(HostRegistrationError::UnsupportedType {
+                name,
+                ty: return_type,
+            });
         }
 
         let id = HostFunctionId(self.functions.len());
@@ -245,6 +264,58 @@ mod tests {
         );
 
         assert!(functions.functions().is_empty());
+    }
+
+    #[test]
+    fn external_signatures_accept_all_current_values_and_void_results() {
+        let mut functions = HostFunctions::new();
+        let params = vec![Type::Number, Type::Bool, Type::String, Type::NumberArray];
+
+        for (index, return_type) in [
+            Type::Number,
+            Type::Bool,
+            Type::String,
+            Type::NumberArray,
+            Type::Void,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert_eq!(
+                functions.register(
+                    format!("host{index}"),
+                    "env",
+                    "call",
+                    params.clone(),
+                    return_type,
+                ),
+                Ok(HostFunctionId(index))
+            );
+            assert_eq!(functions.functions()[index].params, params);
+            assert_eq!(functions.functions()[index].return_type, return_type);
+        }
+
+        for index in 0..=params.len() {
+            let mut invalid = params.clone();
+            invalid.insert(index, Type::Void);
+
+            let error = functions
+                .register("bad", "env", "call", invalid, Type::Void)
+                .unwrap_err();
+
+            assert_eq!(
+                error,
+                HostRegistrationError::UnsupportedType {
+                    name: "bad".into(),
+                    ty: Type::Void,
+                }
+            );
+            assert_eq!(
+                error.to_string(),
+                "Host function 'bad' uses unsupported ABI type Void"
+            );
+            assert_eq!(functions.functions().len(), 5);
+        }
     }
 
     #[test]

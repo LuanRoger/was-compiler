@@ -62,11 +62,11 @@ The compiler emits bytes. The embedding application decides whether to write a
 | `runtime/index.cjs`, `runtime/abi.cjs`, `runtime/run.cjs` | Instantiate raw binaries, offer explicit ABI conversions, and expose a raw-call Node runner. |
 | `tests/cli.rs`, `tests/runtime.rs` | Exercise source-file/raw-binary/provider integration separately from backend tests. |
 | `src/optimization.rs` | O0–O3 level configuration and a typed-AST optimization boundary; no passes implemented yet. |
-| `src/host.rs` | Ordered host declarations, language-visible names, import names, signatures, and registration validation. |
+| `src/host.rs` | Ordered host declarations, language-visible names, import names, signatures, and private external-type eligibility shared with backend checks. |
 | `src/semantic.rs` | Resolve and type-check user, host, and built-in calls; produce the typed AST. |
 | `src/typed_ast.rs` | Typed expressions, resolved function/variable/loop references, and owned import metadata. |
 | `src/flow.rs` | Private completion sets shared by semantic and backend summaries; distinguish normal completion, return, and loop transfers without pruning checks. |
-| `src/codegen/abi.rs` | Central language-type → Wasm-type mapping and function signatures. |
+| `src/codegen/abi.rs` | Internal language-type → Wasm-type mapping and signatures, separate from external eligibility checks for every host snapshot and selected user exports. |
 | `src/codegen/layout.rs` | Deduplicate signatures, assign indices, and build the complete typed callee table before body emission. |
 | `src/codegen/validation.rs` | Borrow the typed AST, complete layout and existing body checks in diagnostic order, and retain checked bodies behind a private construction boundary. |
 | `src/codegen/validation_tests.rs` | Compare checked and former compilation sequences for valid bytes, multiply-invalid diagnostics, and immutable host/export snapshots. |

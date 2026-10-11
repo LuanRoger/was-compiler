@@ -72,9 +72,9 @@ bypasses the compiler's optimization/options orchestration.
 | `src/parser.rs`, `src/ast.rs` | Recursive-descent parsing and untyped syntax |
 | `src/semantic.rs`, `src/typed_ast.rs` | Types, scopes, loop targets, return analysis, resolved semantic IDs |
 | `src/flow.rs` | Private completion sets shared by semantic/backend flow summaries |
-| `src/host.rs`, `src/exports.rs` | Ordered host declarations and owned export selection |
+| `src/host.rs`, `src/exports.rs` | Ordered host declarations, private external-type eligibility, and owned export selection |
 | `src/optimization.rs` | Borrowed `Cow<TypedProgram>` no-op; future transformation boundary |
-| `src/codegen/abi.rs` | Language-to-Wasm signatures and named memory-layout constants |
+| `src/codegen/abi.rs` | Internal language-to-Wasm signatures, separate external signature checks, and named memory-layout constants |
 | `src/codegen/layout.rs`, `src/codegen/indices.rs` | Signatures, callees, exports, distinct Wasm index types |
 | `src/codegen/walker.rs` | Shared structural traversal for separate planning policies |
 | `src/codegen/locals.rs`, `src/codegen/temporaries.rs` | Local-slot and temporary planning |
@@ -276,6 +276,10 @@ refactors; specify and test any intentional behavior change explicitly.
   first, then declarations, then typed temporaries (array handles and indexed
   compound addresses/old values). Preserve shadowing, scoped
   initialization restoration, and the current no-reuse temporary policy.
+- Internal signature mapping does not establish host/export eligibility. Share the
+  private external-type policy with host registration; layout checks every host
+  snapshot and only selected user signatures for external eligibility. Map every
+  internal user signature and check every body regardless of export selection.
 - Emit imports in registration order and user functions in source order. Deduplicate
   signatures without confusing type indices with function indices. Use the
   `FunctionIndex`, `TypeIndex`, `LocalIndex`, and `LabelDepth` newtypes internally.

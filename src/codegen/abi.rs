@@ -1,4 +1,7 @@
-use crate::ast::Type;
+use crate::{
+    ast::Type,
+    host::{supports_external_result, supports_external_value},
+};
 use wasm_encoder::ValType;
 
 use super::{CodegenError, checked_u32};
@@ -22,7 +25,7 @@ pub(super) struct Signature {
     pub result: Option<ValType>,
 }
 
-pub(super) fn signature(
+pub(super) fn internal_signature(
     function: &str,
     params: impl ExactSizeIterator<Item = Type>,
     return_type: Type,
@@ -50,6 +53,39 @@ pub(super) fn signature(
     };
 
     Ok(Signature { params, result })
+}
+
+pub(super) fn check_external_signature(
+    function: &str,
+    params: impl Iterator<Item = Type>,
+    return_type: Type,
+) -> Result<(), CodegenError> {
+    for (index, ty) in params.enumerate() {
+        if ty == Type::Void {
+            return Err(CodegenError::VoidParameter {
+                function: function.to_owned(),
+                index,
+            });
+        }
+
+        if !supports_external_value(ty) {
+            return Err(CodegenError::UnsupportedAbiType {
+                function: function.to_owned(),
+                position: "parameter",
+                ty,
+            });
+        }
+    }
+
+    if !supports_external_result(return_type) {
+        return Err(CodegenError::UnsupportedAbiType {
+            function: function.to_owned(),
+            position: "return",
+            ty: return_type,
+        });
+    }
+
+    Ok(())
 }
 
 pub(super) fn value_type(

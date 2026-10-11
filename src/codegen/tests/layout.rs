@@ -308,6 +308,196 @@ fn numeric_returns_preserve_parameter_signatures_and_import_index_offsets() {
 }
 
 #[test]
+fn forged_unused_host_signatures_are_checked_before_export_selection() {
+    use crate::{codegen::compile_with_exports, exports::ExportOptions};
+
+    for index in [0, 1, 2] {
+        let mut params = vec![Type::Number, Type::String];
+        params.insert(index, Type::Void);
+
+        let program = TypedProgram {
+            functions: vec![user(0, "visible", &[], Type::Void)],
+            host_functions: vec![
+                host(0, "valid", &[Type::Bool], Type::Void),
+                host(1, "unused", &params, Type::Void),
+            ],
+        };
+
+        for exports in [
+            ExportOptions::All,
+            ExportOptions::None,
+            ExportOptions::Only(vec!["visible".into()]),
+            ExportOptions::Only(vec!["missing".into()]),
+        ] {
+            let error = compile_with_exports(&program, &exports).unwrap_err();
+
+            assert_eq!(
+                error,
+                CodegenError::VoidParameter {
+                    function: "unused".into(),
+                    index,
+                }
+            );
+            assert_eq!(error.span(), None);
+            assert_eq!(
+                error.to_string(),
+                format!("parameter {index} in function `unused` cannot have type void")
+            );
+        }
+    }
+}
+
+#[test]
+fn internal_signatures_are_checked_even_when_not_exported() {
+    use crate::{codegen::compile_with_exports, exports::ExportOptions};
+
+    let program = TypedProgram {
+        functions: vec![
+            user(0, "visible", &[], Type::Void),
+            user(1, "hidden", &[Type::Number, Type::Void], Type::Void),
+        ],
+        host_functions: vec![],
+    };
+
+    for exports in [
+        ExportOptions::All,
+        ExportOptions::None,
+        ExportOptions::Only(vec!["visible".into()]),
+        ExportOptions::Only(vec!["missing".into()]),
+    ] {
+        assert_eq!(
+            compile_with_exports(&program, &exports),
+            Err(CodegenError::VoidParameter {
+                function: "hidden".into(),
+                index: 1,
+            })
+        );
+    }
+}
+
+#[test]
+fn external_selection_preserves_internal_signatures_snapshots_and_helpers() {
+    use crate::exports::ExportOptions;
+
+    let mut compiler = Compiler::new();
+    let params = vec![Type::Number, Type::Bool, Type::String, Type::NumberArray];
+
+    for (name, ty) in [
+        ("numeric", Type::Number),
+        ("boolean", Type::Bool),
+        ("text", Type::String),
+        ("array", Type::NumberArray),
+        ("nothing", Type::Void),
+    ] {
+        compiler
+            .register_host_function(format!("host_{name}"), "env", name, params.clone(), ty)
+            .unwrap();
+    }
+
+    let program = compiler
+        .analyze(
+            "fn numeric(n: number, b: bool, s: string, a: number[]) -> number { return n % 2; }
+             fn boolean(n: number, b: bool, s: string, a: number[]) -> bool { return b; }
+             fn text(n: number, b: bool, s: string, a: number[]) -> string { return s; }
+             fn array(n: number, b: bool, s: string, a: number[]) -> number[] { return a; }
+             fn nothing(n: number, b: bool, s: string, a: number[]) -> void {}",
+        )
+        .unwrap();
+    compiler
+        .register_host_function("later", "other", "later", vec![], Type::Void)
+        .unwrap();
+
+    let baseline = decode(&compiler.compile(&program).unwrap());
+    let raw_params = vec![ValType::F64, ValType::I32, ValType::I32, ValType::I32];
+
+    assert_eq!(
+        &baseline.signatures[..5],
+        &[
+            (raw_params.clone(), vec![ValType::F64]),
+            (raw_params.clone(), vec![ValType::I32]),
+            (raw_params, vec![]),
+            (vec![ValType::I32], vec![ValType::I32]),
+            (vec![ValType::I32, ValType::F64], vec![ValType::I32]),
+        ]
+    );
+    assert_eq!(baseline.functions.len(), 13); // Five users, seven memory helpers, remainder.
+    assert_eq!(baseline.functions[..5], [0, 1, 1, 1, 2]);
+    assert_eq!(
+        baseline.imports,
+        vec![
+            ("env".into(), "numeric".into(), 0),
+            ("env".into(), "boolean".into(), 1),
+            ("env".into(), "text".into(), 1),
+            ("env".into(), "array".into(), 1),
+            ("env".into(), "nothing".into(), 2),
+        ]
+    );
+    assert!(baseline.bodies[0].contains(&DecodedInstruction::Call(17)));
+
+    for (exports, expected) in [
+        (
+            ExportOptions::All,
+            vec![
+                ("numeric", 5),
+                ("boolean", 6),
+                ("text", 7),
+                ("array", 8),
+                ("nothing", 9),
+            ],
+        ),
+        (ExportOptions::None, vec![]),
+        (
+            ExportOptions::Only(vec!["array".into(), "numeric".into()]),
+            vec![("numeric", 5), ("array", 8)],
+        ),
+    ] {
+        compiler.set_exports(exports);
+        let expected_bytes = compiler.compile(&program).unwrap();
+
+        for level in [
+            OptimizationLevel::None,
+            OptimizationLevel::Basic,
+            OptimizationLevel::Standard,
+            OptimizationLevel::Aggressive,
+        ] {
+            compiler.set_optimization_level(level);
+            let bytes = compiler.compile(&program).unwrap();
+            assert_eq!(bytes, expected_bytes);
+            let module = decode(&bytes);
+            let mut expected_exports: Vec<_> = expected
+                .iter()
+                .map(|(name, index)| ((*name).to_owned(), ExternalKind::Func, *index))
+                .collect();
+            expected_exports.extend([
+                ("memory".into(), ExternalKind::Memory, 0),
+                ("__alloc".into(), ExternalKind::Func, 10),
+            ]);
+
+            assert_eq!(module.exports, expected_exports);
+            assert_eq!(module.signatures, baseline.signatures);
+            assert_eq!(module.imports, baseline.imports);
+            assert_eq!(module.functions, baseline.functions);
+            assert_eq!(module.locals, baseline.locals);
+            assert_eq!(module.bodies.len(), baseline.bodies.len());
+            for (body, original) in module.bodies.iter().zip(&baseline.bodies) {
+                assert_eq!(body.len(), original.len());
+                for (instruction, original) in body.iter().zip(original) {
+                    match (instruction, original) {
+                        (
+                            DecodedInstruction::F64Const(value),
+                            DecodedInstruction::F64Const(expected),
+                        ) => {
+                            assert_eq!(value.to_bits(), expected.to_bits());
+                        }
+                        _ => assert_eq!(instruction, original),
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn u32_limits_are_checked_without_truncation() {
     assert_eq!(checked_u32(0, "index"), Ok(0));
     assert_eq!(checked_u32(u32::MAX as usize, "index"), Ok(u32::MAX));

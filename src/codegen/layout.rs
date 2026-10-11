@@ -88,7 +88,12 @@ impl Layout {
             checked_u32(host.field.len(), "import field name length")?;
 
             let signature =
-                abi::signature(&host.name, host.params.iter().copied(), host.return_type)?;
+                abi::internal_signature(&host.name, host.params.iter().copied(), host.return_type)?;
+            abi::check_external_signature(
+                &host.name,
+                host.params.iter().copied(),
+                host.return_type,
+            )?;
             let type_index = layout.intern(signature, &mut type_indices)?;
 
             layout.host_type_indices.push(type_index);
@@ -116,7 +121,7 @@ impl Layout {
 
             checked_u32(user.name.len(), "export name length")?;
 
-            let signature = abi::signature(
+            let signature = abi::internal_signature(
                 &user.name,
                 user.params.iter().map(|param| param.ty),
                 user.return_type,
@@ -166,6 +171,14 @@ impl Layout {
 
         for (user, plan) in program.functions.iter().zip(&mut layout.users) {
             plan.exported = export_names.contains(user.name.as_str());
+
+            if plan.exported {
+                abi::check_external_signature(
+                    &user.name,
+                    user.params.iter().map(|param| param.ty),
+                    user.return_type,
+                )?;
+            }
         }
 
         if let Some(plan) = MemoryPlan::new(program)? {
