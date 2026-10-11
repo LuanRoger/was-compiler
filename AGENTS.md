@@ -33,6 +33,23 @@ execution engine. Host registration declares imports; it does not install callba
 | [Extension specification](docs/was_language_extensions_spec.md) | Extension semantics and implemented-versus-proposed scope |
 | [Extension plan](docs/was_language_extensions_plan.md) | Ordered work packages, representation gates, required tests |
 
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live in GitHub Issues. Before tracker operations, read
+`docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the five default triage labels. Before triaging, read
+`docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Use a single-context layout. Before codebase exploration, read
+`docs/agents/domain.md`.
+
 ## Compiler pipeline and ownership
 
 ```text

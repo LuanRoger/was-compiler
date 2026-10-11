@@ -1,6 +1,5 @@
 fn main() -> number {
-    let x = 10;
-    let y = 20;
+    let sum = (if true { 5 } else { 10 }) + 10;
 
-    return x + y;
+    return d;
 }
