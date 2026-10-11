@@ -290,6 +290,7 @@ impl<'a> Lexer<'a> {
             "loop" => self.make_token(TokenKind::Loop),
             "break" => self.make_token(TokenKind::Break),
             "continue" => self.make_token(TokenKind::Continue),
+            "in" => self.make_token(TokenKind::In),
             "number" => self.make_token(TokenKind::Number),
             "bool" => self.make_token(TokenKind::Bool),
             "true" => self.make_token(TokenKind::True),

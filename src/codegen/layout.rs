@@ -251,7 +251,8 @@ impl Layout {
             });
         }
 
-        if range::needed(program) {
+        let range_helpers = range::helpers(program);
+        if !range_helpers.is_empty() {
             let memory_helpers = layout
                 .memory
                 .as_ref()
@@ -263,11 +264,11 @@ impl Layout {
                     what: "total function count",
                 })?;
             extension_start
-                .checked_add(checked_u32(range::Helper::ALL.len(), "range helper count")?)
+                .checked_add(checked_u32(range_helpers.len(), "range helper count")?)
                 .ok_or(CodegenError::LimitExceeded {
                     what: "total function count",
                 })?;
-            for helper in range::Helper::ALL {
+            for &helper in range_helpers {
                 let plan = UserFunctionPlan {
                     type_index: layout.intern(helper.signature(), &mut type_indices)?,
                     function_index: FunctionIndex::new(extension_start + helper.index()),

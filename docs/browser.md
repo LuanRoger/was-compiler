@@ -127,6 +127,24 @@ runtime-skipped code. Output without `%` is unchanged. See
 [M9](compilation-roadmap.md#m9--floating-point-remainder--implemented) for the exact
 scaled-subtraction algorithm and bounds; this feature adds no optimization pass.
 
+The same pipeline also supports exact `number in range` membership returning
+`bool`, at comparison precedence with existing left associativity. Both operands
+evaluate once, left-to-right, with exact types and Never compatibility; all
+children remain checked. `in` is reserved for source/host-language names, not
+host module/field names. Membership validates the consumed record before the
+candidate guard, so malformed records trap even for invalid candidates.
+Nonfinite, fractional, or out-of-safe-domain candidates return false; both signed
+zeros are accepted. Signed `i64` interval/congruence checks need no JavaScript
+callback or floating remainder helper. Optional `Contains` follows `Construct`
+and `Validate` only when membership exists, preserving construction-only bytes.
+Range handles remain private, with no host range type or marshaling API. Use
+`setExports(["main"])` for programs with internal range-signature helpers; selected
+range user exports and all range host imports are rejected. Exported scalar
+membership results use raw `i32` `0`/`1`. Progression advancement, iteration, and
+`for` remain proposed, not full WP5 support. See the
+[private record contract](memory-abi.md#private-range-record). Rebuild `pkg/` to use
+current compiler source; stale generated bindings do not validate this feature.
+
 Always release the compiler with `free()` in a `finally` block, including when
 compilation fails. `compile()` returns an owned copy, not a view into compiler
 memory, so its bytes remain valid after `free()`. The examples' extra `.slice()`

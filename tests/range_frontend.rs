@@ -1,5 +1,5 @@
 use was_compiler::{
-    CompileError, Compiler, Type,
+    CompileError, Compiler, HostRegistrationError, Type,
     ast::{BinaryOp, Expr, Program, StatementKind, UnaryOp},
     lexer::Lexer,
     parser::{ParseError, Parser},
@@ -486,10 +486,319 @@ fn range_inference_preserves_initializer_scope_and_first_error_order() {
 }
 
 #[test]
-fn ranges_do_not_enable_iteration_membership_or_other_range_operations() {
+fn membership_of_a_number_in_a_range_analyzes_as_bool() {
+    let program = Compiler::new()
+        .analyze("fn main() -> bool { let contains = 6 in (0..10 by 2); return contains; }")
+        .unwrap();
+    let TypedStatementKind::Let { ty, value, .. } = &program.functions[0].body[0].kind else {
+        panic!("expected membership local");
+    };
+    assert_eq!(*ty, Type::Bool);
+    assert_eq!(value.ty, ExprResult::Value(Type::Bool));
+    let TypedExprKind::Binary { left, op, right } = &value.kind else {
+        panic!("expected generic binary membership");
+    };
+    assert_eq!(*op, BinaryOp::In);
+    assert_eq!(left.ty, ExprResult::Value(Type::Number));
+    assert_eq!(right.ty, ExprResult::Value(Type::Range));
+}
+
+#[test]
+fn membership_keyword_reserves_source_names_but_not_host_import_names() {
+    for source in [
+        "fn in() -> void {}",
+        "fn main(in: number) -> void {}",
+        "fn main() -> void { let in = 1; }",
+    ] {
+        let error = parse(source).unwrap_err();
+        assert!(matches!(
+            error,
+            ParseError::UnexpectedToken { found: "in", .. }
+        ));
+    }
+
+    let mut compiler = Compiler::new();
+    assert_eq!(
+        compiler.register_host_function("in", "env", "call", vec![], Type::Void),
+        Err(HostRegistrationError::ReservedName { name: "in".into() })
+    );
+    compiler
+        .register_host_function("inside", "in", "in", vec![], Type::Void)
+        .unwrap();
+    compiler.analyze("fn main() -> void { inside(); }").unwrap();
+}
+
+#[test]
+fn membership_tokens_preserve_keyword_trivia_and_utf8_boundaries() {
+    let tokens = Lexer::new("/*é🦀*/in/*x*/inside in1 _in In by \"in\" i/*x*/n").tokenize();
+    assert_eq!(tokens[0].span, Span::new(10, 12));
+    assert_eq!(
+        tokens
+            .iter()
+            .map(|token| token.kind.clone())
+            .collect::<Vec<_>>(),
+        vec![
+            TokenKind::In,
+            TokenKind::Identifier("inside".into()),
+            TokenKind::Identifier("in1".into()),
+            TokenKind::Identifier("_in".into()),
+            TokenKind::Identifier("In".into()),
+            TokenKind::Identifier("by".into()),
+            TokenKind::StringLiteral("in".into()),
+            TokenKind::Identifier("i".into()),
+            TokenKind::Identifier("n".into()),
+            TokenKind::Eof,
+        ]
+    );
+    assert_eq!(
+        expression("1/*x*/in/*é*/0..3"),
+        binary(
+            number("1"),
+            BinaryOp::In,
+            range(number("0"), number("3"), None, false)
+        )
+    );
+}
+
+#[test]
+fn membership_uses_comparison_precedence_and_left_associativity() {
+    let membership = binary(
+        binary(number("1"), BinaryOp::Add, number("2")),
+        BinaryOp::In,
+        range(
+            number("0"),
+            binary(number("3"), BinaryOp::Multiply, number("4")),
+            Some(binary(number("5"), BinaryOp::Subtract, number("2"))),
+            true,
+        ),
+    );
+    assert_eq!(
+        expression("1 + 2 in 0..=3 * 4 by 5 - 2 == true && false || true"),
+        binary(
+            binary(
+                binary(membership, BinaryOp::Equal, Expr::Bool(true)),
+                BinaryOp::And,
+                Expr::Bool(false)
+            ),
+            BinaryOp::Or,
+            Expr::Bool(true)
+        )
+    );
+    assert_eq!(
+        expression("1 < 2 in 0..3"),
+        binary(
+            binary(number("1"), BinaryOp::LessThan, number("2")),
+            BinaryOp::In,
+            range(number("0"), number("3"), None, false)
+        )
+    );
+    assert_eq!(
+        expression("1 in 0..3 < 4"),
+        binary(
+            binary(
+                number("1"),
+                BinaryOp::In,
+                range(number("0"), number("3"), None, false)
+            ),
+            BinaryOp::LessThan,
+            number("4")
+        )
+    );
+    assert_eq!(
+        expression("1 in 0..3 in 0..4"),
+        binary(
+            binary(
+                number("1"),
+                BinaryOp::In,
+                range(number("0"), number("3"), None, false)
+            ),
+            BinaryOp::In,
+            range(number("0"), number("4"), None, false)
+        )
+    );
+}
+
+#[test]
+fn malformed_membership_reports_the_offending_token() {
+    for (body, found) in [
+        ("1 in;", ";"),
+        ("in 0..3;", "in"),
+        ("1 in in 0..3;", "in"),
+        ("1 in 0..;", ";"),
+        ("1 in 0..3 by;", ";"),
+    ] {
+        let source = format!("fn main() -> void {{ {body} }}");
+        let error = parse(&source).unwrap_err();
+        let ParseError::UnexpectedToken {
+            found: actual,
+            span,
+            ..
+        } = error
+        else {
+            panic!("expected unexpected token");
+        };
+        assert_eq!(actual, found, "{body}");
+        assert_eq!(&source[span.start()..span.end()], found, "{body}");
+    }
+}
+
+#[test]
+fn membership_requires_exact_asymmetric_operand_types_even_in_skipped_code() {
+    for (expr, left, right) in [
+        ("true in 0..3", Type::Bool, Type::Range),
+        ("\"1\" in 0..3", Type::String, Type::Range),
+        ("[] in 0..3", Type::NumberArray, Type::Range),
+        ("(0..1) in 0..3", Type::Range, Type::Range),
+        ("noop() in 0..3", Type::Void, Type::Range),
+        ("1 in 2", Type::Number, Type::Number),
+        ("1 in true", Type::Number, Type::Bool),
+        ("1 in \"range\"", Type::Number, Type::String),
+        ("1 in []", Type::Number, Type::NumberArray),
+        ("1 in noop()", Type::Number, Type::Void),
+        ("(loop {}) in true", Type::Number, Type::Bool),
+        ("true in (loop {})", Type::Bool, Type::Range),
+        ("1 in 0..3 in 0..4", Type::Bool, Type::Range),
+    ] {
+        for body in [
+            format!("{expr};"),
+            format!("return; {expr};"),
+            format!("false && ({expr});"),
+            format!("if true {{}} else {{ {expr}; }}"),
+        ] {
+            let source = format!("fn main() -> void {{ {body} }} fn noop() -> void {{}}");
+            assert!(
+                matches!(semantic_error(&source), SemanticError::InvalidBinaryOperands {
+                operator: "in", left: actual_left, right: actual_right, ..
+            } if actual_left == left && actual_right == right),
+                "{body}"
+            );
+        }
+    }
+    let source = "fn main() -> void { /*é🦀*/ 1 in true; }";
+    assert_eq!(
+        semantic_error(source),
+        SemanticError::InvalidBinaryOperands {
+            operator: "in",
+            left: Type::Number,
+            right: Type::Bool,
+            span: Span::new(source.find("1 in").unwrap(), source.find(';').unwrap() + 1),
+        }
+    );
+}
+
+#[test]
+fn membership_checks_both_children_and_preserves_first_error_order() {
+    for (expr, name) in [
+        ("missing in unknown", "missing"),
+        ("(loop {}) in unknown", "unknown"),
+        ("true in unknown", "unknown"),
+        ("{ return; 1 } in unknown", "unknown"),
+        ("1 in { loop {} (0..missing) }", "missing"),
+    ] {
+        for body in [
+            format!("{expr};"),
+            format!("return; {expr};"),
+            format!("false && ({expr});"),
+        ] {
+            assert!(
+                matches!(semantic_error(&format!("fn main() -> void {{ {body} }}")),
+                SemanticError::UndefinedVariable { name: actual, .. } if actual == name),
+                "{body}"
+            );
+        }
+    }
+}
+
+#[test]
+fn divergent_membership_operands_use_never_compatibility() {
+    for expr in [
+        "(loop {}) in 0..3",
+        "1 in (loop {})",
+        "(loop {}) in (loop {})",
+    ] {
+        let program = Compiler::new()
+            .analyze(&format!(
+                "fn main() -> number {{ let contains: bool = {expr}; }}"
+            ))
+            .unwrap();
+        let TypedStatementKind::Let { ty, value, .. } = &program.functions[0].body[0].kind else {
+            panic!("expected local");
+        };
+        assert_eq!(*ty, Type::Bool);
+        assert_eq!(value.ty, ExprResult::Never);
+        assert!(matches!(
+            value.kind,
+            TypedExprKind::Binary {
+                op: BinaryOp::In,
+                ..
+            }
+        ));
+        assert!(
+            matches!(semantic_error(&format!("fn main() -> void {{ let contains = {expr}; }}")),
+            SemanticError::CannotInferNeverType { name, .. } if name == "contains")
+        );
+    }
+    assert!(matches!(
+        semantic_error("fn main() -> number { false && ((loop {}) in 0..3); }"),
+        SemanticError::MissingReturn { .. }
+    ));
+}
+
+#[test]
+fn membership_flow_sequences_left_before_right_without_collecting_unreachable_breaks() {
+    for (body, return_type, ty) in [
+        (
+            "{ break 7; 1 } in { break true; 0..3 };",
+            "number",
+            Type::Number,
+        ),
+        (
+            "{ break true; 1 } in { break 7; 0..3 };",
+            "bool",
+            Type::Bool,
+        ),
+        ("1 in { break 7; 0..3 };", "number", Type::Number),
+    ] {
+        let source = format!(
+            "fn main() -> {return_type} {{ let result = (loop {{ {body} }}); return result; }}"
+        );
+        let program = Compiler::new().analyze(&source).unwrap();
+        let TypedStatementKind::Let { ty: actual, .. } = &program.functions[0].body[0].kind else {
+            panic!("expected local");
+        };
+        assert_eq!(*actual, ty, "{body}");
+    }
+    let source =
+        "fn main() -> number { let result: bool = (loop { (loop {}) in { break true; 0..3 }; }); }";
+    let program = Compiler::new().analyze(source).unwrap();
+    let TypedStatementKind::Let { value, .. } = &program.functions[0].body[0].kind else {
+        panic!("expected local");
+    };
+    assert_eq!(value.ty, ExprResult::Never);
+}
+
+#[test]
+fn membership_numeric_domains_and_internal_range_calls_are_not_static_errors() {
+    for candidate in [
+        "0.5",
+        "0 / 0",
+        "1 / 0",
+        "9007199254740992",
+        "-9007199254740992",
+        "-0",
+    ] {
+        let source = format!("fn main() -> bool {{ return ({candidate}) in 0..=10 by 2; }}");
+        Compiler::new().analyze(&source).unwrap();
+    }
+    Compiler::new().analyze(
+        "fn main(x: number) -> bool { return x in bounds(); } fn bounds() -> range { return 10..0 by -2; }"
+    ).unwrap();
+}
+
+#[test]
+fn ranges_do_not_enable_iteration_or_other_range_operations() {
     for source in [
         "fn main() -> void { for i in 0..3 {} }",
-        "fn main() -> void { 1 in (0..3); }",
         "fn main() -> void { let r: range[] = 0..3; }",
     ] {
         assert!(parse(source).is_err(), "{source}");

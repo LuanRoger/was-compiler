@@ -25,6 +25,7 @@ pub enum BinaryOp {
     GreaterThan,
     LessThanOrEqual,
     GreaterThanOrEqual,
+    In,
 
     And,
     Or,

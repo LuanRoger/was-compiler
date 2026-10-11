@@ -959,6 +959,21 @@ impl SemanticAnalyzer {
             BinaryOp::GreaterThan => (">", Type::Number, Type::Bool),
             BinaryOp::GreaterThanOrEqual => (">=", Type::Number, Type::Bool),
 
+            BinaryOp::In => {
+                if Self::accepts_operand(left, Type::Number)
+                    && Self::accepts_operand(right, Type::Range)
+                {
+                    return Ok(Type::Bool);
+                }
+
+                return Err(SemanticError::InvalidBinaryOperands {
+                    operator: "in",
+                    left: Self::diagnostic_operand(left, Type::Number),
+                    right: Self::diagnostic_operand(right, Type::Range),
+                    span,
+                });
+            }
+
             BinaryOp::And => ("&&", Type::Bool, Type::Bool),
             BinaryOp::Or => ("||", Type::Bool, Type::Bool),
 

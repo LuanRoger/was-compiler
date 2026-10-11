@@ -588,6 +588,7 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
             TokenKind::LessEqual => (BinaryOp::LessThanOrEqual, 4),
             TokenKind::Greater => (BinaryOp::GreaterThan, 4),
             TokenKind::GreaterEqual => (BinaryOp::GreaterThanOrEqual, 4),
+            TokenKind::In => (BinaryOp::In, 4),
 
             TokenKind::Plus => (BinaryOp::Add, 6),
             TokenKind::Minus => (BinaryOp::Subtract, 6),
@@ -788,6 +789,7 @@ fn token_name(kind: &TokenKind<'_>) -> &'static str {
         TokenKind::Break => "break",
         TokenKind::Continue => "continue",
         TokenKind::Return => "return",
+        TokenKind::In => "in",
 
         TokenKind::True => "true",
         TokenKind::False => "false",

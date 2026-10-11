@@ -83,7 +83,7 @@ The compiler emits bytes. The embedding application decides whether to write a
 | `src/codegen/place.rs` | Shared checked local/index places and ordinary/compound assignment lowering. |
 | `src/codegen/memory.rs` | Plan static strings and emit allocation, descriptor validation, checked array addressing/length, and string/numeric-array equality helpers. |
 | `src/codegen/numeric.rs` | Detect remainder throughout the typed AST and emit the optional memory-independent `(f64, f64) -> f64` guest remainder helper. |
-| `src/codegen/range.rs` | Discover ranges and emit private construction and record-validation helpers. |
+| `src/codegen/range.rs` | Discover ranges/membership and emit private construction, record-validation, and exact membership helpers. |
 | `tests/remainder.rs` | Validate remainder lowering, optional helper layout, result types/spans, exact binary64 edge cases, and operand effects against an independent reference. |
 | `tests/array_equality.rs` | Validate array comparison lowering and execute IEEE-754, aliasing, evaluation-order, and descriptor-safety cases. |
 | `src/codegen/memory_tests.rs` | Validate memory ABI/layout and execute memory-backed guest/host scenarios. |
@@ -633,9 +633,9 @@ joins, Never, unreachable checks, forged targets/kinds/annotations, legacy bytes
 exports and owned imports. Independent decoded regions/branches/locals plus
 Validator accompany bounded Node effects/alias/transfer/stack-prefix tests and
 CLI/browser parity/diagnostics. Infinite cases are compile-only; resource controls
-remain the embedding's responsibility. WP5's first checkpoint follows below.
+remain the embedding's responsibility. The implemented WP5 checkpoints follow below.
 
-## Implemented language extension: range construction/internal calls (WP5 first checkpoint)
+## Implemented language extension: range construction/internal calls and membership (partial WP5)
 
 This checkpoint adds public `Type::Range` and raw/typed range expressions with
 boxed start/end, optional boxed step, and inclusivity. Source `..` / `..=` are
@@ -657,15 +657,29 @@ Reject every range host-import signature, including unused/forged snapshots, and
 only selected user range signatures for export. Default export-all therefore
 fails; compatible `Only` / `None` permits internal calls without pruning bodies or
 checks. There is no public range marshaling. Private `Construct`, then `Validate`
-helpers append after memory and optional remainder helpers; existing indices and
-feature-free bytes remain unchanged.
+helpers append after memory and optional remainder helpers; optional `Contains`
+follows only when membership exists anywhere in the typed AST. Existing indices,
+construction-only bytes, and feature-free bytes remain unchanged.
+
+`number in range` returns `bool` at comparison precedence with existing left
+associativity; `in` is reserved for source/host-language names, not host module/field
+names. Both operands evaluate once, left-to-right, using exact types with Never
+compatibility and checking all children, including skipped/unreachable code.
+The helper validates the consumed record before the candidate guard: malformed
+records trap even for invalid candidates. Nonfinite, fractional, or out-of-safe-domain
+candidates return false; both signed zeros are accepted. Signed `i64` interval and
+`I64RemS` congruence checks need no floating remainder helper; see the
+[arithmetic bounds proof](memory-abi.md#private-range-record).
 
 `tests/range_frontend.rs`, `tests/ranges.rs`, and `src/codegen/range_tests.rs` cover
 syntax/type rejection, exact/Never joins, forged input, independent record bytes,
 Validator and decoded layout/instructions, internal signatures, export/import
 selection, and optimization parity. Bounded Node effects/trap/record-validation
 cases retain the ignored-test policy; default tests alone do not prove they ran.
-This is **not full WP5**: `for`, `in`, membership, and progression/iteration remain
+Membership coverage in `tests/range_frontend.rs` and `tests/ranges.rs` includes
+reserved names, precedence/associativity, exact/Never typing, checking both children,
+and decoded integer lowering without floating remainder.
+This is **not full WP5**: `for` and progression advancement/iteration remain
 proposed in the [extension plan](was_language_extensions_plan.md).
 
 ## Remaining work

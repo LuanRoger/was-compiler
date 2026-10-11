@@ -12,6 +12,7 @@ execution engine. Host registration declares imports; it does not install callba
 
 - Read the affected implementation and tests before editing. Keep changes focused;
   preserve user work and do not stage or commit unless requested.
+
 - Distinguish behavior-preserving refactors from language, ABI, and optimization
   changes. Do not introduce speculative frameworks, another IR, or dependencies.
 - Keep the core library portable to native targets and `wasm32-unknown-unknown`.
@@ -83,7 +84,7 @@ bypasses the compiler's optimization/options orchestration.
 | `src/codegen/place.rs` | Shared checked local/index places, ordinary and compound assignment |
 | `src/codegen/control_flow.rs`, `src/codegen/call.rs`, `src/codegen/values.rs` | Structured control flow, calls, literal values |
 | `src/codegen/memory.rs`, `src/codegen/numeric.rs` | Memory planning/helpers and optional floating remainder helper |
-| `src/codegen/range.rs` | Private range discovery, construction, and record-validation helpers |
+| `src/codegen/range.rs` | Private range discovery, construction, record-validation, and exact membership helpers |
 | `src/codegen/validation.rs`, `src/codegen/mod.rs` | Checked internal boundary and section assembly |
 | `src/diagnostic.rs` | Shared native/browser diagnostic rendering |
 | `src/main.rs`, `src/cli.rs` | Thin native entry point and clap/file/output adapter |
@@ -136,12 +137,14 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   Tail-valued blocks and `if`/`else if` expressions support all concrete result
   types. Value-context if requires else and exact branch joins, allowing `Never`.
   Statement-if may omit else and discards branch tails. No `match` expressions yet.
-- WP5's first checkpoint implements range construction/internal calls, not iteration:
+- WP5 implements range construction/internal calls and exact numeric membership, not iteration:
   `start..end` / `start..=end`, optional contextual `by step`, default `+1`.
   Precedence is below arithmetic and above comparisons, non-associative. Range
   values work with locals/assignment, internal signatures, blocks/if/value loops,
-  and exact/Never joins; equality is rejected. `for`, `in`, and membership remain
-  proposed. Before changing ranges, read extension spec §5 and the
+  and exact/Never joins; equality is rejected. `number in range` yields `bool` at
+  comparison precedence with existing left associativity; `in` is reserved.
+  `for` and progression advancement/iteration remain proposed. Before changing
+  ranges, read extension spec §5 and the
   [private record contract](docs/memory-abi.md#private-range-record).
 - Strings are immutable raw UTF-8 values. Numeric arrays have fixed lengths and
   mutable shared storage; every evaluated array literal allocates fresh storage.
@@ -246,7 +249,7 @@ refactors; specify and test any intentional behavior change explicitly.
   all unreachable/skipped children. Do not execute unbounded examples in tests;
   subprocess deadlines are not guest fuel or process-tree cancellation.
 
-### Range construction and internal boundaries
+### Range construction, membership, and internal boundaries
 
 - Public `Type` adds `Range`; raw `Expr::Range` and `TypedExprKind::Range` carry
   boxed `start`/`end`, optional boxed `step`, and `inclusive: bool`. Numeric operands
@@ -261,9 +264,20 @@ refactors; specify and test any intentional behavior change explicitly.
   and fields at parameter entry. Reject range signatures in every host registration
   and forged snapshot; reject only selected user range exports. Keep default
   export-all errors and explicit `Only`/`None` selection, never silent omission.
+- Membership requires exact `number`/`range` operands with Never compatibility;
+  check all children, including unreachable/skipped code. Evaluate both once,
+  left-to-right. Validate the consumed record before the candidate guard, so a
+  malformed record traps even for an invalid candidate. Nonfinite, fractional,
+  or out-of-safe-domain candidates return false; both signed zeros are accepted.
+- Membership uses signed `i64` interval checks and `(candidate - start) % step == 0`
+  via `I64RemS`, not floating remainder. Safe-domain differences have magnitude
+  at most `2*(2^53−1) < 2^54`; validated nonzero steps keep arithmetic/remainder
+  safe. See the memory ABI/spec for the bounds proof.
 - Copies share immutable bump-allocated records, not public descriptors. Append
   `Construct`, then `Validate` range helpers after memory and optional remainder
-  helpers; feature-free output and existing helper indices remain unchanged.
+  helpers; append optional `Contains` only when membership occurs anywhere in the
+  typed AST. Construction-only bytes and existing helper indices remain unchanged;
+  membership alone does not require the floating remainder helper.
 
 ### Evaluation, scopes, and module layout
 

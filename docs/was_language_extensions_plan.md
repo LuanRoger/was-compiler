@@ -1,6 +1,6 @@
 # WAS language extensions implementation plan
 
-**Status:** WP1–WP4 and WP5's construction/internal-call checkpoint implemented; remaining WP5 and WP6–WP12 proposed; WP13 requires separate authorization.
+**Status:** WP1–WP4 and WP5's construction/internal-call and numeric membership checkpoints implemented; remaining WP5 and WP6–WP12 proposed; WP13 requires separate authorization.
 **Baseline:** Extension specification v0.3.
 
 Follow the [agent guide](../AGENTS.md), [extension specification](was_language_extensions_spec.md),
@@ -13,8 +13,8 @@ Comments, local initializer inference, exact `%`, and export selection are imple
 WP1 adds numeric compound assignments; WP2 adds bare while transfers and flow/label
 tracking; WP3 adds block/if values and internal `Never`; WP4 adds statement/value
 loops with reachable break-result constraints and explicit divergence. The baseline
-implementation notes below reflect those completed packages and WP5's first
-checkpoint: range construction, immutable private records, and internal calls.
+implementation notes below reflect those completed packages and partial WP5:
+range construction, immutable private records, internal calls, and exact numeric membership.
 
 Evidence: `src/lexer.rs`, `src/parser.rs`, `src/semantic.rs`, `src/codegen/numeric.rs`, `src/cli.rs`,
 `tests/comments.rs`, `tests/inference.rs`, `tests/remainder.rs`, `tests/emitter.rs`,
@@ -54,8 +54,8 @@ Evidence: `src/lexer.rs`, `src/parser.rs`, `src/semantic.rs`, `src/codegen/numer
 - Old-source Wasm fixtures must remain unchanged unless an explicit contract decision
   justifies a difference. Never regenerate goldens to conceal incidental drift.
 
-WP1–WP4 and WP5's first checkpoint are implemented; subsequent checkpoints and
-extensions below remain proposed. New keywords require matching host source-name
+WP1–WP4 and WP5's construction/internal-call and membership checkpoints are
+implemented; subsequent checkpoints and extensions below remain proposed. New keywords require matching host source-name
 validation, not restrictions on arbitrary
 nonempty host module/field names. Reserve standalone `_`
 when its syntax arrives, reject its bindings, retain `_temp`, and keep `by` contextual.
@@ -89,8 +89,8 @@ These paths exist today; ownership denotes responsibility, not mandatory edits f
 | `README.md`, `docs/`, `AGENTS.md` | Supported-versus-proposed status, contracts, restrictions and validation workflow |
 
 **Implemented WP5 module:** `src/codegen/range.rs` owns range discovery,
-construction, and private-record validation helpers. Exact progression/membership
-operations remain future work.
+construction, private-record validation, and exact numeric membership helpers.
+Progression advancement and iteration remain future work.
 
 **Proposed new files, not existing implementation:** `src/semantic/inference.rs` in WP7 and `src/semantic/captures.rs` in WP11 if those policies
 outgrow `semantic.rs`; `src/codegen/closures.rs` in WP11 for direct helpers/cells.
@@ -277,11 +277,12 @@ checkpoint follows below.
 ### WP5 — Safe ranges, range/array `for`, membership (spec §§5–6)
 
 **Entry:** WP4. Range representation/export gates are approved as specified below;
-the construction/internal-call checkpoint is implemented, not the full package.
+construction/internal calls and numeric membership are implemented, not the full
+package.
 See [ADR-0001](adr/0001-private-range-representation.md)
 for the representation and external-boundary rationale.
 Split this package into sequential checkpoints: construction/internal calls → exact
-membership/progression → `for` and its latch → adapters/interactions. No partial
+numeric membership → progression advancement and `for` with its latch → adapters/interactions. No partial
 checkpoint is advertised as complete range/for support.
 
 **Implemented first checkpoint:** `Type::Range` and raw/typed range expressions
@@ -296,7 +297,8 @@ Coverage lives in `tests/range_frontend.rs`, `tests/ranges.rs`, and
 `src/codegen/range_tests.rs`: frontend rejection, forged trees, Validator plus
 independent record/instruction/layout assertions, export/import gates,
 optimization parity, and ignored bounded Node validation/effect cases.
-`for`, `in`, membership, and progression/iteration are not implemented.
+Exact numeric membership is implemented as described below; `for` and progression
+advancement/iteration are not implemented.
 
 The approved MVP uses a single `i32` handle to an immutable private, eight-byte-aligned
 32-byte record. Validated signed `i64` start/end/step occupy byte offsets 0/8/16;
@@ -329,14 +331,30 @@ with guidance to use existing explicit selection. `None`/compatible `Only` do no
 prune internal range bodies. Check private record bounds/fields where consumed and
 at internal parameter boundaries; do not publish unchecked private-handle APIs.
 
-**Proposed progression/membership checkpoint:** Use exact i64 interval/congruence
-arithmetic for membership; invalid candidate numbers are false, not construction
-traps. Default +1 descending ranges are empty. Each yielded integer converts exactly
-to f64. Valid advancement beyond an endpoint exhausts normally: compare the exact
-next integer before yielding, never trap or expose values beyond bounds. Safe
-operand bounds keep sums/differences within i64; document that proof rather than
-using f64 `%`. Folding later may replace invalid constant construction with an
-equivalent trap at the original evaluation position while preserving effects.
+**Implemented numeric membership checkpoint:** `number in range` returns `bool`
+at comparison precedence with existing left associativity. Reserve `in` for source
+and host-language names, leaving host module/field names unrestricted. Require
+exact asymmetric operand types with Never compatibility and check all children,
+including unreachable/skipped code. Evaluate both operands once, left-to-right.
+Validate the consumed private record before the candidate guard, so malformed
+records trap even for invalid candidates. Nonfinite, fractional, or out-of-safe-domain
+candidates return false; both signed zeros are accepted. Use signed `i64` interval
+checks and `(candidate - start) rem_s step == 0` via `I64RemS`, not f64 `%`.
+The [memory ABI](memory-abi.md#private-range-record) and spec §5.4 prove that
+`|candidate - start| <= 2*(2^53−1) < 2^54` and a validated nonzero safe-domain step
+cannot cause integer overflow or a remainder trap. Append optional `Contains`
+after `Construct`/`Validate` only when membership occurs anywhere in the typed AST;
+construction-only bytes remain unchanged, and no floating remainder helper is needed.
+Frontend and decoded-lowering coverage lives in `tests/range_frontend.rs` and
+`tests/ranges.rs`.
+
+**Proposed progression advancement:** Default +1 descending ranges are empty.
+Each yielded integer converts exactly to f64. Valid advancement beyond an endpoint
+exhausts normally: compare the exact next integer before yielding, never trap or
+expose values beyond bounds. Prove advancement arithmetic separately from the
+implemented membership bounds; no advancement or iteration is implemented.
+Folding later may replace invalid constant construction with an equivalent trap
+at the original evaluation position while preserving effects.
 
 **Proposed `for`/latch checkpoint:** `for` evaluates its iterable once in the
 enclosing context, before activating the new loop or introducing its iteration binding. Break/continue during evaluation
