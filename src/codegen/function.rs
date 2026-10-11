@@ -16,7 +16,7 @@ use super::{
     layout::{CallTarget, Layout},
     locals::LocalLayout,
     memory::Helper,
-    statement, temporaries,
+    range, statement, temporaries,
 };
 
 struct Context<'a> {
@@ -221,6 +221,15 @@ impl<'a> BodyEmitter<'a> {
 
     pub fn remainder(&self) -> FunctionIndex {
         self.context.remainder()
+    }
+
+    pub fn range_helper(&self, helper: range::Helper) -> FunctionIndex {
+        self.context
+            .module
+            .ranges
+            .get(usize::try_from(helper.index()).expect("range helper index fits usize"))
+            .expect("range usage planned before emission")
+            .function_index
     }
 
     pub fn string(&self, value: &str) -> u32 {
@@ -437,6 +446,14 @@ pub(super) fn emit(function: &TypedFunction, module: &Layout) -> Result<Function
     let mut emitter = BodyEmitter::new(function, module)?;
 
     for param in &function.params {
+        if param.ty == Type::Range {
+            let index = emitter.resolve(param.id, param.ty, param.span)?;
+            emitter.local_get(index);
+            emitter.call(emitter.range_helper(range::Helper::Validate));
+            emitter.instruction(&Instruction::Drop);
+            continue;
+        }
+
         let helper = match param.ty {
             Type::String => Some(Helper::ValidateString),
             Type::NumberArray => Some(Helper::ValidateArray),

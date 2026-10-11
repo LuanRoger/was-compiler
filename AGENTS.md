@@ -83,6 +83,7 @@ bypasses the compiler's optimization/options orchestration.
 | `src/codegen/place.rs` | Shared checked local/index places, ordinary and compound assignment |
 | `src/codegen/control_flow.rs`, `src/codegen/call.rs`, `src/codegen/values.rs` | Structured control flow, calls, literal values |
 | `src/codegen/memory.rs`, `src/codegen/numeric.rs` | Memory planning/helpers and optional floating remainder helper |
+| `src/codegen/range.rs` | Private range discovery, construction, and record-validation helpers |
 | `src/codegen/validation.rs`, `src/codegen/mod.rs` | Checked internal boundary and section assembly |
 | `src/diagnostic.rs` | Shared native/browser diagnostic rendering |
 | `src/main.rs`, `src/cli.rs` | Thin native entry point and clap/file/output adapter |
@@ -115,7 +116,7 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
 
 ## Current language support
 
-- Types: `number`, `bool`, `string`, `number[]`, and `void`. Parameters and results
+- Types: `number`, `bool`, `string`, `number[]`, `range`, and `void`. Parameters and results
   require explicit types. Locals accept `let name = initializer;` or
   `let name: type = initializer;`; every declaration requires an initializer.
   Value-producing expressions infer concrete existing types; `[]` infers `number[]`
@@ -135,6 +136,13 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   Tail-valued blocks and `if`/`else if` expressions support all concrete result
   types. Value-context if requires else and exact branch joins, allowing `Never`.
   Statement-if may omit else and discards branch tails. No `match` expressions yet.
+- WP5's first checkpoint implements range construction/internal calls, not iteration:
+  `start..end` / `start..=end`, optional contextual `by step`, default `+1`.
+  Precedence is below arithmetic and above comparisons, non-associative. Range
+  values work with locals/assignment, internal signatures, blocks/if/value loops,
+  and exact/Never joins; equality is rejected. `for`, `in`, and membership remain
+  proposed. Before changing ranges, read extension spec §5 and the
+  [private record contract](docs/memory-abi.md#private-range-record).
 - Strings are immutable raw UTF-8 values. Numeric arrays have fixed lengths and
   mutable shared storage; every evaluated array literal allocates fresh storage.
 - `//` line comments and non-nesting `/* ... */` block comments are supported
@@ -237,6 +245,25 @@ refactors; specify and test any intentional behavior change explicitly.
   expressions. Keep memory/local/scratch/remainder policies separate, including
   all unreachable/skipped children. Do not execute unbounded examples in tests;
   subprocess deadlines are not guest fuel or process-tree cancellation.
+
+### Range construction and internal boundaries
+
+- Public `Type` adds `Range`; raw `Expr::Range` and `TypedExprKind::Range` carry
+  boxed `start`/`end`, optional boxed `step`, and `inclusive: bool`. Numeric operands
+  use existing Never compatibility; traverse/check all children, including skipped
+  and unreachable ones. The walker visits start, end, then explicit step.
+- Evaluate all normally completing operands once, left-to-right, before any range
+  validation, including invalid, empty, and discarded constructions. Executed
+  construction requires finite integral inputs within ±(2^53−1), nonzero step
+  (reject ±0), and canonical integer-zero endpoints. Invalid constants trap at
+  runtime, not as a new static error.
+- Internal range parameters/results lower to `i32`; validate private record bounds
+  and fields at parameter entry. Reject range signatures in every host registration
+  and forged snapshot; reject only selected user range exports. Keep default
+  export-all errors and explicit `Only`/`None` selection, never silent omission.
+- Copies share immutable bump-allocated records, not public descriptors. Append
+  `Construct`, then `Validate` range helpers after memory and optional remainder
+  helpers; feature-free output and existing helper indices remain unchanged.
 
 ### Evaluation, scopes, and module layout
 

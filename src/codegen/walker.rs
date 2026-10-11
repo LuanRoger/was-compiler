@@ -106,6 +106,16 @@ fn walk_expression<V: Visitor>(expr: &TypedExpr, visitor: &mut V) -> ControlFlow
             walk_expression(right, visitor)?;
         }
 
+        TypedExprKind::Range {
+            start, end, step, ..
+        } => {
+            walk_expression(start, visitor)?;
+            walk_expression(end, visitor)?;
+            if let Some(step) = step {
+                walk_expression(step, visitor)?;
+            }
+        }
+
         TypedExprKind::Call { args, .. } => {
             for arg in args {
                 walk_expression(arg, visitor)?;

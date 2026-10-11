@@ -10,7 +10,7 @@ use super::{
     CodegenError, abi, call, control_flow, expect_operand, expect_result,
     function::{BodyEmitter, LoopKind},
     memory::Helper,
-    values,
+    range, values,
 };
 
 fn result(flow: Flow, ty: Type) -> ExprResult {
@@ -32,7 +32,9 @@ fn eager_result(ty: Type, operands: &[&TypedExpr]) -> ExprResult {
 pub(super) fn wasm_result(result: ExprResult) -> Option<ValType> {
     match result {
         ExprResult::Value(Type::Number) => Some(ValType::F64),
-        ExprResult::Value(Type::Bool | Type::String | Type::NumberArray) => Some(ValType::I32),
+        ExprResult::Value(Type::Bool | Type::String | Type::NumberArray | Type::Range) => {
+            Some(ValType::I32)
+        }
         ExprResult::Value(Type::Void) | ExprResult::Void | ExprResult::Never => None,
     }
 }
@@ -115,6 +117,14 @@ pub(super) fn emit(
                 }
             };
 
+            if matches!(op, BinaryOp::Equal | BinaryOp::NotEqual) && operand_type == Type::Range {
+                return Err(CodegenError::UnsupportedOperator {
+                    function: function.into(),
+                    operator: if *op == BinaryOp::Equal { "==" } else { "!=" },
+                    span,
+                });
+            }
+
             let predicted = if logical {
                 eager_result(result_type, &[left])
             } else {
@@ -191,6 +201,27 @@ pub(super) fn emit(
             expect_result(function, predicted, expr.ty, span)?;
             let flow = values::emit_array(elements, body, span)?;
             (flow, result(flow, Type::NumberArray))
+        }
+
+        TypedExprKind::Range {
+            start,
+            end,
+            step,
+            inclusive,
+        } => {
+            let predicted = if [Some(start.as_ref()), Some(end.as_ref()), step.as_deref()]
+                .into_iter()
+                .flatten()
+                .any(|operand| operand.ty == ExprResult::Never)
+            {
+                ExprResult::Never
+            } else {
+                Type::Range.into()
+            };
+            expect_result(function, predicted, expr.ty, span)?;
+            let flow =
+                range::emit_construction(start, end, step.as_deref(), *inclusive, body, span)?;
+            (flow, result(flow, Type::Range))
         }
 
         TypedExprKind::Index { expr: base, index } => {

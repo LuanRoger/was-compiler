@@ -141,6 +141,7 @@ impl Visitor for Recorder {
             TypedExprKind::Identifier { name, .. } => format!("identifier:{name}"),
             TypedExprKind::Unary { .. } => "unary".into(),
             TypedExprKind::Binary { .. } => "binary".into(),
+            TypedExprKind::Range { .. } => "range".into(),
             TypedExprKind::Call { .. } => "call".into(),
             TypedExprKind::Array(_) => "array".into(),
             TypedExprKind::Index { .. } => "index".into(),
@@ -154,6 +155,35 @@ impl Visitor for Recorder {
 
     fn visit_expressions(&self) -> bool {
         !self.skip_expressions
+    }
+}
+
+#[test]
+fn range_fields_are_visited_left_to_right_including_optional_step() {
+    for has_step in [false, true] {
+        let block = vec![statement(
+            0,
+            TypedStatementKind::Expression(expr(TypedExprKind::Range {
+                start: Box::new(identifier("start")),
+                end: Box::new(identifier("end")),
+                step: has_step.then(|| Box::new(identifier("step"))),
+                inclusive: true,
+            })),
+        )];
+        let mut recorder = Recorder::default();
+        assert!(walk_block(&block, &mut recorder).is_continue());
+        let mut expected = vec![
+            "block+1",
+            "statement:0",
+            "range",
+            "identifier:start",
+            "identifier:end",
+        ];
+        if has_step {
+            expected.push("identifier:step");
+        }
+        expected.push("block-1");
+        assert_eq!(recorder.events, expected);
     }
 }
 

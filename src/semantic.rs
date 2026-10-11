@@ -802,6 +802,44 @@ impl SemanticAnalyzer {
                 )
             }
 
+            Expr::Range {
+                start,
+                end,
+                step,
+                inclusive,
+            } => {
+                let (start, start_flow) = self.analyze_expr(start, span, return_type)?;
+
+                self.expect_type(Type::Number, start.ty, span)?;
+
+                let (end, end_flow) = self.analyze_expr(end, span, return_type)?;
+
+                self.expect_type(Type::Number, end.ty, span)?;
+                flow = start_flow.then(end_flow);
+
+                let step = match step {
+                    Some(step) => {
+                        let (step, step_flow) = self.analyze_expr(step, span, return_type)?;
+
+                        self.expect_type(Type::Number, step.ty, span)?;
+                        flow = flow.then(step_flow);
+
+                        Some(Box::new(step))
+                    }
+                    None => None,
+                };
+
+                (
+                    TypedExprKind::Range {
+                        start: Box::new(start),
+                        end: Box::new(end),
+                        step,
+                        inclusive: *inclusive,
+                    },
+                    Type::Range.into(),
+                )
+            }
+
             Expr::Call { func, args } => return self.analyze_call(func, args, span, return_type),
 
             Expr::Array(elements) => {

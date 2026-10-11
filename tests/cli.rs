@@ -1282,6 +1282,73 @@ fn export_selection_preserves_source_order_bodies_and_memory_abi() {
 }
 
 #[test]
+fn private_range_signatures_require_explicit_cli_exports_and_preserve_library_bytes() {
+    let scratch = Scratch::new("range_exports");
+    let source = r#"
+fn identity(value: range) -> range { return value; }
+fn main() -> number {
+    let value = identity(1..=5 by by());
+    return 65;
+}
+"#;
+    scratch.write("program.was", source);
+    let host = "by=env.step()->number";
+    failure(
+        scratch.cli(&["program.was", "-o", "program.wasm", "--host", host], None),
+        1,
+        &[
+            "code generation error",
+            "function `identity` has a private range signature",
+            "explicit export selection",
+            "ExportOptions::Only",
+            "ExportOptions::None",
+        ],
+    );
+    scratch.assert_entries(&["program.was"]);
+
+    let mut compiler = Compiler::new();
+    compiler
+        .register_host_function("by", "env", "step", vec![], Type::Number)
+        .unwrap();
+    let mut selected: Option<Decoded> = None;
+    for (flags, exports, expected_names) in [
+        (
+            vec!["--host", host, "--export", "main"],
+            ExportOptions::Only(vec!["main".into()]),
+            vec!["main"],
+        ),
+        (
+            vec!["--host", host, "--no-exports"],
+            ExportOptions::None,
+            vec![],
+        ),
+    ] {
+        compiler.set_exports(exports);
+        let bytes = scratch.compile(source, &flags);
+        assert_eq!(bytes, compiler.compile_source(source).unwrap());
+        let decoded = decode(&bytes);
+        assert_eq!(user_exports(&decoded), expected_names);
+        assert_eq!(decoded.imports, [("env".into(), "step".into())]);
+        let abi = abi_exports(&decoded);
+        assert_eq!(abi.len(), 2);
+        assert!(abi.iter().any(|(name, kind, index)| name == "memory"
+            && *kind == ExternalKind::Memory
+            && *index == 0));
+        assert!(
+            abi.iter()
+                .any(|(name, kind, _)| name == "__alloc" && *kind == ExternalKind::Func)
+        );
+        if let Some(previous) = &selected {
+            assert_eq!(decoded.bodies, previous.bodies);
+            assert_eq!(decoded.functions, previous.functions);
+            assert_eq!(abi, abi_exports(previous));
+        }
+        selected = Some(decoded);
+    }
+    scratch.assert_entries(&["program.was", "program.wasm"]);
+}
+
+#[test]
 fn scalar_no_exports_retains_every_function_without_adding_memory() {
     let scratch = Scratch::new("scalar_exports");
     let source = "fn main() -> number { return helper(); } fn helper() -> number { return 65; } fn unused() -> void {}";
@@ -1913,6 +1980,8 @@ fn malformed_or_invalid_host_declarations_exit_one_without_outputs() {
         ("print=env.log_number(number,)->void", "unknown type"),
         ("print=env.log_number(unknown)->void", "unknown type"),
         ("print=env.log_number(number)->unknown", "unknown type"),
+        ("print=env.log_number(range)->void", "unknown type"),
+        ("print=env.log_number()->range", "unknown type"),
         ("print=env.log_number(void)->void", "unsupported ABI type"),
         ("print=.log_number(number)->void", "module cannot be empty"),
         ("print=env.(number)->void", "field cannot be empty"),
@@ -1922,6 +1991,7 @@ fn malformed_or_invalid_host_declarations_exit_one_without_outputs() {
         ),
         ("len=env.len(number[])->number", "reserved"),
         ("loop=env.run()->void", "reserved"),
+        ("range=env.run()->void", "reserved"),
     ] {
         let stderr = failure(
             scratch.cli(

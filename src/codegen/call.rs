@@ -104,6 +104,8 @@ fn normalize_host_value(ty: Type, body: &mut BodyEmitter<'_>) {
             body.call(body.helper(Helper::ValidateArray));
         }
 
+        Type::Range => unreachable!("range host signatures rejected during layout"),
+
         Type::Number | Type::Void => {}
     }
 }

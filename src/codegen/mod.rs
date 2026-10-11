@@ -22,6 +22,7 @@ mod locals;
 mod memory;
 mod numeric;
 mod place;
+mod range;
 mod statement;
 mod temporaries;
 mod validation;
@@ -33,6 +34,9 @@ mod export_tests;
 
 #[cfg(test)]
 mod memory_tests;
+
+#[cfg(test)]
+mod range_tests;
 
 #[cfg(test)]
 mod tests;
@@ -70,6 +74,11 @@ pub enum CodegenError {
         position: &'static str,
         ty: Type,
     },
+
+    #[error(
+        "function `{function}` has a private range signature and cannot be exported; use explicit export selection (ExportOptions::Only or ExportOptions::None)"
+    )]
+    RangeExport { function: String },
 
     #[error("parameter {index} in function `{function}` cannot have type void")]
     VoidParameter { function: String, index: usize },
@@ -261,6 +270,7 @@ impl CodegenError {
             | Self::UnknownExport { .. }
             | Self::DuplicateExportSelection { .. }
             | Self::UnsupportedAbiType { .. }
+            | Self::RangeExport { .. }
             | Self::VoidParameter { .. }
             | Self::MissingReturnValue { .. }
             | Self::LimitExceeded { .. } => None,
@@ -368,6 +378,19 @@ fn assemble(validated: &validation::ValidatedProgram<'_>) -> Vec<u8> {
     if let Some(remainder) = &layout.remainder {
         functions.function(remainder.type_index.raw());
         code.function(&numeric::emit_remainder());
+    }
+
+    if !layout.ranges.is_empty() {
+        let allocator = layout
+            .memory
+            .as_ref()
+            .expect("range memory planned before assembly")
+            .first_function
+            .offset(memory::Helper::Alloc.index());
+        for (helper, plan) in range::Helper::ALL.into_iter().zip(&layout.ranges) {
+            functions.function(plan.type_index.raw());
+            code.function(&range::emit(helper, allocator));
+        }
     }
 
     let mut module = Module::new();

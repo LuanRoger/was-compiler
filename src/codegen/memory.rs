@@ -187,7 +187,9 @@ impl Visitor for MemoryVisitor<'_> {
                 *self.used |= matches!(func, FunctionRef::Builtin(BuiltinFunction::Len));
             }
 
-            TypedExprKind::Array(_) | TypedExprKind::Index { .. } => *self.used = true,
+            TypedExprKind::Array(_) | TypedExprKind::Index { .. } | TypedExprKind::Range { .. } => {
+                *self.used = true
+            }
 
             _ => {}
         }
@@ -197,7 +199,7 @@ impl Visitor for MemoryVisitor<'_> {
 }
 
 fn memory_type(ty: Type) -> bool {
-    matches!(ty, Type::String | Type::NumberArray)
+    matches!(ty, Type::String | Type::NumberArray | Type::Range)
 }
 
 fn aligned_offset(value: u64) -> Result<u32, CodegenError> {

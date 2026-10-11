@@ -457,6 +457,12 @@ fn value(ty: Type) -> TypedExpr {
         Type::Bool | Type::Void => TypedExprKind::Bool(false),
         Type::String => TypedExprKind::String("text".into()),
         Type::NumberArray => TypedExprKind::Array(vec![]),
+        Type::Range => TypedExprKind::Range {
+            start: Box::new(number("0")),
+            end: Box::new(number("1")),
+            step: None,
+            inclusive: false,
+        },
     };
     TypedExpr {
         kind,

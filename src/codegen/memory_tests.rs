@@ -298,6 +298,15 @@ fn value_for_type(ty: Type) -> TypedExpr {
         Type::Bool => boolean(),
         Type::String => string("valid"),
         Type::NumberArray => array(vec![]),
+        Type::Range => TypedExpr {
+            kind: TypedExprKind::Range {
+                start: Box::new(number("0")),
+                end: Box::new(number("1")),
+                step: None,
+                inclusive: false,
+            },
+            ty: Type::Range.into(),
+        },
         Type::Void => panic!("value type"),
     }
 }

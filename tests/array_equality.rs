@@ -291,6 +291,12 @@ fn value(ty: Type) -> TypedExpr {
         Type::Number => TypedExprKind::Number("1".into()),
         Type::String => TypedExprKind::String("text".into()),
         Type::NumberArray => return array(),
+        Type::Range => TypedExprKind::Range {
+            start: Box::new(value(Type::Number)),
+            end: Box::new(value(Type::Number)),
+            step: None,
+            inclusive: false,
+        },
         Type::Bool | Type::Void => TypedExprKind::Bool(false),
     };
     TypedExpr {

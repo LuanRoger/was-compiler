@@ -62,7 +62,7 @@ are evaluated left-to-right.
 
 Local declarations support both `let name = initializer;` and the existing
 `let name: type = initializer;`. Without an annotation, the initializer determines
-the local's concrete type: `number`, `bool`, `string`, or `number[]`. This works for
+the local's concrete type: `number`, `bool`, `string`, `number[]`, or `range`. This works for
 all value-producing expressions, including calls, blocks, and `if`; `[]` infers
 `number[]` because numeric arrays are the only array type. Explicit annotations
 still require an exact match.
@@ -404,6 +404,42 @@ argument values and returns raw results. Numbers use `f64`; booleans and
 string/array descriptor handles use `i32`. Native strings/arrays are not marshaled
 automatically. Use `createAbi` from `runtime/abi.cjs` for explicit conversion, or
 access memory directly when reference mutation is required.
+
+### Range construction and internal calls (WP5 first checkpoint)
+
+`range` values support `start..end` and `start..=end`, with an optional contextual
+`by step`; the default step is `+1`. Range operators bind below arithmetic and
+above comparisons and are non-associative. Endpoints and steps must be `number`.
+
+```text
+fn identity(value: range) -> range { return value; }
+
+fn main() -> number {
+    let value: range = identity(10..=0 by -2);
+    return 7;
+}
+```
+
+Compile this example with `--export main` or
+`ExportOptions::Only(vec!["main".into()])`. Range parameters/results use private
+`i32` handles internally; every range host-import signature and every selected
+range user-export signature is rejected. Default export-all therefore rejects
+`identity`; `Only` or `None` permits internal range functions without pruning or
+skipping checks. There is no public range marshaling API.
+
+Construction evaluates start, end, and explicit step once, left-to-right, **all
+before validation**, even when an earlier operand is invalid or the range is empty
+or discarded. Executed construction traps unless all inputs are finite integers
+within `-(2^53 - 1)..=(2^53 - 1)` and the step is nonzero (both signed zeros are
+invalid). Negative-zero endpoints become integer zero. Each construction allocates
+an immutable private record; assignment and internal calls share its handle.
+See the [private layout and validation contract](docs/memory-abi.md#private-range-record).
+
+Range locals, assignments, parameters/results, blocks, `if` values, and value loops
+use exact type joins with `Never` compatibility. Range `==`/`!=` are prohibited.
+This is **only the first WP5 checkpoint**, not full range support: `for`, `in`,
+membership, and iteration remain proposed. No optimization passes were added;
+programs without ranges retain their existing bytes and helper order.
 
 ## Optimization levels
 

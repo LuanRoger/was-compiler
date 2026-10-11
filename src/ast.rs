@@ -6,6 +6,7 @@ pub enum Type {
     String,
     Bool,
     NumberArray,
+    Range,
     Void,
 }
 
@@ -51,6 +52,13 @@ pub enum Expr {
         left: Box<Expr>,
         op: BinaryOp,
         right: Box<Expr>,
+    },
+
+    Range {
+        start: Box<Expr>,
+        end: Box<Expr>,
+        step: Option<Box<Expr>>,
+        inclusive: bool,
     },
 
     Call {

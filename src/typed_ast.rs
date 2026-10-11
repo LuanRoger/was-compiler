@@ -91,6 +91,13 @@ pub enum TypedExprKind {
         right: Box<TypedExpr>,
     },
 
+    Range {
+        start: Box<TypedExpr>,
+        end: Box<TypedExpr>,
+        step: Option<Box<TypedExpr>>,
+        inclusive: bool,
+    },
+
     Call {
         func: FunctionRef,
         name: String,

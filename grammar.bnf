@@ -15,6 +15,7 @@
 <type> ::= "number" <array_type_suffix>?
          | "bool"
          | "string"
+         | "range"
          | "void"
 
 <array_type_suffix> ::= "[" <ws> "]"
@@ -138,14 +139,26 @@
 <equality_operator> ::= "==" | "!="
 
 
-<comparison_expression> ::= <additive_expression>
+<comparison_expression> ::= <range_expression>
                             ( <ws> <comparison_operator>
-                              <ws> <additive_expression> )*
+                              <ws> <range_expression> )*
 
 <comparison_operator> ::= "<"
                         | "<="
                         | ">"
                         | ">="
+
+
+<range_expression> ::= <additive_expression>
+                        ( <ws> ( ".." | "..=" ) <ws> <additive_expression>
+                          ( <ws> "by" <ws> <additive_expression> )? )?
+
+# Range construction is non-associative; parenthesized ranges are syntactically
+# valid operands but semantic analysis requires numeric endpoints and steps.
+# by is an ordinary identifier except when attaching a step after a range endpoint.
+# range is a reserved type keyword. Range == and != are semantic errors.
+# Recognize ..= before .. and stop numeric scanning before either token; other
+# malformed decimals remain invalid. Range punctuation must be contiguous.
 
 
 <additive_expression> ::= <multiplicative_expression>
