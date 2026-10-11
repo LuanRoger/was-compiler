@@ -97,7 +97,7 @@ Unless explicitly stated otherwise:
 - Each source expression is evaluated at most once per evaluation of its containing construct, unless the programmer explicitly places it in a loop or closure body.
 - `&&` and `||` remain short-circuiting.
 - A compound assignment evaluates its target location exactly once, then reads the old value, evaluates the RHS, computes, and writes.
-- A `for` expression evaluates its iterable exactly once on entry.
+- A `for` statement evaluates its iterable exactly once on entry, in the enclosing context before activating the new loop or introducing its iteration binding.
 - Pipeline stages evaluate in order; the previous stage's result is evaluated once and passed forward.
 - Explicit call arguments are evaluated in written source order; omitted defaults are evaluated afterward, in formal declaration order. Resolution of names in defaults is lexical at the function declaration, never dynamic at the call site.
 
@@ -283,11 +283,31 @@ The default step is `+1`; `10..0` with no explicit step is empty. A negative ste
 
 ### 5.4 Representation and performance
 
-An unescaped range MAY be represented by runtime scalar locals for
-`(start, end, step, inclusive)` without allocation; only constant fields are
-compile-time values. Range arithmetic SHOULD use exact internal signed `i64` after construction-time safe-integer checks. A first-class range value can be a small descriptor of validated signed `i64` start/end/step plus inclusivity. Since each operand has magnitude at most `2^53 - 1`, endpoint differences and steps are representable in `i64`; use overflow-safe termination before advancing. Each yielded element is exposed as language `number` (`f64`) with exact conversion, since it remains within the validated bounds. On advancing beyond the endpoint, iteration terminates normally; it MUST NOT trap or emit an out-of-range element. A `for` over a known progression SHOULD lower directly to a loop with cached bounds; never allocate an array of range elements solely to iterate.
+WP5's approved representation is a single `i32` handle to an immutable private,
+eight-byte-aligned 32-byte record, allocated with the existing bump allocator.
+Validated signed `i64` start/end/step occupy byte offsets 0/8/16. A `u32`
+inclusivity flag at offset 24 is exactly 0 or 1; four bytes of reserved padding at
+offset 28 are initialized to zero. Copies share the immutable record. This is not
+the public string/array descriptor ABI and adds no host range-marshaling API.
+The representation is approved, not yet implemented; see
+[ADR-0001](adr/0001-private-range-representation.md) for the rationale.
+
+Internal functions may accept and return range handles. Reject range parameters
+or results in every host import, including unused imports and forged host
+snapshots. Reject user range signatures only when selected for export; default
+export-all fails with guidance to use explicit selection. `None` or compatible
+`Only` selection permits internal range functions without pruning their bodies or
+skipping validation. Check private record bounds and fields where consumed and
+at internal parameter boundaries.
+
+Allocation-free scalar representations of unescaped ranges are deferred to WP13,
+subject to evidence and semantic proofs. Range arithmetic MUST use exact internal
+signed `i64` after construction-time safe-integer checks. Since each operand has magnitude at most `2^53 - 1`, endpoint differences and steps are representable in `i64`; use overflow-safe termination before advancing. Each yielded element is exposed as language `number` (`f64`) with exact conversion, since it remains within the validated bounds. On advancing beyond the endpoint, iteration terminates normally; it MUST NOT trap or emit an out-of-range element. A `for` over a known progression SHOULD lower directly to a loop with cached bounds; never allocate an array of range elements solely to iterate.
 
 Membership MUST produce the same result as visiting the progression: reject nonintegral, NaN, and infinite candidate values as nonmembers; use the exact `i64` interval and modular congruence checks after verifying the candidate is a safe integer. Normalize the sign of modulus or use an equivalent comparison for descending ranges. Avoid floating-point modulus/rounding errors. No optimization may change behavior for NaN, negative step, or boundary inclusivity.
+
+Range `==` and `!=` are static errors in WP5, including for forged typed input.
+Membership does not define handle identity, record equality, or sequence equality.
 
 ### 5.5 Acceptance tests
 
@@ -298,7 +318,9 @@ range constructions. Zero endpoints are valid; `-0..=0` yields exactly one `+0`,
 verified with `Object.is`. Side-effectful endpoints/steps evaluate once, left to
 right. Test exact membership near both safe-integer limits, normal exhaustion
 without a trap, and preserved preceding host effects for invalid constant ranges
-at every optimization level.
+at every optimization level. Pin record bytes independently, cover internal range
+parameters/results and selected-export/host-import rejection, and reject range
+`==`/`!=` in source and forged typed trees.
 
 ## 6. Feature specification: `for` loops and direct array iteration
 
@@ -324,7 +346,7 @@ The same syntax supports a `range` or a `number[]`. Iteration over `string` and 
 
 ### 6.2 Semantics
 
-- The iterable expression is evaluated once before the first iteration.
+- The iterable expression is evaluated once before the first iteration, in the enclosing context before activating the new `for` or introducing its iteration binding. Break/continue there target an existing enclosing loop under its usual rules, or are invalid without one. Unlike a while condition, the iterable cannot transfer to the new loop. Return/divergence during iterable evaluation is preserved; it does not create a normally completing `for` path.
 - The loop variable is local, read-only, and typed `number` for either supported iterable.
 - The range yields arithmetic-progression elements per §5.
 - Array iteration uses the same underlying array reference for the loop's lifetime; array elements are loaded at each iteration, not snapshotted, so mutations to unvisited indices may be observed. The iteration length is captured once on entry; current arrays have fixed length.
@@ -340,12 +362,14 @@ Range:
 let iterable = eval_range_once();
 let current = iterable.start;
 block break_target {
-    loop continue_target {
+    loop backedge_target {
         if !within_bounds(current, iterable) { break break_target; }
         let i = current;
-        BODY
-        current = next(current, iterable.step);
-        branch continue_target;
+        block continue_target {
+            BODY // continue exits this block and reaches advancement
+        }
+        current = next_exact_i64(current, iterable.step);
+        branch backedge_target;
     }
 }
 ```
@@ -357,15 +381,22 @@ let array_ref = eval_array_once();
 let count = len(array_ref);
 let index = 0;
 block break_target {
-    loop continue_target {
+    loop backedge_target {
         if index >= count { break break_target; }
         let value = array_ref[index];
-        BODY
+        block continue_target {
+            BODY // continue exits this block and reaches advancement
+        }
         index = index + 1;
-        branch continue_target;
+        branch backedge_target;
     }
 }
 ```
+
+These sketches use exact internal integer advancement and test bounds before the
+next yield; advancing beyond the endpoint exhausts normally, without a trap or an
+out-of-range yield. Tests must cover iterable transfers and binding scope, including
+nested enclosing loops and rejection when no valid target exists.
 
 **Lowering warning:** `continue` must target the increment/latch path rather than jump around the induction-variable update. Implement an explicit latch block or equivalent structured region; naive `br loop` from the middle of the body can produce an infinite loop.
 

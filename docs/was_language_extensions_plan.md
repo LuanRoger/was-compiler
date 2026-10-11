@@ -269,15 +269,19 @@ are compile-only tests; subprocess deadlines are not guest fuel. WP5 is next.
 
 ### WP5 — Safe ranges, range/array `for`, membership (spec §§5–6)
 
-**Entry:** WP4; approve range representation/export gates before touching `Type`.
+**Entry:** WP4. Range representation/export gates are approved as specified below;
+WP5 is not yet implemented. See [ADR-0001](adr/0001-private-range-representation.md)
+for the representation and external-boundary rationale.
 Split this package into sequential checkpoints: construction/internal calls → exact
 membership/progression → `for` and its latch → adapters/interactions. No partial
 checkpoint is advertised as complete range/for support.
 
-Choose the safest MVP: a single `i32` handle to an immutable private, aligned record
-containing validated signed `i64` start/end/step and an inclusivity flag. A candidate
-layout is 32 bytes (three eight-byte fields, flag and padding); freeze named private
-size/offset/alignment constants in `abi.rs` and independent expected bytes in tests.
+The approved MVP uses a single `i32` handle to an immutable private, eight-byte-aligned
+32-byte record. Validated signed `i64` start/end/step occupy byte offsets 0/8/16;
+a `u32` inclusivity flag at offset 24 is exactly 0 or 1, and four bytes of reserved
+padding at offset 28 are initialized to zero. Copies share the immutable record.
+Freeze named private size/offset/alignment constants in `abi.rs` and independent
+expected bytes in tests.
 It is not the public string/array descriptor ABI. Reuse bump allocation initially;
 do not materialize an array, expose range marshaling, or promise allocation-free
 range locals. Scalar-record replacement belongs to WP13 after evidence/proofs.
@@ -296,6 +300,9 @@ bounds keep sums/differences within i64; document that proof rather than using f
 Invalid constant constructions remain runtime traps at the original evaluation
 position, never new compile errors; folding later may replace them with that trap.
 
+Range `==` and `!=` remain static errors, including for forged typed input;
+membership introduces no handle, record, or sequence equality contract.
+
 Internal range parameters/results are permitted as the same handle representation;
 separate internal lowering from raw host-signature eligibility. Reject every range
 host import (even unused) at registration and for forged host snapshots in layout.
@@ -304,7 +311,12 @@ with guidance to use existing explicit selection. `None`/compatible `Only` do no
 prune internal range bodies. Check private record bounds/fields where consumed and
 at internal parameter boundaries; do not publish unchecked private-handle APIs.
 
-`for` evaluates iterable once; range fields or array handle/length are cached.
+`for` evaluates its iterable once in the enclosing context, before activating the
+new loop or introducing its iteration binding. Break/continue during evaluation
+target an existing enclosing loop under its usual rules, or are invalid if none
+exists; unlike while conditions, the iterable cannot target the new loop. Preserve
+iterable return/divergence without inventing fallthrough. Range fields or array
+handle/length are cached.
 Array elements load each iteration so alias mutations of future elements are seen.
 Add binding mutability metadata: iteration binding is read-only, ordinary let is
 mutable; shadowing creates a different binding. Continue branches to a body-exit
@@ -314,7 +326,9 @@ Append extension helpers deterministically without reordering `Helper::ALL` or t
 existing optional remainder helper; feature-free modules acquire no new helpers.
 
 **Exit tests:** proposed `tests/ranges.rs`, `tests/for_loops.rs`; token/precedence,
-wrong iterable/types, read-only writes/compound updates and forged range/for metadata.
+wrong iterable/types, rejected range equality, read-only writes/compound updates,
+iterable transfers to enclosing loops (and rejection without one), binding scope,
+and forged range/for metadata.
 Pin records, internal signatures, export surfaces, integer instructions and latch
 depths independently; compare bounded iteration to membership with an independent
 reference. Runtime cases include ±safe limits, large steps/exhaustion, both endpoint
