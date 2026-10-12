@@ -75,8 +75,9 @@ bypasses the compiler's optimization/options orchestration.
 | `src/tokens.rs`, `src/lexer.rs` | Tokens and UTF-8 byte-offset spans |
 | `src/parser.rs`, `src/ast.rs` | Recursive-descent parsing and untyped syntax |
 | `src/semantic.rs`, `src/typed_ast.rs` | Types, scopes, loop targets, return analysis, resolved semantic IDs |
-| `src/semantic/inference.rs` | Private lexical dependency/recursive-component policy and initial result probes |
-| `src/flow.rs` | Private completion sets, reachable return and value-break constraints |
+| `src/semantic/defaults.rs`, `src/semantic/call_binding.rs` | Declaration-checked pure defaults and hygienic named/default binding |
+| `src/number_literal.rs` | Shared literal syntax/finite-representability rules with stage-specific errors |
+| `src/flow.rs` | Private completion sets shared by semantic/backend flow summaries |
 | `src/host.rs`, `src/exports.rs` | Ordered host declarations, private external-type eligibility, and owned export selection |
 | `src/optimization.rs` | Borrowed `Cow<TypedProgram>` no-op; future transformation boundary |
 | `src/codegen/abi.rs` | Internal language-to-Wasm signatures, separate external signature checks, and named memory-layout constants |
@@ -121,25 +122,29 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
 
 ## Current language support
 
-- This is isolated #11 development on `develop/wp7-initial-inference`, based on
-  the #10 gate. #12 defaults are developed separately. Integration/release remains
-  blocked on #13. Before changing result inference, read
-  [the isolated contract](docs/result-inference-development.md) and
-  [coordination handoff](docs/wp6-wp7-development.md). Keep new-feature declaration,
-  graph, probe, and final-check stages ordered; fully annotated programs retain
-  their legacy path. Before changing named lowering, read
-  [the named-call interface](docs/named-call-interface.md).
+- WP6 implements user-function named/mixed-prefix calls and trailing pure defaults;
+  #13's release gates passed with [recorded evidence](docs/was_language_extensions_plan.md#issue-13-wp6-release-validation).
+  Issue #11 integrates initial result inference with released WP6 on
+  `develop/wp7-initial-inference`; #14 chain scheduling and the full WP7 release
+  gate remain pending. Preserve `target/wp7-inference` when cleaning generated
+  output. Before changing defaults, call binding, or
+  normalized lowering, read [the handoff](docs/wp6-wp7-development.md) and
+  [named-call interface](docs/named-call-interface.md) for origins, ownership,
+  diagnostic staging, whitelist, and earlier-formal read rules.
 
-- Types: `number`, `bool`, `string`, `number[]`, `range`, and `void`. Parameters require
-  explicit types; omitted results use only initial #11 inference (no unresolved
-  unannotated callees or recursive inference). Locals accept `let name = initializer;` or
+- Types: `number`, `bool`, `string`, `number[]`, `range`, and `void`. Parameters
+  require explicit types. Omitted function results infer concrete types from
+  reachable explicit returns, or void without value-return syntax. Recursive
+  components require all results annotated; inferred-to-inferred calls are
+  rejected until #14. Never-only value-return syntax requires an annotation.
+  All unreachable/skipped children remain checked against final concrete results.
+  See [the incremental contract](docs/result-inference-development.md). Locals accept `let name = initializer;` or
   `let name: type = initializer;`; every declaration requires an initializer.
   Value-producing expressions infer concrete existing types; `[]` infers `number[]`
   because only numeric arrays exist. An inferred `Never` initializer is rejected;
   an explicitly typed divergent initializer is accepted. No coercions are added.
 - Local inference adds no source `i32` type, promotions, implicit coercions,
-  coercions or whole-program unification. #11's function-result probes are separate
-  from local inference. `number` remains `f64`.
+  parameter inference, or whole-program type unification. `number` remains `f64`.
 - Named functions support forward, nested, self-recursive, mutual, and registered
   host calls. Statements include `let`, variable/index assignment, expression
   statements, `return`, `if`/`else`, `while`, range/array `for`, and `loop`. Bare

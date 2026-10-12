@@ -1,6 +1,6 @@
 use crate::ast::Type;
 
-/// Possible completions, with reachable value-break constraints for the nearest loop.
+/// Possible completions, with reachable return and nearest-loop value-break constraints.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Flow {
     completions: u8,

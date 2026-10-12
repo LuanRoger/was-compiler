@@ -28,12 +28,13 @@ The [runtime integration guide](runtime-integration.md) covers CLI and embedding
 usage. The [roadmap](compilation-roadmap.md) describes milestone scope and
 implemented language extensions.
 
-Issue #10 adds an incremental WP6 slice: user-function named arguments, including
-reordering and mixed positional-prefix calls. Defaults are not enabled in this isolated worktree. Initial result inference
-without unresolved callee dependencies is developed here for #11, behind the
-uncompleted #13 integration/release gate; neither WP6 nor WP7 is released.
-See [isolated inference status](result-inference-development.md). See the
-[named-call interface gate](named-call-interface.md) for typed-tree ownership.
+WP6 named/mixed-prefix arguments and trailing defaults resolved against earlier
+formals are implemented. [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation),
+including adapter coverage and the full ignored suite. Issue #11 integrates
+initial result inference with released WP6; inferred-to-inferred dependencies
+remain rejected until #14 and the full WP7 release gate is not complete. See the
+[named/default interface](named-call-interface.md) for migration and the
+[development handoff](wp6-wp7-development.md) for historical worktree evidence.
 
 ## Source language and frontend
 
@@ -61,13 +62,34 @@ Every required formal must be supplied exactly once with its exact type; positio
 cannot follow named arguments. Named host and builtin arguments are rejected after
 lexical target resolution. Written-order structural errors precede missing-formal
 errors, which precede explicit-expression analysis. Ordinary positional-call error
-ordering and locations remain unchanged. Parameter types remain mandatory; defaults are not accepted in this isolated
-worktree. Named-function results may be omitted under the initial #11 rules.
-Unannotated-to-unannotated calls, recursive inference, implicit nonvoid tails,
-and Never-only value-return inference remain unsupported. Final signatures are
-concrete and retain all existing host/export restrictions. The raw AST now uses
-`Vec<CallArgument>` instead of `Vec<Expr>` for calls, carrying optional names and
-argument spans. Typed normalized sequences are checked again during compilation.
+ordering and locations remain unchanged. Parameter types and function results still
+require annotations. Defaults must be trailing and may read only earlier formals,
+not caller locals, their own formal, later formals, or body locals. All declared
+defaults are validated in declaration order before body checks, including unused
+and explicitly supplied ones. Invalid/overflowing default literals are semantic
+errors at their declaration origins; underflow and IEEE-754 arithmetic remain
+allowed. Ordinary body-literal errors retain their previous stage and locations.
+
+The initial whitelist admits scalar literals, earlier-formal reads, existing
+unary/arithmetic/comparison/equality/logical operations, and positional builtin
+`len`. String/array content equality is permitted. Indexing, array/range
+construction, membership, blocks/if/loops, writes, and user/host calls are rejected,
+including skipped operands. Pure does not mean nontrapping or snapshotting shared
+array contents. No general user-function purity analysis is implemented.
+
+The raw AST uses `Vec<CallArgument>` instead of `Vec<Expr>` for calls; raw `Param`
+now also requires `default: Option<DefaultExpression>` with `value` and declaration
+`span` (use `None` in existing constructors). Raw `Function.return_type` is
+`Option<Type>`: wrap explicit annotations in `Some(type)`; `None` requests
+initial result inference. Typed signatures remain concrete `Type`.
+Typed `Call` operands remain `Vec<TypedExpr>` and `TypedParam` has no default
+metadata. Exhaustive typed-expression consumers must handle `NormalizedCall`;
+see the [current interface and migration](named-call-interface.md#current-wp6-contract-issues-1012).
+Typed signatures remain concrete and full-arity. Normalized sequences store explicit
+values in written order, then omitted defaults in formal order; earlier-formal template IDs are remapped to
+invocation bindings. Checked lowering validates default origins, ordering,
+whitelist, and earlier-formal reads in mutable public trees. Raw callers must
+still supply all arguments, and private range restrictions are unchanged.
 
 Compound assignments `+=`, `-=`, `*=`, `/=`, and `%=` are supported as statements
 on `number` variables and identifier-rooted numeric-array elements only. Both the
@@ -167,7 +189,7 @@ browser bindings and the full ignored-test run. Default tests still skip Node ca
 
 | Restriction now | Practical effect | Current alternative | Possible future choice and tradeoff |
 | --- | --- | --- | --- |
-| Only `number`, `bool`, `string`, `number[]`, `range`, and `void` exist. Parameter annotations remain mandatory; omitted results follow the initial #11 rules; every `let` requires an initializer. No unresolved-callee/recursive result inference, whole-program type unification, promotions, implicit coercions, or source `i32` type. | Local inference does not change the `f64` numeric model or allow later assignments of another type. A boolean cannot stand in for a number, and a numeric value cannot serve as a condition; `void` is not a variable/parameter type. | Use inferred or explicitly annotated locals and explicit helper functions, branches, or registered host conversions with matching signatures. | Explicit conversions or broader inference require separate type-system and error-ordering decisions; neither is implied by local initializer inference. |
+| Only `number`, `bool`, `string`, `number[]`, `range`, and `void` exist. Parameters require annotations; omitted results infer only without unresolved callee dependencies. Recursive components require explicit results on every member; Never-only value-return syntax needs an annotation. Every `let` requires an initializer. No parameter inference, whole-program type unification, promotions, implicit coercions, or source `i32` type. | Local inference does not change the `f64` numeric model or allow later assignments of another type. A boolean cannot stand in for a number, and a numeric value cannot serve as a condition; `void` is not a variable/parameter type. | Use inferred or explicitly annotated locals and explicit helper functions, branches, or registered host conversions with matching signatures. | Explicit conversions or broader inference require separate type-system and error-ordering decisions; neither is implied by local initializer inference. |
 | No source modules/import declarations, structs, generics, first-class functions, or closures. Calls resolve named user functions, registered hosts, or the built-in `len`. | The source program is one collection of functions; host registration is an embedding/CLI responsibility. | Put related functions in one source unit and supply external capabilities through host functions. Numeric-array conventions can model simple records, but have no field/type safety. | Modules or dedicated aggregate/function types need name-resolution, type-system, and ABI decisions. Host-side modeling avoids those changes but keeps application-specific conventions outside the language. |
 | No labels or `foreach`. Transfers target the nearest active while/for/loop; only value loops allow value breaks. Range/array for is statement-only with a read-only numeric binding. Nonvoid functions must return or explicitly diverge, never fall through. | Loops cannot transfer across function boundaries. A range or array may be empty, so its body alone does not guarantee return. A no-exit syntactic loop is Never; arbitrary calls or possible traps do not prove divergence. | Use range/array for, statement/value `loop`, numeric-index while plus `len(array)`, and explicit returns. Shadow an iteration binding with a distinct inner let when a mutable local is needed. | Labels need their own target-resolution contract; implementing WP5 does not add labeled transfers. |
 | Array indexing in source starts from an identifier; there is no general postfix chaining. | `make_values()[0]` and `[1, 2][0]` are not supported source forms. | Assign the result/literal to an inferred or annotated `number[]` local, then index that local. | General postfix parsing is a grammar feature and needs explicit assignment-target rules. |
@@ -323,7 +345,10 @@ Evidence: [tokens.rs](../src/tokens.rs), [typed_ast.rs](../src/typed_ast.rs),
   statement-vector block aliases remain unchanged. Raw/typed value-block wrappers
   carry statements, an optional boxed tail, and a span. Individual expressions
   still have no independent spans, so wrappers do not promise precise locations
-  for every nested expression error.
+  for every nested expression error. WP6 adds argument/default origin spans:
+  normalized explicit initializer errors use the written argument, while default
+  errors use the declaration expression; ordinary positional calls retain legacy
+  enclosing-statement locations.
 - `TypedProgram` and its nodes/IDs/type annotations are public and mutable.
   `Compiler::analyze` creates a checked program, including an owned host-import
   snapshot, but callers can forge inconsistent input before `compile`. The

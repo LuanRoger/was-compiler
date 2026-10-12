@@ -196,6 +196,44 @@ wrapper and its Wasm memory are **not** the generated program's runtime or
 memory. Do not use the compiler's memory to read program strings/arrays, and do
 not pass compiler glue imports to the emitted module.
 
+## Named arguments and defaults (WP6)
+
+`compile` and `compileWat` accept the same user-function named/mixed-prefix calls
+and trailing pure defaults as the native core; no browser-only binding API is added:
+
+```text
+fn total(base: number, extra: number = base + 1) -> number {
+    return base + extra;
+}
+fn main() -> number { return total(base: 3); }
+```
+
+Compile and instantiate this source with the JavaScript API above. `main()`
+returns `7`, but the raw export `total` still has two machine parameters:
+`instance.exports.total(3, 9)` returns `12`. Calling `total(3)` directly does not
+run its source default. Supply the full raw signature or expose a source wrapper
+like `main`; there is no emitted default metadata or host argument generator.
+
+Explicit source arguments are captured once in written order, then omitted defaults
+run in formal order per invocation. Handles remain shared, so defaults may observe
+later explicit array mutations or trap during descriptor validation. The
+[default whitelist](was_language_extensions_spec.md#142-default-expression-restrictions-and-scope)
+allows only earlier-formal reads, scalar literals, existing type-valid operators,
+and positional builtin `len(array)`; it is checked even in skipped operands and
+unused declarations. Named host/builtin arguments remain unsupported. Default
+errors retain declaration origins; normalized explicit arguments retain call-site
+origins in the shared `<browser>` diagnostics. Private range export/import
+restrictions are unchanged, including when a default copies an earlier range.
+
+WP6 named/default parameters are implemented, and
+[#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation),
+including current-source rebuilt bindings, the browser harness, and the full
+ignored suite. Rebuild `pkg/` after core/browser changes before validating browser
+behavior; the [handoff](wp6-wp7-development.md#validation) records earlier historical
+worktree-development evidence. Result annotations remain mandatory: WP7 stays
+isolated and is not integrated. Contracts, match, pipelines, closures, and
+placeholders remain later packages with ordered integration/release gates.
+
 ## Host function example
 
 Registration only declares an import; it does not install a JavaScript callback.

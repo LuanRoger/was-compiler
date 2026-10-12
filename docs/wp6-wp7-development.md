@@ -1,5 +1,13 @@
 # Issues #12 and #11: development handoff
 
+This is the historical independent-development record. WP6 is now integrated on
+`main` and #13's release validation passed; see
+[the release evidence](was_language_extensions_plan.md#issue-13-wp6-release-validation).
+Issue #11 now combines initial WP7 inference with released WP6 on
+`develop/wp7-initial-inference`; the full WP7 release gate remains pending.
+References below to uncommitted branches and pending #13 describe
+the earlier development checkpoint, not current release status.
+
 ## Starting point and gates
 
 Base: `1d7dbf3` on `main`, including #10 commit `156512e`. The working tree
@@ -164,3 +172,30 @@ Both full validation sequences were rerun after production/review fixes. WP7 has
 not been merged into WP6. Combined feature integration tests are deliberately
 pending #13; running each complete suite does not establish that separate gate.
 Issues #9/#11/#12/#13 remain unchanged and open (except already closed #10).
+
+## Issue #11 integration ownership after #13
+
+Integration base: main e92b06b; existing WP7 commit: 1019b8b. Both trees
+were clean. The integrator alone resolves shared AST/parser/semantic/Flow,
+default and call-binding interfaces, module wiring, existing test migrations,
+and documentation. A dedicated test agent owns only tests/result_inference_defaults.rs;
+an adapter test agent owns only tests/result_inference_adapters.rs.
+They request all other file changes from the integrator. Existing public seams
+remain source analysis, checked typed-program compilation, decoded ABI and
+bounded CLI/browser/Node behavior. No #14 dependency scheduling or #15 release
+acceptance is implemented. ReturnContext::Known(Type)/Infer stays private;
+default whitelist checking precedes typing with Known(Void) because admitted
+defaults cannot return. Named/default explicit arguments use the caller return
+context; default declarations precede graph/probe/final-body checks.
+
+The two dedicated test agents stopped at their usage limits. The integrator
+assumes exclusive ownership of both test files to finish and validate their
+partial work; no concurrent writers remain.
+
+Combined validation and red/green diagnostic regression evidence are recorded in
+[result inference development](result-inference-development.md#combined-validation-2026-10-12).
+Final read-only Standards review found no outstanding hard violations. Spec
+review found a shortened positional/default dependency-origin mismatch; it was
+fixed and verified with source, CLI and rebuilt-browser regressions. Follow-up
+Spec review reported zero outstanding findings. The discretionary private context
+parameter rename was left unchanged to avoid incidental churn.

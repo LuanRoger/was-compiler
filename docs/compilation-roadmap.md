@@ -49,14 +49,24 @@ must wrap operands in this record. Named calls use `TypedNormalizedCall` with
 written-order owned bindings, formal mapping and a final full-arity direct call.
 Checked lowering verifies ownership, scope, mapping and signatures using the
 existing emitter, not a second validator. Planning visits bindings then the call;
-ordinary positional calls preserve their legacy path. Defaults remain isolated on the WP6 development branch. This WP7 worktree
-adds issue #11's initial result inference only: raw `Function.return_type` is
-`Option<Type>`, while typed signatures remain concrete. Private lexical graph
-policy lives in `semantic/inference.rs`; result probes reuse the checker and
-reachable `Flow` summaries. No chain scheduling, fixed-point solver, or new IR
-is added. Integration remains behind #13. See the
-[interface gate](named-call-interface.md) and
-[isolated inference status](result-inference-development.md).
+ordinary positional calls preserve their legacy path. Issue #12 enables trailing
+pure defaults: raw `Param.default: Option<DefaultExpression>` owns an expression
+and declaration span; existing raw constructors add `default: None`. Private
+`semantic/defaults.rs` checks declarations through the existing expression checker,
+and `semantic/call_binding.rs` instantiates earlier-formal templates into caller
+bindings. Shared numeric-literal rules live in private `number_literal.rs` without
+changing ordinary body errors. Default-origin bindings follow explicit bindings,
+and checked lowering admits only owned earlier-formal reads and whitelist nodes.
+WP6's release gate (#13) passed; see the
+[release evidence](was_language_extensions_plan.md#issue-13-wp6-release-validation).
+Issue #11 integrates initial result inference with released WP6. Raw
+`Function.return_type` is `Option<Type>`; typed signatures remain concrete. Private
+`semantic/inference.rs` discovers lexical dependencies and conservative recursive
+components; the existing expression checker and private `Flow` compose reachable
+return constraints. Inferred-to-inferred calls remain rejected until #14; this
+incremental integration does not complete the full WP7 release gate. See
+[the initial inference contract](result-inference-development.md). See the
+[interface gate](named-call-interface.md) and [handoff](wp6-wp7-development.md).
 
 The compiler emits bytes. The embedding application decides whether to write a
 `.wasm` file, instantiate it in a browser, or pass it to another runtime.
@@ -498,8 +508,7 @@ An inferred void-returning call initializer uses the existing
 `SemanticError::InvalidVoidType` for the local, not a new error variant.
 
 This is local initializer inference, not function inference or whole-program
-type unification. Parameter annotations remain mandatory; #11 separately permits result inference
-in this isolated worktree, and every
+type unification. Parameter and result annotations remain mandatory, and every
 local declaration still requires an initializer. No `i32` language type,
 promotions, or implicit coercions are introduced: `number` remains IEEE-754 `f64`,
 including integer-looking literals. Inference ends at semantic analysis; typed
@@ -772,8 +781,9 @@ completes adapter/interaction support and all WP5 release gates passed, includin
 rebuilt browser bindings and the full ignored-test run; see extension plan §5.
 The [WP5 checkpoint](was_language_extensions_plan.md#wp5--safe-ranges-rangearray-for-membership-spec-56)
 records the cross-feature acceptance coverage.
-The default Cargo suite still skips Node cases. WP6–WP13 remain proposals;
-external range signatures, range equality, and allocation-free range optimization
+The default Cargo suite still skips Node cases. WP6/WP7 have incremental
+development slices described above; their release gates and WP8–WP13 remain
+future work. External range signatures, range equality, and allocation-free range optimization
 remain out of scope.
 
 ## Remaining work

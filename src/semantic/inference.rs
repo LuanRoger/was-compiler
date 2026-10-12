@@ -30,6 +30,9 @@ impl SemanticAnalyzer {
                 let mut walker = LexicalWalker::new(|name, span| {
                     if let Some(&callee) = names.get(name) {
                         calls.push(Call { callee, span });
+                        Some(&program.functions[callee])
+                    } else {
+                        None
                     }
                 });
 
@@ -159,7 +162,7 @@ fn recursive_members(graph: &[Vec<Call>]) -> Vec<bool> {
 }
 
 pub(super) fn has_value_return(function: &Function) -> bool {
-    let mut walker = LexicalWalker::new(|_, _| {});
+    let mut walker = LexicalWalker::new(|_, _| None);
 
     walker.function(function);
 
@@ -174,7 +177,7 @@ struct LexicalWalker<'a, F> {
     has_value_return: bool,
 }
 
-impl<'a, F: FnMut(&'a str, Span)> LexicalWalker<'a, F> {
+impl<'a, F: FnMut(&'a str, Span) -> Option<&'a Function>> LexicalWalker<'a, F> {
     fn new(call: F) -> Self {
         Self {
             scopes: Vec::new(),
@@ -286,18 +289,26 @@ impl<'a, F: FnMut(&'a str, Span)> LexicalWalker<'a, F> {
                 }
             }
             Expr::Call { func, args } => {
-                if !self
+                let declaration = if self
                     .scopes
                     .iter()
                     .rev()
                     .any(|scope| scope.contains(func.as_str()))
                 {
-                    (self.call)(func, span);
-                }
-                let named = args.iter().any(|arg| arg.name.is_some());
+                    None
+                } else {
+                    (self.call)(func, span)
+                };
+                // Match the checker's origin policy: omitted defaults normalize
+                // positional arguments too; full-arity calls keep legacy spans.
+                let normalized = args.iter().any(|arg| arg.name.is_some())
+                    || declaration.is_some_and(|function| {
+                        args.len() < function.params.len()
+                            && function.params.iter().any(|param| param.default.is_some())
+                    });
 
                 for arg in args {
-                    self.expr(&arg.value, if named { arg.span } else { span });
+                    self.expr(&arg.value, if normalized { arg.span } else { span });
                 }
             }
             Expr::Loop { body } => self.scoped_block(body),

@@ -165,6 +165,13 @@ pub struct Function {
 pub struct Param {
     pub name: String,
     pub ty: Type,
+    pub default: Option<DefaultExpression>,
+    pub span: Span,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct DefaultExpression {
+    pub value: Expr,
     pub span: Span,
 }
 

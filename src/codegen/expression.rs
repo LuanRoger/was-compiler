@@ -448,35 +448,16 @@ pub(super) fn arithmetic_instruction(
 }
 
 fn number(literal: &str, function: &str, span: Span) -> Result<f64, CodegenError> {
-    let digits = |part: &str| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit());
-    let valid = match literal.split_once('.') {
-        Some((integer, fraction)) => digits(integer) && digits(fraction),
-        None => digits(literal),
-    };
-
-    if !valid {
-        return Err(CodegenError::InvalidNumberLiteral {
+    crate::number_literal::parse(literal).map_err(|error| match error {
+        crate::number_literal::LiteralError::Invalid => CodegenError::InvalidNumberLiteral {
             function: function.into(),
             literal: literal.into(),
             span,
-        });
-    }
-
-    let value = literal
-        .parse::<f64>()
-        .map_err(|_| CodegenError::InvalidNumberLiteral {
+        },
+        crate::number_literal::LiteralError::OutOfRange => CodegenError::NumberLiteralOutOfRange {
             function: function.into(),
             literal: literal.into(),
             span,
-        })?;
-
-    if !value.is_finite() {
-        return Err(CodegenError::NumberLiteralOutOfRange {
-            function: function.into(),
-            literal: literal.into(),
-            span,
-        });
-    }
-
-    Ok(value)
+        },
+    })
 }

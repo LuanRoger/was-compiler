@@ -101,7 +101,8 @@ Range advancement and array index iteration are inline checked control-flow
 lowering, not new helpers. Array iteration reuses checked `ArrayAddress` and
 preserves live alias observation without changing the descriptor ABI.
 
-**Proposed new files, not existing implementation:** `src/semantic/inference.rs` in WP7 and `src/semantic/captures.rs` in WP11 if those policies
+**Private policy modules:** `src/semantic/inference.rs` implements the initial #11
+slice; `src/semantic/captures.rs` remains proposed for WP11 if those policies
 outgrow `semantic.rs`; `src/codegen/closures.rs` in WP11 for direct helpers/cells.
 These are cohesive modules, not another IR. Proposed integration suites appear below;
 create them at their step, not as empty scaffolding now. Keep specialized decoders local.
@@ -553,7 +554,7 @@ ignored policy. Rebuild bindings after any subsequent core/browser changes befor
 adapter validation. External range signatures, range equality, and allocation-free
 range optimization are out of scope.
 
-### WP6 — Named/default parameters (spec §14)
+### WP6 — Named/default parameters (spec §14): implemented
 
 **Entry:** WP5; raw-call metadata/API gate. Preserve a canonical full-arity typed
 call/signature. Add argument names and trailing-only defaults to raw syntax/signature
@@ -577,12 +578,12 @@ positional-after-named, nontrailing defaults, forbidden calls/later-name reads, 
 normalized calls, decoded full-arity order and runtime lexical/evaluation effects.
 Test defaults per invocation, forward calls, host reentrancy and adapter raw arity.
 
-**Incremental #12 development:** trailing pure defaults and declaration-scope
-binding are implemented on `implement/wp6-defaults`. Dedicated coverage is in
-`tests/named_defaults.rs`, `tests/default_lowering.rs`, and `tests/default_runtime.rs`.
-Full development validation, including freshly rebuilt browser parity and the
-ignored suite, is recorded in [the handoff](wp6-wp7-development.md#validation).
-This does not complete WP6's separate adapter/integration release gate #13.
+**Release status:** issues #10/#12 implement named calls and trailing pure defaults;
+#13 completes native/browser integration coverage and the WP6 release gate.
+Dedicated coverage is in `tests/named_defaults.rs`, `tests/default_lowering.rs`,
+`tests/default_runtime.rs`, the named-call suites, and `tests/cli.rs`.
+See [the release evidence](#issue-13-wp6-release-validation). Earlier independent
+worktree development checks remain historical in [the handoff](wp6-wp7-development.md#validation).
 
 ### WP7 — Acyclic function-result inference first (spec §9)
 
@@ -604,12 +605,13 @@ Cover Never-only value returns requiring annotations versus divergence without v
 Forge result/body mismatches; decode signatures and execute chains. Compare inferred
 versus explicit ABI/bytes at all levels and native/browser diagnostics.
 
-**Incremental #11 development:** initial results without unresolved callee
-dependencies are implemented only in `target/wp7-inference` on
-`develop/wp7-initial-inference`. The focused 34-test suite and full development
-checks passed; see [the isolated contract](result-inference-development.md).
-Unannotated dependencies remain rejected (chain scheduling is #14). WP7 integration
-and release remain blocked on #13; no isolated validation waives that gate.
+**Incremental #11 integration:** initial results without unresolved callee
+dependencies are combined with released WP6 on `develop/wp7-initial-inference`,
+after #13's gate. The original 34-test suite, dedicated named/default interaction
+and adapter tests, and combined offline/runtime/browser checks passed; see
+[the incremental contract and evidence](result-inference-development.md).
+Unannotated dependencies remain rejected (chain scheduling is #14). This completes
+only #11's incremental scope, not the full WP7 integration/release gate.
 
 ### WP8 — Whitelist contracts (spec §13)
 
@@ -722,6 +724,56 @@ passes may change optimized bytes only under a documented new parity contract;
 retain semantic/diagnostic equivalence and the unoptimized compatibility baseline.
 
 ## 5. Documentation and validation workflow
+
+### Issue #13 WP6 release validation
+
+On 2026-10-12, WP6's library/native CLI/rebuilt-browser acceptance and release
+checks passed on Windows with Node.js v24.12.0 and wasm-pack 0.15.0. All builds
+used cached dependencies and installed tooling, without installation or fetching.
+At this WP6 checkpoint, WP7 remained isolated and unreleased. Subsequent #11
+incremental integration is recorded above; it does not complete the full WP7 gate.
+
+| Exact command (repository root) | Actual result |
+| --- | --- |
+| `cargo check --offline --all-targets` | Passed before and after integration-test edits |
+| `cargo test --offline --test named_defaults --test default_lowering --test named_arguments --test named_call_lowering` | Passed: 33 default, 3 initial lowering, 9 named frontend, 11 named lowering tests |
+| `cargo test --offline --test default_lowering` | Passed: 4 tests after adding unreachable/skipped/unexported forged-default coverage |
+| `cargo test --offline --test cli named_defaults -- --include-ignored` | Passed: 3 new adapter tests |
+| `cargo test --offline --test cli -- --include-ignored` | Passed: 51 tests, including bounded Node execution |
+| `cargo clippy --offline --test cli -- -D warnings` | Passed |
+| `cargo test --offline --test default_runtime --test named_call_runtime -- --include-ignored` | Passed: 4 default and 5 named-call tests; its early existing-package browser result is not release evidence, superseded by the current-source rebuild/full ignored run below |
+| `cargo clippy --offline --all-targets -- -D warnings` | Passed |
+| `cargo check --offline --target wasm32-unknown-unknown --lib` | Passed |
+| `cargo clippy --offline -p was-compiler-browser --target wasm32-unknown-unknown --lib -- -D warnings` | Passed |
+| `wasm-pack build browser --target web --out-dir ../pkg --out-name was_compiler --mode no-install --no-opt --offline` | Passed; rebuilt current source before browser/full ignored execution |
+| `node tests/browser.cjs pkg` | Passed against freshly rebuilt bindings |
+| `cargo test --offline -- --include-ignored` | Passed; all ignored Node/browser cases executed, including the expanded 4-test default runtime suite and 51-test CLI suite |
+| `cargo test --offline` | Passed; Node/browser cases retain their default ignored policy |
+| `cargo run --offline -- examples/array-sum.was -o target/array-sum.wasm --export main` | Passed |
+| `node runtime/run.cjs target/array-sum.wasm` | Passed; returned `65` |
+
+Acceptance tests exposed no production defect, so no adapter/compiler patch or
+fixture regeneration was needed. New CLI checks compare exact library bytes/WAT,
+full-arity decoded signatures, host import order, selected/no exports and required
+memory exports. Diagnostics cover original CRLF/Unicode/tab byte origins and
+unchanged destinations on failure. Rebuilt-browser tests cover forward reordered
+named calls, dependent defaults, raw full arity, binding errors and recovery at all
+levels. Forged-default tests add hidden/unreachable/short-circuited checks with
+exact declaration origins. Existing suites retain caller transfers, nested regions,
+recursion/reentrancy, scalar capture, array aliases, descriptor traps, special
+numbers, legacy diagnostics/fixtures and optimization parity.
+
+Standards and Spec reviews of the uncommitted diff against pinned base
+`5b60b446e6dd732628dc4dcb4f29554c5bd182b4` each reported zero outstanding
+actionable findings. Review independently reran the 4 lowering, 9 default/named
+runtime and 3 CLI adapter tests and checked 147 local Markdown links/anchors.
+Scoped `rustfmt --edition 2024 --config skip_children=true tests/cli.rs` and
+`rustfmt --edition 2024 --config skip_children=true tests/default_lowering.rs tests/default_runtime.rs`
+completed successfully. `git --no-pager diff --check`, diff/stat and final status
+review passed. At that validation checkpoint, nothing was staged or committed;
+parent #9 and the isolated WP7 worktree remained unchanged.
+
+### Historical WP5 release validation
 
 **Issue #6 release validation (2026-10-12):** WP5 implementation and all release
 checks below passed on Windows with Node.js v24.12.0, wasm-pack 0.15.0, cached Rust

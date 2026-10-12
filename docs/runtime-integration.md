@@ -195,6 +195,32 @@ retain Node's host capabilities.
 | `string`, `number[]` | `i32` descriptor handle in the current instance's memory. |
 | `void` | No Wasm result. |
 
+Source named/default calls are compiler-side conveniences only. A declaration
+such as `fn f(a: number, b: number = a + 1) -> number` still exports two `f64`
+parameters: raw Node/browser callers must supply both. No default metadata or
+host-side argument generator is emitted. `runtime.call('f', [3])` rejects the
+missing raw argument; `runtime.call('f', [3, 4])` supplies the full signature.
+Direct JavaScript Wasm calls do not run source defaults either; JavaScript's
+conversion of omitted arguments is not the language's omission semantics.
+Use a source wrapper such as `fn main() -> number { return f(3); }` to invoke
+an omitted default from the embedding.
+
+Explicit source arguments run once in written order, followed by omitted defaults
+in formal order on every invocation. Scalars are captured values; string/array/range
+handles are shared, not deep copies. Later explicit array mutations can therefore
+be observed by permitted default equality/`len` operations. A transfer or trap in
+an explicit argument prevents later defaults and the callee body from executing;
+normalization adds no function/loop context. Range import/selected-export
+restrictions are unchanged.
+
+Named arguments are user-function-only; host declarations carry no formal-name
+or default contract, and builtin `len` remains positional. See the
+[default whitelist](was_language_extensions_spec.md#142-default-expression-restrictions-and-scope).
+WP6 named/default parameters are implemented, and
+[#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation),
+including CLI execution and freshly rebuilt browser/runtime coverage. WP7 result
+inference remains isolated and is not integrated.
+
 Hosts must obey the declared signatures. Host callbacks receive descriptor handles,
 not native strings or arrays, and must return handles for memory-backed results.
 Use the instance's `memory` and `__alloc`, optionally via explicit `createAbi`

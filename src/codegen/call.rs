@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    ast::Type,
+    ast::{BinaryOp, Type},
     flow::Flow,
     tokens::Span,
     typed_ast::{
@@ -118,10 +118,33 @@ pub(super) fn emit_normalized(
     }
 
     let mut bindings = HashMap::with_capacity(sequence.bindings.len());
-    for (argument, binding) in sequence.bindings.iter().enumerate() {
-        if binding.origin != (CallBindingOrigin::Explicit { argument }) {
+    let mut explicit_count = 0;
+    let mut previous_default = None;
+    for binding in &sequence.bindings {
+        let reason = match binding.origin {
+            CallBindingOrigin::Explicit { argument }
+                if previous_default.is_none() && argument == explicit_count =>
+            {
+                explicit_count += 1;
+                None
+            }
+            CallBindingOrigin::Explicit { .. } => {
+                Some("bindings must have contiguous written-order explicit origins")
+            }
+            CallBindingOrigin::Default { formal } => {
+                if sequence.formal_to_binding.get(formal) != Some(&binding.id) {
+                    Some("default origin must match its formal mapping")
+                } else if previous_default.is_some_and(|previous| formal <= previous) {
+                    Some("defaults must follow explicit arguments in increasing formal order")
+                } else {
+                    previous_default = Some(formal);
+                    None
+                }
+            }
+        };
+        if let Some(reason) = reason {
             return Err(CodegenError::InvalidNormalizedCall {
-                reason: "bindings must have contiguous written-order explicit origins",
+                reason,
                 span: binding.span,
             });
         }
@@ -156,7 +179,19 @@ pub(super) fn emit_normalized(
 
     body.scoped(|body| {
         let mut flow = Flow::FALLTHROUGH;
-        for binding in &sequence.bindings {
+        for (position, binding) in sequence.bindings.iter().enumerate() {
+            if let CallBindingOrigin::Default { formal } = binding.origin {
+                check_default(
+                    &binding.value,
+                    &sequence.formal_to_binding[..formal],
+                    binding.span,
+                )?;
+                // Explicit values are already captured, but only defaults may read
+                // them. The whitelist further limits reads to earlier formals.
+                for previous in &sequence.bindings[..position] {
+                    body.initialize(previous.id);
+                }
+            }
             expect_operand(body.name(), binding.ty, binding.value.ty, binding.span)?;
             let slot = body.declaration(binding.id, binding.ty, binding.span)?;
             flow = flow.then(body.emit_expr(&binding.value, binding.span)?);
@@ -164,8 +199,8 @@ pub(super) fn emit_normalized(
                 body.local_set(slot);
             }
         }
-        // Stores do not grant visibility: no initializer can read this sequence's
-        // bindings, including from a nested sequence. Only the final reads can.
+        // Explicit initializers remain outside generated-binding scope. Defaults
+        // grant only checked earlier-formal reads; the final call reads all slots.
         for binding in &sequence.bindings {
             body.initialize(binding.id);
         }
@@ -177,6 +212,54 @@ pub(super) fn emit_normalized(
         };
         Ok((flow, result))
     })
+}
+
+fn check_default(
+    value: &TypedExpr,
+    earlier: &[crate::typed_ast::VariableId],
+    span: Span,
+) -> Result<(), CodegenError> {
+    let invalid = |reason| CodegenError::InvalidNormalizedCall { reason, span };
+    match &value.kind {
+        TypedExprKind::Number(_) | TypedExprKind::String(_) | TypedExprKind::Bool(_) => {}
+        TypedExprKind::Identifier { id, .. } => {
+            if !earlier.contains(id) {
+                return Err(invalid(
+                    "defaults may only read owned earlier-formal bindings",
+                ));
+            }
+        }
+        TypedExprKind::Unary { expr, .. } => check_default(expr, earlier, span)?,
+        TypedExprKind::Binary { left, op, right } => {
+            if *op == BinaryOp::In {
+                return Err(invalid("range membership is not allowed in defaults"));
+            }
+            check_default(left, earlier, span)?;
+            check_default(right, earlier, span)?;
+        }
+        TypedExprKind::Call {
+            func: FunctionRef::Builtin(BuiltinFunction::Len),
+            args,
+            ..
+        } => {
+            for arg in args {
+                check_default(arg, earlier, span)?;
+            }
+        }
+        TypedExprKind::Call { .. }
+        | TypedExprKind::NormalizedCall(_)
+        | TypedExprKind::Range { .. }
+        | TypedExprKind::Loop { .. }
+        | TypedExprKind::Block(_)
+        | TypedExprKind::If { .. }
+        | TypedExprKind::Array(_)
+        | TypedExprKind::Index { .. } => {
+            return Err(invalid(
+                "default initializer is outside the pure-expression whitelist",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn predicted_result(ty: Type, args: &[TypedExpr]) -> ExprResult {

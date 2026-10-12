@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, hash_map::Entry};
+use std::collections::{HashMap, hash_map::Entry};
 
 use thiserror::Error;
 
@@ -17,6 +17,8 @@ use crate::{
     },
 };
 
+mod call_binding;
+mod defaults;
 mod inference;
 
 #[derive(Debug, Error, PartialEq)]
@@ -115,6 +117,20 @@ pub enum SemanticError {
         span: Span,
     },
 
+    #[error("Required parameter '{name}' follows a default parameter at {span:?}")]
+    NonTrailingDefault { name: String, span: Span },
+
+    #[error("Invalid default expression: {reason} at {span:?}")]
+    InvalidDefaultExpression { reason: &'static str, span: Span },
+
+    #[error("Invalid number literal '{literal}' in default expression at {span:?}")]
+    InvalidDefaultNumberLiteral { literal: String, span: Span },
+
+    #[error(
+        "Number literal '{literal}' in default expression is outside the finite f64 range at {span:?}"
+    )]
+    DefaultNumberLiteralOutOfRange { literal: String, span: Span },
+
     #[error("Operator '{operator}' cannot be applied to {left:?} and {right:?} at {span:?}")]
     InvalidBinaryOperands {
         operator: &'static str,
@@ -175,6 +191,10 @@ impl SemanticError {
             | Self::TooManyPositionalArguments { span, .. }
             | Self::PositionalAfterNamed { span, .. }
             | Self::MissingArgument { span, .. }
+            | Self::NonTrailingDefault { span, .. }
+            | Self::InvalidDefaultExpression { span, .. }
+            | Self::InvalidDefaultNumberLiteral { span, .. }
+            | Self::DefaultNumberLiteralOutOfRange { span, .. }
             | Self::InvalidBinaryOperands { span, .. }
             | Self::InvalidAssignmentTarget { span }
             | Self::InvalidCompoundAssignmentOperator { span, .. }
@@ -199,6 +219,7 @@ struct FunctionSignature {
     reference: FunctionRef,
     params: Vec<Type>,
     param_names: Vec<String>,
+    defaults: Vec<Option<defaults::CheckedDefault>>,
     return_type: Type,
 }
 
@@ -262,6 +283,7 @@ impl SemanticAnalyzer {
                 reference: FunctionRef::Builtin(BuiltinFunction::Len),
                 params: vec![Type::NumberArray],
                 param_names: vec![],
+                defaults: vec![],
                 return_type: Type::Number,
             },
         );
@@ -273,6 +295,7 @@ impl SemanticAnalyzer {
                     reference: FunctionRef::Host(function.id),
                     params: function.params.clone(),
                     param_names: vec![],
+                    defaults: vec![],
                     return_type: function.return_type,
                 },
             );
@@ -287,10 +310,10 @@ impl SemanticAnalyzer {
     }
 
     fn analyze_program(&mut self, program: &Program) -> Result<TypedProgram, SemanticError> {
-        let has_inference = program
-            .functions
-            .iter()
-            .any(|function| function.return_type.is_none());
+        let staged_declarations = program.functions.iter().any(|function| {
+            function.return_type.is_none()
+                || function.params.iter().any(|param| param.default.is_some())
+        });
 
         for (index, function) in program.functions.iter().enumerate() {
             let signature = FunctionSignature {
@@ -301,6 +324,7 @@ impl SemanticAnalyzer {
                     .iter()
                     .map(|param| param.name.clone())
                     .collect(),
+                defaults: (0..function.params.len()).map(|_| None).collect(),
                 return_type: function.return_type.unwrap_or(Type::Void),
             };
 
@@ -315,14 +339,11 @@ impl SemanticAnalyzer {
                 });
             }
 
-            let mut names = HashSet::new();
-            for param in &function.params {
-                self.check_variable_type(&param.name, param.ty, param.span)?;
-                if has_inference && !names.insert(param.name.as_str()) {
-                    return Err(SemanticError::DuplicateVariable {
-                        name: param.name.clone(),
-                        span: param.span,
-                    });
+            if staged_declarations {
+                self.validate_defaults(function)?;
+            } else {
+                for param in &function.params {
+                    self.check_variable_type(&param.name, param.ty, param.span)?;
                 }
             }
         }
@@ -1124,8 +1145,11 @@ impl SemanticAnalyzer {
                     span,
                 })?;
 
-        if args.iter().any(|arg| arg.name.is_some()) {
-            return self.analyze_named_call(name, args, span, return_type);
+        if args.iter().any(|arg| arg.name.is_some())
+            || (args.len() < signature.params.len()
+                && signature.defaults.iter().any(Option::is_some))
+        {
+            return self.analyze_bound_call(name, args, span, return_type);
         }
 
         if signature.params.len() != args.len() {
@@ -1160,129 +1184,6 @@ impl SemanticAnalyzer {
                     name: name.into(),
                     args: arguments,
                 },
-                ty: Self::completion_result(result_type.into(), flow),
-            },
-            flow,
-        ))
-    }
-
-    fn analyze_named_call(
-        &mut self,
-        name: &str,
-        args: &[CallArgument],
-        span: Span,
-        return_type: ReturnContext,
-    ) -> Result<(TypedExpr, Flow), SemanticError> {
-        let signature = &self.functions[name];
-        if !matches!(signature.reference, FunctionRef::User(_)) {
-            return Err(SemanticError::NamedArgumentsNotSupported {
-                name: name.into(),
-                span: args
-                    .iter()
-                    .find(|arg| arg.name.is_some())
-                    .expect("named call")
-                    .span,
-            });
-        }
-
-        let mut written_to_formal = Vec::with_capacity(args.len());
-        let mut supplied = vec![false; signature.params.len()];
-        let mut named = false;
-        let mut positional = 0;
-        for arg in args {
-            let formal = if let Some(argument) = &arg.name {
-                named = true;
-                signature
-                    .param_names
-                    .iter()
-                    .position(|formal| formal == argument)
-                    .ok_or_else(|| SemanticError::UnknownArgument {
-                        name: name.into(),
-                        argument: argument.clone(),
-                        span: arg.span,
-                    })?
-            } else {
-                if named {
-                    return Err(SemanticError::PositionalAfterNamed {
-                        name: name.into(),
-                        span: arg.span,
-                    });
-                }
-                if positional >= supplied.len() {
-                    return Err(SemanticError::TooManyPositionalArguments {
-                        name: name.into(),
-                        span: arg.span,
-                    });
-                }
-                let formal = positional;
-                positional += 1;
-                formal
-            };
-            if supplied[formal] {
-                return Err(SemanticError::DuplicateArgument {
-                    name: name.into(),
-                    argument: signature.param_names[formal].clone(),
-                    span: arg.span,
-                });
-            }
-            supplied[formal] = true;
-            written_to_formal.push(formal);
-        }
-        if let Some(formal) = supplied.iter().position(|supplied| !supplied) {
-            return Err(SemanticError::MissingArgument {
-                name: name.into(),
-                argument: signature.param_names[formal].clone(),
-                span,
-            });
-        }
-
-        let reference = signature.reference;
-        let result_type = signature.return_type;
-        let mut bindings = Vec::with_capacity(args.len());
-        let mut formal_to_binding = vec![VariableId(0); args.len()];
-        let mut final_args: Vec<Option<TypedExpr>> = vec![None; args.len()];
-        let mut flow = Flow::FALLTHROUGH;
-        for (argument, (arg, formal)) in args.iter().zip(written_to_formal).enumerate() {
-            let expected = self.functions[name].params[formal];
-            let id = VariableId(self.next_variable_id);
-            self.next_variable_id += 1;
-            let (value, value_flow) = self.analyze_expr(&arg.value, arg.span, return_type)?;
-            self.expect_type(expected, value.ty, arg.span)?;
-            flow = flow.then(value_flow);
-            bindings.push(TypedCallBinding {
-                id,
-                ty: expected,
-                value,
-                origin: CallBindingOrigin::Explicit { argument },
-                span: arg.span,
-            });
-            formal_to_binding[formal] = id;
-            final_args[formal] = Some(TypedExpr {
-                kind: TypedExprKind::Identifier {
-                    id,
-                    name: self.functions[name].param_names[formal].clone(),
-                },
-                ty: expected.into(),
-            });
-        }
-        let call = TypedExpr {
-            kind: TypedExprKind::Call {
-                func: reference,
-                name: name.into(),
-                args: final_args
-                    .into_iter()
-                    .map(|arg| arg.expect("all required formals bound"))
-                    .collect(),
-            },
-            ty: result_type.into(),
-        };
-        Ok((
-            TypedExpr {
-                kind: TypedExprKind::NormalizedCall(TypedNormalizedCall {
-                    bindings,
-                    formal_to_binding,
-                    call: Box::new(call),
-                }),
                 ty: Self::completion_result(result_type.into(), flow),
             },
             flow,
