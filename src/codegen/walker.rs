@@ -1,7 +1,8 @@
 use std::ops::ControlFlow;
 
 use crate::typed_ast::{
-    TypedBlock, TypedExpr, TypedExprKind, TypedStatement, TypedStatementKind, TypedValueBlock,
+    TypedBlock, TypedCallBinding, TypedExpr, TypedExprKind, TypedStatement, TypedStatementKind,
+    TypedValueBlock,
 };
 
 pub(super) trait Visitor {
@@ -20,6 +21,10 @@ pub(super) trait Visitor {
     }
 
     fn enter_expression(&mut self, _expr: &TypedExpr) -> ControlFlow<Self::Break> {
+        ControlFlow::Continue(())
+    }
+
+    fn enter_call_binding(&mut self, _binding: &TypedCallBinding) -> ControlFlow<Self::Break> {
         ControlFlow::Continue(())
     }
 
@@ -125,6 +130,14 @@ fn walk_expression<V: Visitor>(expr: &TypedExpr, visitor: &mut V) -> ControlFlow
             for arg in args {
                 walk_expression(arg, visitor)?;
             }
+        }
+
+        TypedExprKind::NormalizedCall(sequence) => {
+            for binding in &sequence.bindings {
+                visitor.enter_call_binding(binding)?;
+                walk_expression(&binding.value, visitor)?;
+            }
+            walk_expression(&sequence.call, visitor)?;
         }
 
         TypedExprKind::Array(elements) => {

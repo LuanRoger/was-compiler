@@ -117,6 +117,11 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
 
 ## Current language support
 
+- Issue #10 implements user-function named arguments and mixed positional prefixes,
+  not defaults or result inference. Before changing call binding or normalized
+  lowering, read [the named-call interface](docs/named-call-interface.md) for
+  argument origins, synthetic ownership, diagnostic order and traversal rules.
+
 - Types: `number`, `bool`, `string`, `number[]`, `range`, and `void`. Parameters and results
   require explicit types. Locals accept `let name = initializer;` or
   `let name: type = initializer;`; every declaration requires an initializer.

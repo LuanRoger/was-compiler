@@ -143,6 +143,7 @@ impl Visitor for Recorder {
             TypedExprKind::Binary { .. } => "binary".into(),
             TypedExprKind::Range { .. } => "range".into(),
             TypedExprKind::Call { .. } => "call".into(),
+            TypedExprKind::NormalizedCall(_) => "normalized-call".into(),
             TypedExprKind::Array(_) => "array".into(),
             TypedExprKind::Index { .. } => "index".into(),
             TypedExprKind::Block(_) => "value-block".into(),

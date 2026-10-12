@@ -6,7 +6,7 @@ use std::{
 use crate::{
     ast::Type,
     tokens::Span,
-    typed_ast::{TypedFunction, TypedStatement, TypedStatementKind, VariableId},
+    typed_ast::{TypedCallBinding, TypedFunction, TypedStatement, TypedStatementKind, VariableId},
 };
 use wasm_encoder::ValType;
 
@@ -20,6 +20,7 @@ use super::{
 pub(super) enum BindingKind {
     Mutable,
     Iteration,
+    Call,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -107,6 +108,29 @@ struct LocalVisitor<'a> {
 
 impl Visitor for LocalVisitor<'_> {
     type Break = CodegenError;
+
+    fn enter_call_binding(&mut self, binding: &TypedCallBinding) -> ControlFlow<CodegenError> {
+        let value_type = match abi::value_type(self.function, "local", binding.ty) {
+            Ok(ty) => ty,
+            Err(_) => {
+                return ControlFlow::Break(CodegenError::InvalidNormalizedCall {
+                    reason: "binding requires a concrete storage type",
+                    span: binding.span,
+                });
+            }
+        };
+        if let Err(error) = self.layout.insert(
+            binding.id,
+            binding.ty,
+            BindingKind::Call,
+            self.function,
+            binding.span,
+        ) {
+            return ControlFlow::Break(error);
+        }
+        self.layout.types.push(value_type);
+        ControlFlow::Continue(())
+    }
 
     fn enter_statement(&mut self, statement: &TypedStatement) -> ControlFlow<CodegenError> {
         let (id, ty, kind) = match &statement.kind {

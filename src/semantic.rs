@@ -4,16 +4,16 @@ use thiserror::Error;
 
 use crate::{
     ast::{
-        BinaryOp, Block, Expr, Function, Program, Statement, StatementKind, Type, UnaryOp,
-        ValueBlock,
+        BinaryOp, Block, CallArgument, Expr, Function, Program, Statement, StatementKind, Type,
+        UnaryOp, ValueBlock,
     },
     flow::Flow,
     host::HostFunctions,
     tokens::Span,
     typed_ast::{
-        BuiltinFunction, ExprResult, FunctionId, FunctionRef, LoopId, TypedBlock, TypedExpr,
-        TypedExprKind, TypedFunction, TypedParam, TypedProgram, TypedStatement, TypedStatementKind,
-        TypedValueBlock, VariableId,
+        BuiltinFunction, CallBindingOrigin, ExprResult, FunctionId, FunctionRef, LoopId,
+        TypedBlock, TypedCallBinding, TypedExpr, TypedExprKind, TypedFunction, TypedNormalizedCall,
+        TypedParam, TypedProgram, TypedStatement, TypedStatementKind, TypedValueBlock, VariableId,
     },
 };
 
@@ -58,6 +58,36 @@ pub enum SemanticError {
         name: String,
         expected: usize,
         found: usize,
+        span: Span,
+    },
+
+    #[error("Named arguments are not supported for '{name}' at {span:?}")]
+    NamedArgumentsNotSupported { name: String, span: Span },
+
+    #[error("Unknown argument '{argument}' for function '{name}' at {span:?}")]
+    UnknownArgument {
+        name: String,
+        argument: String,
+        span: Span,
+    },
+
+    #[error("Argument '{argument}' is supplied more than once to '{name}' at {span:?}")]
+    DuplicateArgument {
+        name: String,
+        argument: String,
+        span: Span,
+    },
+
+    #[error("Too many positional arguments for '{name}' at {span:?}")]
+    TooManyPositionalArguments { name: String, span: Span },
+
+    #[error("Positional argument follows a named argument for '{name}' at {span:?}")]
+    PositionalAfterNamed { name: String, span: Span },
+
+    #[error("Missing required argument '{argument}' for '{name}' at {span:?}")]
+    MissingArgument {
+        name: String,
+        argument: String,
         span: Span,
     },
 
@@ -111,6 +141,12 @@ impl SemanticError {
             | Self::CannotInferNeverType { span, .. }
             | Self::TypeMismatch { span, .. }
             | Self::ArgumentCountMismatch { span, .. }
+            | Self::NamedArgumentsNotSupported { span, .. }
+            | Self::UnknownArgument { span, .. }
+            | Self::DuplicateArgument { span, .. }
+            | Self::TooManyPositionalArguments { span, .. }
+            | Self::PositionalAfterNamed { span, .. }
+            | Self::MissingArgument { span, .. }
             | Self::InvalidBinaryOperands { span, .. }
             | Self::InvalidAssignmentTarget { span }
             | Self::InvalidCompoundAssignmentOperator { span, .. }
@@ -128,6 +164,7 @@ impl SemanticError {
 struct FunctionSignature {
     reference: FunctionRef,
     params: Vec<Type>,
+    param_names: Vec<String>,
     return_type: Type,
 }
 
@@ -190,6 +227,7 @@ impl SemanticAnalyzer {
             FunctionSignature {
                 reference: FunctionRef::Builtin(BuiltinFunction::Len),
                 params: vec![Type::NumberArray],
+                param_names: vec![],
                 return_type: Type::Number,
             },
         );
@@ -200,6 +238,7 @@ impl SemanticAnalyzer {
                 FunctionSignature {
                     reference: FunctionRef::Host(function.id),
                     params: function.params.clone(),
+                    param_names: vec![],
                     return_type: function.return_type,
                 },
             );
@@ -218,6 +257,11 @@ impl SemanticAnalyzer {
             let signature = FunctionSignature {
                 reference: FunctionRef::User(FunctionId(index)),
                 params: function.params.iter().map(|param| param.ty).collect(),
+                param_names: function
+                    .params
+                    .iter()
+                    .map(|param| param.name.clone())
+                    .collect(),
                 return_type: function.return_type,
             };
 
@@ -966,7 +1010,7 @@ impl SemanticAnalyzer {
     fn analyze_call(
         &mut self,
         name: &str,
-        args: &[Expr],
+        args: &[CallArgument],
         span: Span,
         return_type: Type,
     ) -> Result<(TypedExpr, Flow), SemanticError> {
@@ -984,6 +1028,10 @@ impl SemanticAnalyzer {
                     name: name.into(),
                     span,
                 })?;
+
+        if args.iter().any(|arg| arg.name.is_some()) {
+            return self.analyze_named_call(name, args, span, return_type);
+        }
 
         if signature.params.len() != args.len() {
             return Err(SemanticError::ArgumentCountMismatch {
@@ -1003,7 +1051,7 @@ impl SemanticAnalyzer {
             // Expression analysis may introduce scoped bindings, so release the
             // signature borrow before analyzing each argument.
             let expected = self.functions[name].params[index];
-            let (arg, arg_flow) = self.analyze_expr(arg, span, return_type)?;
+            let (arg, arg_flow) = self.analyze_expr(&arg.value, span, return_type)?;
 
             self.expect_type(expected, arg.ty, span)?;
             flow = flow.then(arg_flow);
@@ -1017,6 +1065,129 @@ impl SemanticAnalyzer {
                     name: name.into(),
                     args: arguments,
                 },
+                ty: Self::completion_result(result_type.into(), flow),
+            },
+            flow,
+        ))
+    }
+
+    fn analyze_named_call(
+        &mut self,
+        name: &str,
+        args: &[CallArgument],
+        span: Span,
+        return_type: Type,
+    ) -> Result<(TypedExpr, Flow), SemanticError> {
+        let signature = &self.functions[name];
+        if !matches!(signature.reference, FunctionRef::User(_)) {
+            return Err(SemanticError::NamedArgumentsNotSupported {
+                name: name.into(),
+                span: args
+                    .iter()
+                    .find(|arg| arg.name.is_some())
+                    .expect("named call")
+                    .span,
+            });
+        }
+
+        let mut written_to_formal = Vec::with_capacity(args.len());
+        let mut supplied = vec![false; signature.params.len()];
+        let mut named = false;
+        let mut positional = 0;
+        for arg in args {
+            let formal = if let Some(argument) = &arg.name {
+                named = true;
+                signature
+                    .param_names
+                    .iter()
+                    .position(|formal| formal == argument)
+                    .ok_or_else(|| SemanticError::UnknownArgument {
+                        name: name.into(),
+                        argument: argument.clone(),
+                        span: arg.span,
+                    })?
+            } else {
+                if named {
+                    return Err(SemanticError::PositionalAfterNamed {
+                        name: name.into(),
+                        span: arg.span,
+                    });
+                }
+                if positional >= supplied.len() {
+                    return Err(SemanticError::TooManyPositionalArguments {
+                        name: name.into(),
+                        span: arg.span,
+                    });
+                }
+                let formal = positional;
+                positional += 1;
+                formal
+            };
+            if supplied[formal] {
+                return Err(SemanticError::DuplicateArgument {
+                    name: name.into(),
+                    argument: signature.param_names[formal].clone(),
+                    span: arg.span,
+                });
+            }
+            supplied[formal] = true;
+            written_to_formal.push(formal);
+        }
+        if let Some(formal) = supplied.iter().position(|supplied| !supplied) {
+            return Err(SemanticError::MissingArgument {
+                name: name.into(),
+                argument: signature.param_names[formal].clone(),
+                span,
+            });
+        }
+
+        let reference = signature.reference;
+        let result_type = signature.return_type;
+        let mut bindings = Vec::with_capacity(args.len());
+        let mut formal_to_binding = vec![VariableId(0); args.len()];
+        let mut final_args: Vec<Option<TypedExpr>> = vec![None; args.len()];
+        let mut flow = Flow::FALLTHROUGH;
+        for (argument, (arg, formal)) in args.iter().zip(written_to_formal).enumerate() {
+            let expected = self.functions[name].params[formal];
+            let id = VariableId(self.next_variable_id);
+            self.next_variable_id += 1;
+            let (value, value_flow) = self.analyze_expr(&arg.value, arg.span, return_type)?;
+            self.expect_type(expected, value.ty, arg.span)?;
+            flow = flow.then(value_flow);
+            bindings.push(TypedCallBinding {
+                id,
+                ty: expected,
+                value,
+                origin: CallBindingOrigin::Explicit { argument },
+                span: arg.span,
+            });
+            formal_to_binding[formal] = id;
+            final_args[formal] = Some(TypedExpr {
+                kind: TypedExprKind::Identifier {
+                    id,
+                    name: self.functions[name].param_names[formal].clone(),
+                },
+                ty: expected.into(),
+            });
+        }
+        let call = TypedExpr {
+            kind: TypedExprKind::Call {
+                func: reference,
+                name: name.into(),
+                args: final_args
+                    .into_iter()
+                    .map(|arg| arg.expect("all required formals bound"))
+                    .collect(),
+            },
+            ty: result_type.into(),
+        };
+        Ok((
+            TypedExpr {
+                kind: TypedExprKind::NormalizedCall(TypedNormalizedCall {
+                    bindings,
+                    formal_to_binding,
+                    call: Box::new(call),
+                }),
                 ty: Self::completion_result(result_type.into(), flow),
             },
             flow,

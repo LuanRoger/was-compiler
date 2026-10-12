@@ -1944,7 +1944,11 @@ fn rejects_manually_constructed_invalid_assignment_targets() {
         Expr::Array(Vec::new()),
         Expr::Call {
             func: "len".into(),
-            args: vec![Expr::Array(Vec::new())],
+            args: vec![crate::ast::CallArgument {
+                name: None,
+                value: Expr::Array(Vec::new()),
+                span: Span::new(0, 0),
+            }],
         },
         Expr::Unary {
             op: UnaryOp::Negate,

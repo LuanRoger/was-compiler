@@ -2,8 +2,8 @@ use thiserror::Error;
 
 use crate::{
     ast::{
-        BinaryOp, Block, Expr, Function, Param, Program, Statement, StatementKind, Type, UnaryOp,
-        ValueBlock,
+        BinaryOp, Block, CallArgument, Expr, Function, Param, Program, Statement, StatementKind,
+        Type, UnaryOp, ValueBlock,
     },
     tokens::{Span, Token, TokenKind},
 };
@@ -646,7 +646,7 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
                 let name = self.parse_identifier()?;
 
                 return if self.consume(TokenKind::LeftParen) {
-                    let args = self.parse_expression_list(TokenKind::RightParen)?;
+                    let args = self.parse_call_arguments()?;
 
                     Ok(Expr::Call { func: name, args })
                 } else if self.consume(TokenKind::LeftBracket) {
@@ -695,6 +695,44 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
         self.advance();
 
         Ok(expr)
+    }
+
+    fn parse_call_arguments(&mut self) -> Result<Vec<CallArgument>, ParseError> {
+        let mut args = Vec::new();
+
+        if !self.check(&TokenKind::RightParen) {
+            loop {
+                let start = self.current_span().start();
+                let named = matches!(
+                    self.peek().map(|token| &token.kind),
+                    Some(TokenKind::Identifier(_))
+                ) && self
+                    .tokens
+                    .get(self.current + 1)
+                    .is_some_and(|token| token.kind == TokenKind::Colon);
+                let name = if named {
+                    let name = self.parse_identifier()?;
+                    self.expect(TokenKind::Colon)?;
+                    Some(name)
+                } else {
+                    None
+                };
+                let value = self.parse_expression()?;
+
+                args.push(CallArgument {
+                    name,
+                    value,
+                    span: self.span_since(start),
+                });
+
+                if !self.consume(TokenKind::Comma) {
+                    break;
+                }
+            }
+        }
+
+        self.expect(TokenKind::RightParen)?;
+        Ok(args)
     }
 
     fn parse_expression_list(&mut self, end: TokenKind<'source>) -> Result<Vec<Expr>, ParseError> {
@@ -1511,18 +1549,34 @@ mod tests {
             Expr::Call {
                 func: "call".into(),
                 args: vec![
-                    number("1"),
-                    Expr::Call {
-                        func: "other".into(),
-                        args: vec![]
-                    },
-                    Expr::Index {
-                        expr: Box::new(identifier("xs")),
-                        index: Box::new(binary(number("2"), BinaryOp::Add, number("3")))
-                    },
-                    Expr::Array(vec![Expr::Bool(true), Expr::Bool(false)]),
-                    Expr::String("hello".into())
-                ],
+                    (number("1"), Span::new(5, 6)),
+                    (
+                        Expr::Call {
+                            func: "other".into(),
+                            args: vec![]
+                        },
+                        Span::new(8, 15)
+                    ),
+                    (
+                        Expr::Index {
+                            expr: Box::new(identifier("xs")),
+                            index: Box::new(binary(number("2"), BinaryOp::Add, number("3")))
+                        },
+                        Span::new(17, 26)
+                    ),
+                    (
+                        Expr::Array(vec![Expr::Bool(true), Expr::Bool(false)]),
+                        Span::new(28, 41)
+                    ),
+                    (Expr::String("hello".into()), Span::new(43, 50))
+                ]
+                .into_iter()
+                .map(|(value, span)| CallArgument {
+                    name: None,
+                    value,
+                    span
+                })
+                .collect(),
             }
         );
         assert_eq!(expression("[]"), Expr::Array(vec![]));
@@ -2237,7 +2291,7 @@ mod tests {
 
             assert_eq!(func, "call");
             assert_eq!(args.len(), 1);
-            assert_if_arithmetic(&args[0], op, &negate(negate(number("4"))));
+            assert_if_arithmetic(&args[0].value, op, &negate(negate(number("4"))));
             let StatementKind::Return(Some(value)) = &body[4].kind else {
                 panic!("expected return value");
             };

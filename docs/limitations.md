@@ -28,6 +28,11 @@ The [runtime integration guide](runtime-integration.md) covers CLI and embedding
 usage. The [roadmap](compilation-roadmap.md) describes milestone scope and
 implemented language extensions.
 
+Issue #10 adds an incremental WP6 slice: user-function named arguments, including
+reordering and mixed positional-prefix calls. Defaults and result inference remain
+unsupported; neither WP6 nor WP7 is complete. See the
+[named-call interface gate](named-call-interface.md) for typed-tree ownership.
+
 ## Source language and frontend
 
 Evidence: [lexer.rs](../src/lexer.rs), [parser.rs](../src/parser.rs),
@@ -48,6 +53,16 @@ with exact type checking. The initializer is analyzed before binding the name,
 so a same-named reference requires an outer binding; nested shadowing is allowed.
 The binding's type is then fixed. An inferred void call initializer is rejected
 with the existing `SemanticError::InvalidVoidType` for the local.
+
+User functions accept `f(b: value, a: other)` and `f(first, b: second)`.
+Every required formal must be supplied exactly once with its exact type; positionals
+cannot follow named arguments. Named host and builtin arguments are rejected after
+lexical target resolution. Written-order structural errors precede missing-formal
+errors, which precede explicit-expression analysis. Ordinary positional-call error
+ordering and locations remain unchanged. Parameter types and function results still
+require annotations; parameter defaults are not yet accepted. The raw AST now uses
+`Vec<CallArgument>` instead of `Vec<Expr>` for calls, carrying optional names and
+argument spans. Typed normalized sequences are checked again during compilation.
 
 Compound assignments `+=`, `-=`, `*=`, `/=`, and `%=` are supported as statements
 on `number` variables and identifier-rooted numeric-array elements only. Both the

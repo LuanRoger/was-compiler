@@ -103,6 +103,16 @@ impl<'a> Context<'a> {
         let index = self.declaration(id, ty, span)?;
 
         if !self.initialized.contains(&id) {
+            if self
+                .locals
+                .get(id)
+                .is_some_and(|local| local.kind == BindingKind::Call)
+            {
+                return Err(CodegenError::InvalidNormalizedCall {
+                    reason: "synthetic binding is only readable by its final call",
+                    span,
+                });
+            }
             return Err(CodegenError::UninitializedVariable {
                 function: self.name.into(),
                 id,
@@ -293,6 +303,17 @@ impl<'a> BodyEmitter<'a> {
     }
 
     pub fn check_writable(&self, id: VariableId, span: Span) -> Result<(), CodegenError> {
+        if self
+            .context
+            .locals
+            .get(id)
+            .is_some_and(|local| local.kind == BindingKind::Call)
+        {
+            return Err(CodegenError::InvalidNormalizedCall {
+                reason: "synthetic binding is read-only",
+                span,
+            });
+        }
         if self
             .context
             .locals

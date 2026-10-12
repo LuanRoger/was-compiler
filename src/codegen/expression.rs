@@ -194,6 +194,8 @@ pub(super) fn emit(
             (flow, result(flow, ty))
         }
 
+        TypedExprKind::NormalizedCall(sequence) => call::emit_normalized(sequence, body, span)?,
+
         TypedExprKind::String(value) => {
             expect_result(function, Type::String.into(), expr.ty, span)?;
             body.instruction(&Instruction::I32Const(body.string(value) as i32));

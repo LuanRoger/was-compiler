@@ -22,6 +22,7 @@ pub(super) struct UserFunctionPlan {
 }
 
 pub(super) struct CallTarget {
+    pub name: String,
     pub function_index: FunctionIndex,
     pub params: Vec<Type>,
     pub return_type: Type,
@@ -100,6 +101,7 @@ impl Layout {
 
             layout.host_type_indices.push(type_index);
             layout.callees.push(CallTarget {
+                name: host.name.clone(),
                 function_index: FunctionIndex::new(checked_u32(expected, "host function index")?),
                 params: host.params.clone(),
                 return_type: host.return_type,
@@ -145,6 +147,7 @@ impl Layout {
             });
 
             layout.callees.push(CallTarget {
+                name: user.name.clone(),
                 function_index,
                 params: user.params.iter().map(|param| param.ty).collect(),
                 return_type: user.return_type,

@@ -173,6 +173,14 @@ impl Visitor for MemoryVisitor<'_> {
         ControlFlow::Continue(())
     }
 
+    fn enter_call_binding(
+        &mut self,
+        binding: &crate::typed_ast::TypedCallBinding,
+    ) -> ControlFlow<CodegenError> {
+        *self.used |= memory_type(binding.ty);
+        ControlFlow::Continue(())
+    }
+
     fn enter_expression(&mut self, expr: &TypedExpr) -> ControlFlow<CodegenError> {
         *self.used |= expr.ty.value_type().is_some_and(memory_type);
 

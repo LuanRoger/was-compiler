@@ -161,6 +161,9 @@ pub enum CodegenError {
         span: Span,
     },
 
+    #[error("invalid normalized call: {reason} at {span:?}")]
+    InvalidNormalizedCall { reason: &'static str, span: Span },
+
     #[error("unsupported built-in {builtin:?} in function `{function}` at {span:?}")]
     UnsupportedBuiltin {
         function: String,
@@ -258,6 +261,7 @@ impl CodegenError {
             | Self::MissingElse { span, .. }
             | Self::UnknownFunctionReference { span, .. }
             | Self::ArgumentCountMismatch { span, .. }
+            | Self::InvalidNormalizedCall { span, .. }
             | Self::UnsupportedBuiltin { span, .. }
             | Self::DuplicateVariableId { span, .. }
             | Self::DuplicateLoopId { span, .. }

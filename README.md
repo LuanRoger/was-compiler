@@ -59,7 +59,20 @@ user/host function calls, `if`/`else`, and `while` / range/array `for` with
 `break;` / `continue;`. Strings, numeric arrays, checked array access/assignment, and built-in
 `len` are supported. Empty `void` functions and bare `return;` statements work too.
 Calls can be forward, nested, self-recursive, or mutually recursive; arguments
-are evaluated left-to-right.
+are evaluated left-to-right in written order. User functions also accept named
+arguments, including reordering and an initial positional prefix:
+
+```text
+fn subtract(a: number, b: number) -> number { return a - b; }
+fn main() -> number { return subtract(b: 2, a: 9); }
+```
+
+After the first named argument, all remaining arguments must be named. Every
+parameter must be supplied exactly once, with its exact type. Named host/builtin
+arguments, parameter defaults, and omitted function result annotations are not
+supported. This implements issue #10's incremental WP6 slice, not all of WP6/WP7.
+Named calls store explicit values once in written order and pass them in formal
+order through the same full-arity ABI; array handles retain shared-storage behavior.
 
 Local declarations support both `let name = initializer;` and the existing
 `let name: type = initializer;`. Without an annotation, the initializer determines

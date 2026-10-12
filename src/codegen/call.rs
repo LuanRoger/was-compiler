@@ -1,8 +1,13 @@
+use std::collections::{HashMap, HashSet};
+
 use crate::{
     ast::Type,
     flow::Flow,
     tokens::Span,
-    typed_ast::{BuiltinFunction, ExprResult, FunctionRef, TypedExpr},
+    typed_ast::{
+        BuiltinFunction, CallBindingOrigin, ExprResult, FunctionRef, TypedExpr, TypedExprKind,
+        TypedNormalizedCall,
+    },
 };
 
 use super::{CodegenError, expect_operand, expect_result, function::BodyEmitter, memory::Helper};
@@ -80,6 +85,98 @@ pub(super) fn emit(
     }
 
     Ok((flow, target.return_type))
+}
+
+pub(super) fn emit_normalized(
+    sequence: &TypedNormalizedCall,
+    body: &mut BodyEmitter<'_>,
+    span: Span,
+) -> Result<(Flow, ExprResult), CodegenError> {
+    let invalid = |reason| CodegenError::InvalidNormalizedCall { reason, span };
+    let TypedExprKind::Call {
+        func: reference @ FunctionRef::User(_),
+        name,
+        args,
+    } = &sequence.call.kind
+    else {
+        return Err(invalid("final expression must be a direct user call"));
+    };
+    let target = body.target(*reference, span)?;
+    if name != &target.name {
+        return Err(invalid("final call name does not match its target"));
+    }
+    if sequence.call.ty != ExprResult::from(target.return_type) {
+        return Err(invalid("final call result does not match its signature"));
+    }
+    if sequence.bindings.len() != target.params.len()
+        || sequence.formal_to_binding.len() != target.params.len()
+        || args.len() != target.params.len()
+    {
+        return Err(invalid(
+            "binding, mapping and argument counts must match the signature",
+        ));
+    }
+
+    let mut bindings = HashMap::with_capacity(sequence.bindings.len());
+    for (argument, binding) in sequence.bindings.iter().enumerate() {
+        if binding.origin != (CallBindingOrigin::Explicit { argument }) {
+            return Err(CodegenError::InvalidNormalizedCall {
+                reason: "bindings must have contiguous written-order explicit origins",
+                span: binding.span,
+            });
+        }
+        if bindings.insert(binding.id, binding).is_some() {
+            return Err(invalid("binding identities must be unique"));
+        }
+    }
+    let mut mapped = HashSet::with_capacity(sequence.bindings.len());
+    for ((id, arg), formal) in sequence
+        .formal_to_binding
+        .iter()
+        .zip(args)
+        .zip(&target.params)
+    {
+        let Some(binding) = bindings.get(id) else {
+            return Err(invalid("formal mapping must own every referenced binding"));
+        };
+        if !mapped.insert(*id) {
+            return Err(invalid("formal mapping must be a bijection"));
+        }
+        if binding.ty != *formal || arg.ty != ExprResult::from(*formal) {
+            return Err(invalid(
+                "mapped binding and argument types must match the formal",
+            ));
+        }
+        if !matches!(&arg.kind, TypedExprKind::Identifier { id: actual, .. } if actual == id) {
+            return Err(invalid(
+                "final arguments must read owned bindings in formal order",
+            ));
+        }
+    }
+
+    body.scoped(|body| {
+        let mut flow = Flow::FALLTHROUGH;
+        for binding in &sequence.bindings {
+            expect_operand(body.name(), binding.ty, binding.value.ty, binding.span)?;
+            let slot = body.declaration(binding.id, binding.ty, binding.span)?;
+            flow = flow.then(body.emit_expr(&binding.value, binding.span)?);
+            if binding.value.ty != ExprResult::Never {
+                body.local_set(slot);
+            }
+        }
+        // Stores do not grant visibility: no initializer can read this sequence's
+        // bindings, including from a nested sequence. Only the final reads can.
+        for binding in &sequence.bindings {
+            body.initialize(binding.id);
+        }
+        flow = flow.then(body.emit_expr(&sequence.call, span)?);
+        let result = if flow.can_fall_through() {
+            target.return_type.into()
+        } else {
+            ExprResult::Never
+        };
+        Ok((flow, result))
+    })
 }
 
 fn predicted_result(ty: Type, args: &[TypedExpr]) -> ExprResult {

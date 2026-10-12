@@ -227,8 +227,15 @@
                        | "(" <ws> <expression> <ws> ")"
 
 
-<argument_list> ::= <expression>
-                    ( <ws> "," <ws> <expression> )*
+<argument_list> ::= <argument>
+                    ( <ws> "," <ws> <argument> )*
+
+<argument> ::= ( <identifier> <ws> ":" <ws> )? <expression>
+
+# Named arguments target user functions only. Positionals form an initial prefix;
+# subsequent arguments must be named. All formals are supplied exactly once with
+# exact types. Explicit expressions evaluate once in written order; the direct
+# machine call remains full-arity in formal order. Defaults remain unsupported.
 
 
 <array_access> ::= <identifier>

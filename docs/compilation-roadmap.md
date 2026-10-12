@@ -43,6 +43,15 @@ constructors; `Type::Void` maps to `Void`. Bindings/signatures still use `Type`.
 Raw/typed `ValueBlock` wrappers add statements, an optional boxed tail, and span;
 function and statement-block vector aliases remain unchanged.
 
+Issue #10 adds user-function named arguments as an incremental WP6 slice. Raw
+calls carry `CallArgument { name, value, span }`; existing positional constructors
+must wrap operands in this record. Named calls use `TypedNormalizedCall` with
+written-order owned bindings, formal mapping and a final full-arity direct call.
+Checked lowering verifies ownership, scope, mapping and signatures using the
+existing emitter, not a second validator. Planning visits bindings then the call;
+ordinary positional calls preserve their legacy path. Defaults and result inference
+remain unimplemented. See the [interface gate](named-call-interface.md).
+
 The compiler emits bytes. The embedding application decides whether to write a
 `.wasm` file, instantiate it in a browser, or pass it to another runtime.
 

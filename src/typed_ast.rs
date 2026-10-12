@@ -104,6 +104,8 @@ pub enum TypedExprKind {
         args: Vec<TypedExpr>,
     },
 
+    NormalizedCall(TypedNormalizedCall),
+
     Loop {
         id: LoopId,
         body: TypedBlock,
@@ -121,6 +123,29 @@ pub enum TypedExprKind {
         expr: Box<TypedExpr>,
         index: Box<TypedExpr>,
     },
+}
+
+/// Ordered invocation-local storage followed by a canonical full-arity user call.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypedNormalizedCall {
+    pub bindings: Vec<TypedCallBinding>,
+    pub formal_to_binding: Vec<VariableId>,
+    pub call: Box<TypedExpr>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypedCallBinding {
+    pub id: VariableId,
+    pub ty: Type,
+    pub value: TypedExpr,
+    pub origin: CallBindingOrigin,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CallBindingOrigin {
+    Explicit { argument: usize },
+    Default { formal: usize },
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -64,7 +64,7 @@ pub enum Expr {
 
     Call {
         func: String,
-        args: Vec<Expr>,
+        args: Vec<CallArgument>,
     },
 
     Loop {
@@ -82,6 +82,13 @@ pub enum Expr {
         expr: Box<Expr>,
         index: Box<Expr>,
     },
+}
+
+#[derive(Debug, PartialEq)]
+pub struct CallArgument {
+    pub name: Option<String>,
+    pub value: Expr,
+    pub span: Span,
 }
 
 #[derive(Debug, PartialEq)]
