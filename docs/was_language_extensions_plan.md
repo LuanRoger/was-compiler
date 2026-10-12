@@ -108,9 +108,11 @@ create them at their step, not as empty scaffolding now. Keep specialized decode
 
 ## 3. Common gates and staged representation decisions
 
-**Entry gate:** dependencies passed their exits; confirm normative rules, inventory public
-AST consumers, and agree examples, rejections, spans and runtime order before edits.
-Unresolved choices block their affected package, not a blanket foundation rewrite.
+**Entry gate:** for integration/release, dependencies passed their exits; confirm normative
+rules, inventory public AST consumers, and agree examples, rejections, spans and runtime
+order before edits. Development may overlap under the coordination rules in §4 once
+its shared interfaces are agreed. Unresolved choices block their affected package,
+not a blanket foundation rewrite.
 
 **Exit gate:** acceptance/rejection units, forged-tree checks, independent decoded Wasm
 assertions plus `wasmparser::Validator`, runtime/adapter tests, docs and validation pass.
@@ -148,9 +150,96 @@ Use existing dependencies and sequential planning; no new dependencies or thread
 
 ## 4. Ordered work packages
 
-Deliver WP1 → WP2 → WP3 → WP4 → WP5 in exactly this order. Continue with WP6–WP12
-in the order below; WP13 is separately authorized performance work, not prerequisite
+Deliver WP1 → WP2 → WP3 → WP4 → WP5 in exactly this order. WP6–WP12 retain ordered
+integration and release gates, but development may overlap after the relevant shared
+interface gate. WP13 is separately authorized performance work, not prerequisite
 correctness infrastructure. Every package also inherits the common gates.
+
+### Parallel development and ownership
+
+Approved coordination policy: parallel development does not waive predecessor exits
+or authorize parallel execution inside the compiler. A single integration owner controls
+shared public shapes, parser/grammar, semantic orchestration and stage-error definitions.
+Assign each shared file one writer; other agents work through agreed interfaces and
+exclusive file scopes. Do not introduce speculative modules merely to divide work.
+
+| Development wave | Parallel scopes | Integration/release constraint |
+| --- | --- | --- |
+| WP6 + WP7 | WP6 binding/default policy; WP7 dependency/result policy; checked normalization lowering; separately owned integration suites | Agree raw metadata, declaration signatures, normalized-sequence ownership and inference interfaces first. Release WP6 before WP7. |
+| WP8 + WP9 + WP10 | Contracts, match, and named-pipeline policies/tests; separate lowering scopes where practical | Share WP6's approved whitelist and normalization. Coordinate AST/parser/semantic edits through the integration owner; release WP8, then WP9, then WP10. |
+| WP11 | Capture analysis, cells/direct-helper lowering, independent lifetime/escape tests | Approve callable/capture metadata and allocation policy; integrate after WP10's exit. |
+| WP12 | Placeholder abstraction and closure-pipeline integration/tests | Requires WP11's callable/capture representation and WP10's pipeline rules. |
+| WP13 | Measurement planning only before separate authorization | All correctness exits and an explicit optimizer/parity agreement precede transformations. |
+
+Acceptance examples, rejection matrices and representation research for later waves
+may proceed early. Do not reserve future keywords, change public shapes, or add empty
+scaffolding before the affected interface gate. One owner coordinates shared adapter
+harnesses and documentation. The WP6/WP7 policies and first-wave scope below are
+approved. Obtain final confirmation of the shared design before compiler implementation;
+then freeze concrete interfaces and exclusive write scopes before parallel dispatch.
+
+### WP6/WP7 shared interface decisions
+
+- Raw call arguments carry an optional name, an expression and an argument span.
+  Raw parameters gain an optional default with its declaration-site span; raw function
+  result annotations become `Option<Type>`. Typed signatures remain concrete/full-arity.
+  Do not add independent spans to every expression. Preserve legacy diagnostic locations.
+- Calls needing reordering/default evaluation use a dedicated typed normalized-call
+  sequence with ordered invocation-local bindings, formal-to-binding mapping, origin
+  spans and a final full-arity direct call. Checked lowering verifies scope, types,
+  ordering and mapping consistency. Keep ordinary full-positional calls on the existing
+  direct path when normalization is unnecessary, preserving legacy Wasm bytes.
+- Resolve default references against declaration-side formal identities, then remap
+  them to invocation-local bindings. Never substitute by name or copy callee-local
+  numeric IDs into the caller. Preserve caller control-transfer behavior in explicit
+  argument expressions; normalization adds no function or loop context.
+- Recursive-component detection includes every lexically resolved user-function call,
+  including unreachable calls and runtime-skipped operands. Respect lexical shadowing;
+  text-only function-name matching is insufficient. Exclude host/builtin calls. A smaller
+  result-scheduling dependency set must not weaken the recursive annotation rule.
+- Preserve exact legacy first-error order for old fully annotated programs. For programs
+  using new features, stage declaration/default errors in source order, dependency/SCC
+  errors with source-order tie-breaking, inference errors in stable dependency order,
+  then final body checks in source order. Function IDs, typed-function output and Wasm
+  function order remain source-ordered regardless of inference scheduling.
+
+- Validate every declared default during semantic analysis, including numeric-literal
+  syntax/overflow, even when unused or always explicitly supplied. Report new default
+  errors at their declaration origins. Preserve ordinary body-literal analysis/codegen
+  behavior, allow underflow and add no arithmetic constant folding.
+- Named/default call binding resolves the target and lexical shadowing first, rejects
+  named host/builtin arguments, scans structural errors in written order, checks missing
+  required parameters, then analyzes explicit expressions in written order and instantiates
+  omitted defaults in formal order. Preserve legacy ordinary-call error ordering.
+
+These decisions extend the existing typed tree, not another IR or a second whole-program
+validator. Private inference shares the expression checker and completion rules; it must
+not introduce public unresolved types or public flow annotations.
+
+### First-wave execution handoff
+
+Implement WP6 and WP7 only after final design confirmation. WP8–WP12 remain future
+waves; WP13 remains separately authorized. Proposed module paths below are write-scope
+assignments, not existing implementation or a reason to create empty scaffolding.
+
+| Owner | Exclusive write scope | Handoff |
+| --- | --- | --- |
+| Integrator | `src/ast.rs`, `src/typed_ast.rs`, `src/parser.rs`, `grammar.bnf`, shared `src/semantic.rs` orchestration/errors and frontend/typed unit-test migrations; shared public/module wiring, adapter harnesses and docs | Freeze concrete raw/typed records, declaration/default interfaces, return-summary interface, diagnostic variants and synthetic identity rules before dispatch. Own backend stage-error/assembly wiring in `src/codegen/mod.rs`. |
+| WP6 policy agent | Proposed `src/semantic/defaults.rs`, `src/semantic/call_binding.rs`, and `tests/named_defaults.rs` | Check defaults in declaration scope, produce binding/normalization policy through the frozen interface, and supply acceptance/rejection/evaluation-order tests. |
+| WP7 inference agent | Proposed `src/semantic/inference.rs` and `tests/result_inference.rs` | Resolve lexical dependencies/SCCs and concrete results through the shared checker/summary interface; test deterministic diagnostics, recursion restrictions and explicit/inferred parity. |
+| Backend agent | `src/codegen/` implementation/tests except integrator-owned `mod.rs` | Check/lower normalized sequences; update exhaustive structural traversal and relevant policies; cover forged mappings/IDs/types, decoded locals/calls and bounded runtime effects. |
+
+The integrator coordinates any shared numeric-literal helper needed by semantic default
+checking and existing backend checking; preserve ordinary-body errors and avoid two
+independent literal-rule implementations. Agents request shared-file changes from the
+owner instead of editing outside their scopes. Record any additional touched path and
+its owner before edits.
+
+Complete the WP6 gate before accepting WP7's integration/release. Run focused checks,
+then the full offline/native/wasm32/browser/runtime gates in §5; rebuild browser bindings
+before browser or full ignored execution. Check rejection, forged trees, decoded Wasm,
+observable effects, optimization-level parity and old fixtures. Record actual evidence
+and unavailable prerequisites; preserve the default ignored-test policy.
 
 ### WP1 — All five compound assignments (spec §4): implemented
 
@@ -469,14 +558,20 @@ range optimization are out of scope.
 **Entry:** WP5; raw-call metadata/API gate. Preserve a canonical full-arity typed
 call/signature. Add argument names and trailing-only defaults to raw syntax/signature
 metadata. Resolve defaults in declaration scope against earlier formals, never caller
-locals/later formals. Establish a small explicit operator/builtin whitelist (initial
-pure builtin `len`, with its existing descriptor traps), not user-function purity.
+locals/later formals. Use the shared initial whitelist specified in spec §14.2:
+scalar literals, permitted parameter reads, existing type-valid unary/arithmetic/
+comparison/equality/logical operations, and positional builtin `len`. Existing string
+and array equality are allowed. Reject indexing, array/range construction, membership,
+blocks/if/loops, writes, and user/host calls, even in runtime-skipped operands. Pure
+means no writes or runtime allocation, not absence of descriptor traps. Reuse this
+policy for WP8 with all formals readable there; no user-function purity analysis.
 
 Normalize calls with hygienic typed sequencing: explicit arguments once in written
 order into typed slots, omitted defaults afterward in formal order using bound values,
 then direct full-arity call. Retain origin spans and check synthetic slot ownership.
-Host declarations have no formal names/default metadata; reject named host arguments
-unless separately specified. Raw exports still require all machine arguments.
+Named arguments initially target user declarations only; reject named host and builtin
+arguments because neither has a formal-name contract. Raw exports still require all
+machine arguments.
 **Exit tests:** proposed `tests/named_defaults.rs`; duplicates/unknown/missing names,
 positional-after-named, nontrailing defaults, forbidden calls/later-name reads, forged
 normalized calls, decoded full-arity order and runtime lexical/evaluation effects.
@@ -492,9 +587,13 @@ first-error ordering for explicitly annotated old programs; pin inference diagno
 For recursive SCCs conservatively require explicit result annotations on every member
 in the initial release, including anchored/self recursion. Do not add a speculative
 fixed-point solver. Infer void only under the specified no-value-return rules; unify
-reachable explicit returns, check all unreachable source and definite return.
+reachable explicit returns, check all unreachable source and definite return. If value-return
+syntax exists but no reachable value-return supplies a concrete type, require an explicit
+result annotation rather than guessing void. Thus `fn spin() { return loop {}; }` needs
+an annotation, while `fn spin() { loop {} }` can infer void. Never is not a function ABI type.
 **Exit tests:** proposed `tests/result_inference.rs`; chains/diamonds/forward calls,
 void, mixed returns, missing return, named tails, annotated recursion and SCC errors.
+Cover Never-only value returns requiring annotations versus divergence without value-return syntax.
 Forge result/body mismatches; decode signatures and execute chains. Compare inferred
 versus explicit ABI/bytes at all levels and native/browser diagnostics.
 

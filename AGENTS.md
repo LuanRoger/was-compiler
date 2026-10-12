@@ -19,6 +19,9 @@ execution engine. Host registration declares imports; it does not install callba
   Filesystem access, CLI dependencies, and JavaScript bindings belong in adapters.
 - Use offline build commands. If dependencies or tooling are unavailable, report
   the prerequisite rather than silently installing or fetching anything.
+- Before parallel extension work, read extension plan §4 for approved development
+  waves, shared interface gates and exclusive file ownership. Parallel development
+  retains ordered package integration/release gates and sequential compiler planning.
 - Treat implementation and tests as evidence of current behavior. Consult
   [README.md](README.md), [grammar.bnf](grammar.bnf), and the documents below.
   The BNF is not a perfect lexer specification: actual strings accept raw Unicode,

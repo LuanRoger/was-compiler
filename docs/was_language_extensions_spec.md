@@ -784,6 +784,26 @@ Only the **return type annotation** is optional: parameter annotations remain re
 5. Solve dependencies among functions in call-graph order. Mutually recursive strongly connected components whose return types cannot be uniquely resolved from nonrecursive constraints MUST require explicit annotations.
 6. Emit clear diagnostics instead of guessing `number` from a numeric literal or selecting `void` from an incomplete path.
 
+If value-return syntax (`return EXPR;`) exists but no reachable value-return supplies
+a concrete type, an omitted result annotation is an inference error requiring an
+explicit annotation. For example, `fn spin() { return loop {}; }` requires an
+annotation; `fn spin() { loop {} }` has no value-return syntax and can infer `void`.
+`Never` is not a function signature or ABI type. Unreachable source still receives
+static checking after result selection; absence of an inference constraint does not
+make an incompatible return valid.
+
+For the initial conservative recursive-component policy, include every lexically
+resolved user-function call, even in unreachable statements and runtime-skipped
+operands. Respect lexical shadowing; exclude host/builtin calls. Thus an inferred
+function containing an unreachable self-call still requires an annotation. A smaller
+dependency set used for result scheduling must not bypass this recursive-component rule.
+
+Preserve legacy first-error ordering for old fully annotated programs. Programs using
+new features have staged diagnostic priority: declaration/default errors in source
+order; dependency/SCC errors with source-order tie-breaking; inference errors in stable
+dependency order; then final body checks in source order. Function IDs and final
+output order remain source-ordered.
+
 **Examples:**
 
 ```
@@ -967,7 +987,7 @@ fn normalize(x: number) -> number
 - Preconditions are evaluated **after argument binding and default-argument evaluation**, but before execution of the function body.
 - Every normal call path to the function must enforce its preconditions unless the compiler proves they hold.
 - False conditions produce a **contract failure trap**. The initial Core Wasm backend may use `unreachable` and emit optional debug metadata containing the contract's source span and textual condition; a plain Wasm trap cannot portably deliver a rich error message by itself.
-- Contract expressions must be side-effect-free in v1: permit parameter reads, approved arithmetic/comparison/logical operations, and an allowlist of compiler-known pure builtins. Reject **all user-function calls and host-function calls** in contracts in v1, even when they appear harmless. Reject assignments. User-function purity analysis is a future feature.
+- Contract expressions use the initial pure-expression whitelist in §14.2, with all formal parameters readable. Reject **all user-function calls and host-function calls** in contracts in v1, even when they appear harmless. Reject assignments. User-function purity analysis is a future feature.
 - Contracts do not automatically prove the function's return value or eliminate all runtime safety checks.
 - Named functions exported through the host retain runtime precondition checks; closures are not exported or passed as values in v1.
 
@@ -1003,6 +1023,29 @@ fn increment(value: number, by: number = value / 10) -> number {
 }
 ```
 
+**Initial shared whitelist for defaults and contracts:**
+
+- Number, boolean and string literals; permitted parameter reads; parentheses.
+- Existing type-valid unary `-`/`!`, arithmetic `+ - * / %`, numeric comparisons,
+  equality/inequality, and logical `&&`/`||`. String and numeric-array equality
+  retain their existing content-comparison and validation behavior.
+- Positional calls to the compiler-known builtin `len`, including its existing
+  descriptor-validation traps. No other builtin is initially allowlisted.
+
+Reject indexing, array/range construction, range membership (`in`), blocks, if/loop
+expressions, writes, and user/host calls. Check every child, including runtime-skipped
+logical operands. Defaults can read only earlier formals; contracts can read all
+formals. Pure means no writes or runtime allocation, not that evaluation cannot trap
+or read shared array contents. This policy does not broaden the ordinary operator
+type rules or establish user-function purity.
+
+Validate every declared default during semantic analysis, even if its function is
+uncalled/unexported or every caller supplies that argument. This includes number-literal
+syntax and finite representability: invalid or overflowing default literals produce a
+semantic error at the declaration-site origin. Preserve the existing code-generation
+literal errors and analysis behavior for ordinary body expressions. Underflow remains
+allowed; this adds no constant folding or finite-result requirement to arithmetic.
+
 Defaults are evaluated **for each invocation**, not once at declaration time. Explicit arguments evaluate in **written order**, with their values stored in temporaries. Then omitted defaults evaluate in **formal parameter order** with earlier argument values available. Host-observable side effects are forbidden in default expressions in v1, simplifying consistent evaluation and optimization. This still permits runtime-dependent defaults referring to earlier parameters.
 
 ### 14.3 ABI and local callable restrictions
@@ -1016,6 +1059,30 @@ clamp(120, max: 200)
      let $min = 0;
      clamp($value, $min, $max)
 ```
+
+Named arguments initially target user declarations only. Reject named host and builtin
+arguments; neither has an approved formal-name contract.
+
+For calls using named/default binding, resolve the target with lexical shadowing first,
+then reject named host/builtin arguments. Scan argument structure in written order for
+unknown names, duplicates, excess positionals and positional-after-named; then check
+missing required parameters. Only after binding succeeds, analyze explicit expressions
+in written order and instantiate declaration-checked omitted defaults in formal order.
+Structural binding errors therefore precede errors inside argument expressions. Ordinary
+legacy calls retain their existing diagnostic order.
+
+Raw arguments retain optional names and argument spans; defaults retain declaration-site
+spans. Normalization preserves explicit-argument call-site origins and default declaration
+origins without introducing independent spans on every expression. Keep existing source
+diagnostic locations unchanged.
+
+A dedicated typed normalized-call sequence owns the ordered invocation-local bindings,
+formal-to-binding mapping and final full-arity direct call. Checked lowering validates
+scope, types, ordering and mapping consistency. Default references are remapped by
+resolved formal identity, never caller-side name substitution or copied callee-local
+numeric IDs. Normalization introduces no new function or loop context for explicit
+argument transfers. Ordinary full-positional calls retain the existing direct path
+when reordering/default evaluation is unnecessary, preserving legacy Wasm bytes.
 
 Local closure bindings can be called with their explicit positional signature; named/default parameters on closures are deferred unless separately specified. Named functions cannot be assigned as values (`let f = clamp;` is invalid in v1). Raw Wasm exports use their full-arity ABI; a separate host binding generator MAY someday supply convenience defaults. A `range` parameter/result requires a defined host ABI and thus currently blocks raw export selection.
 
@@ -1407,7 +1474,12 @@ The first five milestones are approved **in this exact order**, building only th
    gates passed (exact evidence in plan §5); external range signatures, equality, and allocation-free
    range optimization are not included.
 
-Following these milestones, incremental later work (ordering within a group MAY be adjusted according to dependencies):
+Following these milestones, later development MAY overlap once the relevant shared
+interfaces are agreed, while WP6–WP12 integration and release gates remain ordered as
+listed below. A single integration owner coordinates shared files; each shared file
+has one writer. The implementation plan §4 defines the approved development waves.
+This permits overlapping development, not parallel compiler execution or waived
+predecessor release gates:
 
 6. Named/default parameters with declaration-site lexical resolution and full-arity call normalization.
 7. Inferred function return types with acyclic inference first, then recursive dependency handling; reject named-function implicit nonvoid tails.
