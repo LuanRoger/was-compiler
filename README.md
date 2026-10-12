@@ -68,11 +68,27 @@ fn main() -> number { return subtract(b: 2, a: 9); }
 ```
 
 After the first named argument, all remaining arguments must be named. Every
-parameter must be supplied exactly once, with its exact type. Named host/builtin
-arguments, parameter defaults, and omitted function result annotations are not
-supported. This implements issue #10's incremental WP6 slice, not all of WP6/WP7.
-Named calls store explicit values once in written order and pass them in formal
-order through the same full-arity ABI; array handles retain shared-storage behavior.
+required parameter must be supplied exactly once, with its exact type. User
+parameters may have trailing defaults resolved against earlier formals:
+
+```text
+fn total(base: number, extra: number = base + 1) -> number {
+    return base + extra;
+}
+fn main() -> number { return total(3); }
+```
+
+Explicit arguments are captured once in written order; omitted defaults run
+afterward in formal order on each invocation. Defaults allow scalar literals,
+earlier parameter reads, existing unary/arithmetic/comparison/equality/logical
+operators, and positional builtin `len`. They cannot allocate, write, index, or
+call user/host functions, and every declaration is checked even when unused.
+Pure defaults may read shared arrays or trap. Raw exports still require every
+machine argument; source defaults do not add host-side argument generation.
+Named host/builtin arguments and omitted function result annotations remain
+unsupported on this branch. Issues #10/#12 are incremental WP6 slices, not the
+WP6 release gate (#13). #11 development remains isolated until that gate passes.
+See the [development handoff](docs/wp6-wp7-development.md).
 
 Local declarations support both `let name = initializer;` and the existing
 `let name: type = initializer;`. Without an annotation, the initializer determines

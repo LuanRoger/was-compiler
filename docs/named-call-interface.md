@@ -2,7 +2,9 @@
 
 The user approved the WP6/WP7 shared design and parser/semantic, public typed-tree
 compilation, and source-to-Wasm/runtime test seams. This is the named-argument
-slice only; defaults and omitted result annotations remain disabled.
+slice only; defaults and omitted result annotations were disabled at that gate.
+Issue #12's enabled default policy and isolated #11 development are recorded in
+[the follow-up handoff](wp6-wp7-development.md); the #10 evidence below is historical.
 
 ## Concrete records and identities
 

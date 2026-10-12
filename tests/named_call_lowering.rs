@@ -151,7 +151,11 @@ fn forged_structure_mapping_origins_and_canonical_arguments_are_rejected() {
                     CallBindingOrigin::Explicit { argument: 0 }
                 };
                 error_span = seq.bindings[1].span;
-                "bindings must have contiguous written-order explicit origins"
+                if case == 4 {
+                    "default origin must match its formal mapping"
+                } else {
+                    "bindings must have contiguous written-order explicit origins"
+                }
             }
             6 => {
                 seq.bindings[0].ty = Type::Bool;

@@ -28,10 +28,12 @@ The [runtime integration guide](runtime-integration.md) covers CLI and embedding
 usage. The [roadmap](compilation-roadmap.md) describes milestone scope and
 implemented language extensions.
 
-Issue #10 adds an incremental WP6 slice: user-function named arguments, including
-reordering and mixed positional-prefix calls. Defaults and result inference remain
-unsupported; neither WP6 nor WP7 is complete. See the
-[named-call interface gate](named-call-interface.md) for typed-tree ownership.
+Issues #10/#12 add incremental WP6 slices: named/mixed-prefix arguments and
+trailing defaults resolved against earlier formals. The WP6 release gate (#13)
+remains separate and incomplete. Result inference is not enabled on this branch;
+#11 develops in an isolated worktree and cannot integrate before #13 passes.
+See the [named-call interface gate](named-call-interface.md) and
+[development handoff](wp6-wp7-development.md) for ownership, migration, and gates.
 
 ## Source language and frontend
 
@@ -60,9 +62,28 @@ cannot follow named arguments. Named host and builtin arguments are rejected aft
 lexical target resolution. Written-order structural errors precede missing-formal
 errors, which precede explicit-expression analysis. Ordinary positional-call error
 ordering and locations remain unchanged. Parameter types and function results still
-require annotations; parameter defaults are not yet accepted. The raw AST now uses
-`Vec<CallArgument>` instead of `Vec<Expr>` for calls, carrying optional names and
-argument spans. Typed normalized sequences are checked again during compilation.
+require annotations. Defaults must be trailing and may read only earlier formals,
+not caller locals, their own formal, later formals, or body locals. All declared
+defaults are validated in declaration order before body checks, including unused
+and explicitly supplied ones. Invalid/overflowing default literals are semantic
+errors at their declaration origins; underflow and IEEE-754 arithmetic remain
+allowed. Ordinary body-literal errors retain their previous stage and locations.
+
+The initial whitelist admits scalar literals, earlier-formal reads, existing
+unary/arithmetic/comparison/equality/logical operations, and positional builtin
+`len`. String/array content equality is permitted. Indexing, array/range
+construction, membership, blocks/if/loops, writes, and user/host calls are rejected,
+including skipped operands. Pure does not mean nontrapping or snapshotting shared
+array contents. No general user-function purity analysis is implemented.
+
+The raw AST uses `Vec<CallArgument>` instead of `Vec<Expr>` for calls; raw `Param`
+now also requires `default: Option<DefaultExpression>` with `value` and declaration
+`span` (use `None` in existing constructors). Typed signatures remain concrete and
+full-arity. Normalized sequences store explicit values in written order, then
+omitted defaults in formal order; earlier-formal template IDs are remapped to
+invocation bindings. Checked lowering validates default origins, ordering,
+whitelist, and earlier-formal reads in mutable public trees. Raw callers must
+still supply all arguments, and private range restrictions are unchanged.
 
 Compound assignments `+=`, `-=`, `*=`, `/=`, and `%=` are supported as statements
 on `number` variables and identifier-rooted numeric-array elements only. Both the

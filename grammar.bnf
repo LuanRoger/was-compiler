@@ -10,6 +10,11 @@
 <parameter_list> ::= <parameter> ( <ws> "," <ws> <parameter> )*
 
 <parameter> ::= <identifier> <ws> ":" <ws> <type>
+                 ( <ws> "=" <ws> <expression> )?
+
+# Defaults are trailing-only and declaration-checked against the pure-expression
+# whitelist. They read only earlier formals and retain mandatory parameter types.
+# Source omission does not change the full-arity raw exported signature.
 
 
 <type> ::= "number" <array_type_suffix>?

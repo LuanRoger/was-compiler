@@ -75,6 +75,8 @@ bypasses the compiler's optimization/options orchestration.
 | `src/tokens.rs`, `src/lexer.rs` | Tokens and UTF-8 byte-offset spans |
 | `src/parser.rs`, `src/ast.rs` | Recursive-descent parsing and untyped syntax |
 | `src/semantic.rs`, `src/typed_ast.rs` | Types, scopes, loop targets, return analysis, resolved semantic IDs |
+| `src/semantic/defaults.rs`, `src/semantic/call_binding.rs` | Declaration-checked pure defaults and hygienic named/default binding |
+| `src/number_literal.rs` | Shared literal syntax/finite-representability rules with stage-specific errors |
 | `src/flow.rs` | Private completion sets shared by semantic/backend flow summaries |
 | `src/host.rs`, `src/exports.rs` | Ordered host declarations, private external-type eligibility, and owned export selection |
 | `src/optimization.rs` | Borrowed `Cow<TypedProgram>` no-op; future transformation boundary |
@@ -120,10 +122,13 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
 
 ## Current language support
 
-- Issue #10 implements user-function named arguments and mixed positional prefixes,
-  not defaults or result inference. Before changing call binding or normalized
-  lowering, read [the named-call interface](docs/named-call-interface.md) for
-  argument origins, synthetic ownership, diagnostic order and traversal rules.
+- Issues #10/#12 implement user-function named/mixed-prefix calls and trailing pure
+  defaults, not the WP6 release gate (#13). Result inference remains isolated in
+  `target/wp7-inference` until that gate passes; preserve that uncommitted worktree
+  when cleaning generated output. Before changing defaults, call binding, or
+  normalized lowering, read [the handoff](docs/wp6-wp7-development.md) and
+  [named-call interface](docs/named-call-interface.md) for origins, ownership,
+  diagnostic staging, whitelist, and earlier-formal read rules.
 
 - Types: `number`, `bool`, `string`, `number[]`, `range`, and `void`. Parameters and results
   require explicit types. Locals accept `let name = initializer;` or
