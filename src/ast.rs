@@ -156,7 +156,7 @@ pub enum StatementKind {
 pub struct Function {
     pub name: String,
     pub params: Vec<Param>,
-    pub return_type: Type,
+    pub return_type: Option<Type>,
     pub body: Block,
     pub span: Span,
 }

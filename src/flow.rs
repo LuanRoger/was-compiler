@@ -6,6 +6,8 @@ pub(crate) struct Flow {
     completions: u8,
     break_types: u8,
     first_break_type: Option<Type>,
+    return_types: u8,
+    first_return_type: Option<Type>,
 }
 
 impl Flow {
@@ -21,6 +23,8 @@ impl Flow {
             completions,
             break_types: 0,
             first_break_type: None,
+            return_types: 0,
+            first_return_type: None,
         }
     }
 
@@ -43,8 +47,24 @@ impl Flow {
         }
     }
 
+    pub(crate) fn return_value(ty: Type) -> Self {
+        Self {
+            return_types: Self::type_bit(ty),
+            first_return_type: Some(ty),
+            ..Self::RETURN
+        }
+    }
+
+    pub(crate) fn return_type(self) -> Result<Option<Type>, (Type, Type)> {
+        Self::constraint_type(self.first_return_type, self.return_types)
+    }
+
     pub(crate) fn break_type(self) -> Result<Option<Type>, (Type, Type)> {
-        let Some(expected) = self.first_break_type else {
+        Self::constraint_type(self.first_break_type, self.break_types)
+    }
+
+    fn constraint_type(first: Option<Type>, types: u8) -> Result<Option<Type>, (Type, Type)> {
+        let Some(expected) = first else {
             return Ok(None);
         };
 
@@ -56,7 +76,7 @@ impl Flow {
             Type::Void,
             Type::Range,
         ] {
-            if found != expected && self.break_types & Self::type_bit(found) != 0 {
+            if found != expected && types & Self::type_bit(found) != 0 {
                 return Err((expected, found));
             }
         }
@@ -91,6 +111,8 @@ impl Flow {
             completions: self.completions | other.completions,
             break_types: self.break_types | other.break_types,
             first_break_type: self.first_break_type.or(other.first_break_type),
+            return_types: self.return_types | other.return_types,
+            first_return_type: self.first_return_type.or(other.first_return_type),
         }
     }
 
@@ -100,10 +122,13 @@ impl Flow {
 
     /// A while may execute zero times; loop transfers never escape its boundary.
     pub(crate) fn while_loop(self) -> Self {
-        Self::completion(
-            Self::FALLTHROUGH.completions
+        Self {
+            completions: Self::FALLTHROUGH.completions
                 | (self.completions & (Self::RETURN.completions | Self::DIVERGE.completions)),
-        )
+            break_types: 0,
+            first_break_type: None,
+            ..self
+        }
     }
 
     /// A backedge may repeat forever; only a reachable break completes normally.
@@ -119,7 +144,12 @@ impl Flow {
             completions |= Self::DIVERGE.completions;
         }
 
-        Self::completion(completions)
+        Self {
+            completions,
+            break_types: 0,
+            first_break_type: None,
+            ..self
+        }
     }
 }
 

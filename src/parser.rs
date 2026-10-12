@@ -78,9 +78,11 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
         }
 
         self.expect(TokenKind::RightParen)?;
-        self.expect(TokenKind::Arrow)?;
-
-        let return_type = self.parse_type()?;
+        let return_type = if self.consume(TokenKind::Arrow) {
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
         let body = self.parse_block()?;
 
         Ok(Function {
@@ -994,7 +996,7 @@ mod tests {
         let function = &program.functions[0];
 
         assert_eq!(function.name, "compute");
-        assert_eq!(function.return_type, Type::Number);
+        assert_eq!(function.return_type, Some(Type::Number));
         assert_eq!(
             function
                 .params
@@ -1025,10 +1027,10 @@ mod tests {
         );
         assert_eq!(function.span, Span::new(0, source.find('\n').unwrap()));
         assert!(program.functions[1].body.is_empty());
-        assert_eq!(program.functions[1].return_type, Type::Void);
+        assert_eq!(program.functions[1].return_type, Some(Type::Void));
         assert_eq!(
             parse("fn values() -> number[] {}").unwrap().functions[0].return_type,
-            Type::NumberArray
+            Some(Type::NumberArray)
         );
     }
 
@@ -1757,7 +1759,6 @@ mod tests {
         for source in [
             "",
             "let x: number = 1;",
-            "fn main() {}",
             "fn main(1: number) -> void {}",
             "fn main(x: unknown) -> void {}",
             "fn main(x: bool[]) -> void {}",

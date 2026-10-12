@@ -1127,7 +1127,7 @@ fn function_parameter_and_nested_statement_spans_are_preserved() {
 
     for (original, lowered) in program.functions.iter().zip(&typed.functions) {
         assert_eq!(lowered.name, original.name);
-        assert_eq!(lowered.return_type, original.return_type);
+        assert_eq!(Some(lowered.return_type), original.return_type);
         assert_eq!(lowered.span, original.span);
         assert_eq!(lowered.params.len(), original.params.len());
 

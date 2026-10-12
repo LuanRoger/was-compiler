@@ -69,8 +69,11 @@ fn main() -> number { return subtract(b: 2, a: 9); }
 
 After the first named argument, all remaining arguments must be named. Every
 parameter must be supplied exactly once, with its exact type. Named host/builtin
-arguments, parameter defaults, and omitted function result annotations are not
-supported. This implements issue #10's incremental WP6 slice, not all of WP6/WP7.
+arguments and parameter defaults are not supported in this isolated worktree.
+Issue #11 enables an initial result-inference slice here, without unresolved
+callee dependencies; it is not integrated into the WP6 branch and cannot be
+integrated/released before gate #13 passes. See
+[isolated inference status](docs/result-inference-development.md).
 Named calls store explicit values once in written order and pass them in formal
 order through the same full-arity ABI; array handles retain shared-storage behavior.
 
@@ -96,7 +99,11 @@ scope, `let value = value + 1;` can read an outer `value` and then shadow it; wi
 an outer binding, it is an unknown-variable error. The local's type is fixed after
 initialization, so later assignments must match it. A void-returning call cannot
 initialize a local. Every declaration still needs an initializer, and parameter
-and function result types remain mandatory. There is no function inference,
+types remain mandatory. Named-function result annotations may be omitted here:
+`fn square(x: number) { return x * x; }` infers `number`. Explicit returns remain
+required, every recursive component member must be annotated, and inferred
+functions cannot yet call other unannotated functions. Void follows the no-value-
+return rules; Never-only value returns require annotations. There is no
 whole-program type unification, promotion, or implicit coercion. `number` remains
 IEEE-754 `f64`, even for `let index = 1;`; there is no source `i32` type.
 

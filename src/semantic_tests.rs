@@ -1619,7 +1619,10 @@ fn semantic_flow_composes_only_reachable_outcomes_without_pruning_the_tree() {
         analyzer.next_loop_id = 1;
 
         let (typed, flow) = analyzer
-            .analyze_block(&program.functions[0].body, Type::Number)
+            .analyze_block(
+                &program.functions[0].body,
+                ReturnContext::Known(Type::Number),
+            )
             .unwrap();
 
         assert_eq!(flow, expected, "{body}");
@@ -1649,7 +1652,10 @@ fn nested_loop_errors_restore_the_enclosing_loop_and_scope() {
 
     assert!(
         analyzer
-            .analyze_statement(&program.functions[0].body[0], Type::Void)
+            .analyze_statement(
+                &program.functions[0].body[0],
+                ReturnContext::Known(Type::Void)
+            )
             .is_err()
     );
     assert_eq!(analyzer.loops, vec![statement_loop(41)]);
@@ -1661,7 +1667,9 @@ fn nested_loop_errors_restore_the_enclosing_loop_and_scope() {
         kind: StatementKind::Continue,
         span: Span::new(2, 11),
     };
-    let (typed, flow) = analyzer.analyze_statement(&transfer, Type::Void).unwrap();
+    let (typed, flow) = analyzer
+        .analyze_statement(&transfer, ReturnContext::Known(Type::Void))
+        .unwrap();
 
     assert_eq!(
         typed.kind,
@@ -2316,7 +2324,10 @@ fn expression_flow_composition_preserves_nested_transfers_and_unreachable_trees(
         analyzer.loops.push(statement_loop(41));
 
         let (typed, flow) = analyzer
-            .analyze_block(&program.functions[0].body, Type::Number)
+            .analyze_block(
+                &program.functions[0].body,
+                ReturnContext::Known(Type::Number),
+            )
             .unwrap();
 
         assert_eq!(flow, expected, "{body}");
@@ -2378,7 +2389,10 @@ fn while_condition_transfers_are_in_scope_and_errors_restore_analyzer_state() {
         analyzer.next_loop_id = 42;
         assert!(
             analyzer
-                .analyze_statement(&program.functions[0].body[0], Type::Void)
+                .analyze_statement(
+                    &program.functions[0].body[0],
+                    ReturnContext::Known(Type::Void)
+                )
                 .is_err()
         );
         assert_eq!(analyzer.scopes.len(), 1);
@@ -2732,7 +2746,10 @@ fn loop_errors_restore_context_kind_scopes_and_analyzer_reuse() {
 
         assert!(
             analyzer
-                .analyze_statement(&program.functions[0].body[0], Type::Void)
+                .analyze_statement(
+                    &program.functions[0].body[0],
+                    ReturnContext::Known(Type::Void)
+                )
                 .is_err()
         );
         assert_eq!(analyzer.scopes.len(), 1);
@@ -2743,7 +2760,9 @@ fn loop_errors_restore_context_kind_scopes_and_analyzer_reuse() {
             kind: StatementKind::BreakValue(Expr::Bool(true)),
             span: Span::new(0, 11),
         };
-        let (typed, flow) = analyzer.analyze_statement(&transfer, Type::Void).unwrap();
+        let (typed, flow) = analyzer
+            .analyze_statement(&transfer, ReturnContext::Known(Type::Void))
+            .unwrap();
 
         assert_eq!(
             typed.kind,

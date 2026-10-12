@@ -49,8 +49,14 @@ must wrap operands in this record. Named calls use `TypedNormalizedCall` with
 written-order owned bindings, formal mapping and a final full-arity direct call.
 Checked lowering verifies ownership, scope, mapping and signatures using the
 existing emitter, not a second validator. Planning visits bindings then the call;
-ordinary positional calls preserve their legacy path. Defaults and result inference
-remain unimplemented. See the [interface gate](named-call-interface.md).
+ordinary positional calls preserve their legacy path. Defaults remain isolated on the WP6 development branch. This WP7 worktree
+adds issue #11's initial result inference only: raw `Function.return_type` is
+`Option<Type>`, while typed signatures remain concrete. Private lexical graph
+policy lives in `semantic/inference.rs`; result probes reuse the checker and
+reachable `Flow` summaries. No chain scheduling, fixed-point solver, or new IR
+is added. Integration remains behind #13. See the
+[interface gate](named-call-interface.md) and
+[isolated inference status](result-inference-development.md).
 
 The compiler emits bytes. The embedding application decides whether to write a
 `.wasm` file, instantiate it in a browser, or pass it to another runtime.
@@ -492,7 +498,8 @@ An inferred void-returning call initializer uses the existing
 `SemanticError::InvalidVoidType` for the local, not a new error variant.
 
 This is local initializer inference, not function inference or whole-program
-type unification. Parameter and result annotations remain mandatory, and every
+type unification. Parameter annotations remain mandatory; #11 separately permits result inference
+in this isolated worktree, and every
 local declaration still requires an initializer. No `i32` language type,
 promotions, or implicit coercions are introduced: `number` remains IEEE-754 `f64`,
 including integer-looking literals. Inference ends at semantic analysis; typed

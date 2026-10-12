@@ -119,7 +119,7 @@ fn parses_range_annotations_arithmetic_and_contextual_steps() {
     let source =
         "fn by(by: number) -> range { let r: range = by + 1..=10 * 2 by -by + 2; return r; }";
     let program = parse(source).unwrap();
-    assert_eq!(program.functions[0].return_type, Type::Range);
+    assert_eq!(program.functions[0].return_type, Some(Type::Range));
     let StatementKind::Let { ty, value, .. } = &program.functions[0].body[0].kind else {
         panic!("expected local declaration");
     };
