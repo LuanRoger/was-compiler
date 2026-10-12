@@ -32,6 +32,16 @@ fn sum(values: number[]) -> number {
     return total;
 }
 "#;
+const NAMED_DEFAULT_SOURCE: &str = r#"
+fn main() -> number {
+    let xs = [1, 2];
+    return target(c: mark(9), a: mark(3)) + target(2) + target(1, b: 5) + count(xs);
+}
+fn target(a: number, b: number = a + 1, c: number = b * 2) -> number {
+    return a * 100 + b * 10 + c;
+}
+fn count(xs: number[], n: number = len(xs)) -> number { return n; }
+"#;
 const MEMORY_SOURCE: &str = r#"
 fn hidden() -> string { return "hidden"; }
 fn main(values: number[]) -> number { return helper(values); }
@@ -599,6 +609,209 @@ fn binary_cli_output_is_exactly_raw_library_codegen() {
         wasmprinter::print_bytes(&raw).unwrap()
     );
     scratch.assert_entries(&["program.was", "program.wasm"]);
+}
+
+#[test]
+fn named_defaults_cli_bytes_exports_and_full_arity_match_library_at_every_level() {
+    let scratch = Scratch::new("named_defaults_parity");
+    let hosts = [
+        "--host",
+        "idle=app.unused()->void",
+        "--host",
+        "mark=env.mark(number)->number",
+    ];
+    let mut compiler = Compiler::new();
+    compiler
+        .register_host_function("idle", "app", "unused", vec![], Type::Void)
+        .unwrap();
+    compiler
+        .register_host_function("mark", "env", "mark", vec![Type::Number], Type::Number)
+        .unwrap();
+    let baseline = compiler.compile_source(NAMED_DEFAULT_SOURCE).unwrap();
+    let all = decode(&baseline);
+    assert_eq!(user_exports(&all), ["main", "target", "count"]);
+    assert_eq!(
+        all.imports,
+        [
+            ("app".into(), "unused".into()),
+            ("env".into(), "mark".into())
+        ]
+    );
+    assert_eq!(
+        abi_exports(&all),
+        [
+            ("memory".into(), ExternalKind::Memory, 0),
+            ("__alloc".into(), ExternalKind::Func, 5),
+        ]
+    );
+
+    let mut signatures = Vec::new();
+    for payload in Parser::new(0).parse_all(&baseline) {
+        if let Payload::TypeSection(reader) = payload.unwrap() {
+            signatures.extend(reader.into_iter_err_on_gc_types().map(Result::unwrap));
+        }
+    }
+    for (name, function_index, params) in [
+        ("main", 2, vec![]),
+        ("target", 3, vec![wasmparser::ValType::F64; 3]),
+        (
+            "count",
+            4,
+            vec![wasmparser::ValType::I32, wasmparser::ValType::F64],
+        ),
+    ] {
+        assert!(
+            all.exports
+                .contains(&(name.into(), ExternalKind::Func, function_index))
+        );
+        let defined_index = usize::try_from(function_index - 2).unwrap();
+        let type_index = usize::try_from(all.functions[defined_index]).unwrap();
+        assert_eq!(signatures[type_index].params(), params);
+        assert_eq!(signatures[type_index].results(), [wasmparser::ValType::F64]);
+    }
+
+    for (flag, level) in [
+        ("-O0", was_compiler::OptimizationLevel::None),
+        ("-O1", was_compiler::OptimizationLevel::Basic),
+        ("-O2", was_compiler::OptimizationLevel::Standard),
+        ("-O3", was_compiler::OptimizationLevel::Aggressive),
+    ] {
+        compiler.set_optimization_level(level);
+        for (selection, export_flags, names) in [
+            (ExportOptions::All, vec![], vec!["main", "target", "count"]),
+            (
+                ExportOptions::Only(vec!["target".into(), "main".into()]),
+                vec!["--export", "target", "--export", "main"],
+                vec!["main", "target"],
+            ),
+            (ExportOptions::None, vec!["--no-exports"], vec![]),
+        ] {
+            compiler.set_exports(selection);
+            let expected = compiler.compile_source(NAMED_DEFAULT_SOURCE).unwrap();
+            let mut flags = hosts.to_vec();
+            flags.push(flag);
+            flags.extend(export_flags);
+            let bytes = scratch.compile(NAMED_DEFAULT_SOURCE, &flags);
+            assert_eq!(bytes, expected);
+            let selected = decode(&bytes);
+            assert_eq!(user_exports(&selected), names);
+            assert_eq!(selected.sections, all.sections);
+            assert_eq!(selected.bodies, all.bodies);
+            assert_eq!(selected.imports, all.imports);
+            assert_eq!(abi_exports(&selected), abi_exports(&all));
+            for export in &selected.exports {
+                assert!(all.exports.contains(export));
+            }
+            let mut args = vec!["program.was", "--emit", "wat"];
+            args.extend(flags);
+            let wat = success(scratch.cli(&args, None));
+            assert_eq!(
+                assert_plain_wat(&wat),
+                wasmprinter::print_bytes(&expected).unwrap()
+            );
+        }
+    }
+    scratch.assert_entries(&["program.was", "program.wasm"]);
+}
+
+#[test]
+fn named_defaults_cli_diagnostic_origins_preserve_destinations_at_every_level() {
+    let scratch = Scratch::new("named_defaults_errors");
+    let sentinel = b"existing artifact";
+    let cases = [
+        (
+            "fn main() -> void { missing_body; }\r\n\t/* é🦀 */ fn hidden(a: number = missing_default) -> void {}\r\n",
+            "missing_default",
+            "Undefined variable 'missing_default'",
+        ),
+        (
+            "fn target(a: number, b: number = a + 1) -> number { return b; }\r\nfn main() -> number {\r\n\t/* é🦀 */ return target(a: missing_call);\r\n}\r\n",
+            "a: missing_call",
+            "Undefined variable 'missing_call'",
+        ),
+        (
+            "fn target(a: number, b: number = a + 1) -> number { return b; }\r\nfn main() -> number {\r\n\t/* é🦀 */ return target(unknown: 1);\r\n}\r\n",
+            "unknown: 1",
+            "Unknown argument",
+        ),
+    ];
+    for existing in [false, true] {
+        for (format, destination) in [("wasm", "program.wasm"), ("wat", "program.wat")] {
+            if existing {
+                scratch.write(destination, sentinel);
+            }
+            for (source, origin, message) in cases {
+                let input = scratch.write("program.was", source);
+                let start = source.find(origin).unwrap();
+                let end = start + origin.len();
+                let line_start = source[..start].rfind('\n').unwrap() + 1;
+                let line = source[..start]
+                    .bytes()
+                    .filter(|byte| *byte == b'\n')
+                    .count()
+                    + 1;
+                let column = source[line_start..start].chars().count() + 1;
+                let location = format!("program.was:{line}:{column}: semantic error:");
+                let padding = source[line_start..start]
+                    .replace('\t', "    ")
+                    .chars()
+                    .count();
+                let caret = format!(
+                    " | {}{}",
+                    " ".repeat(padding),
+                    "^".repeat(origin.chars().count())
+                );
+                for (flag, level) in [
+                    ("-O0", was_compiler::OptimizationLevel::None),
+                    ("-O1", was_compiler::OptimizationLevel::Basic),
+                    ("-O2", was_compiler::OptimizationLevel::Standard),
+                    ("-O3", was_compiler::OptimizationLevel::Aggressive),
+                ] {
+                    let mut compiler = Compiler::new();
+                    compiler.set_optimization_level(level);
+                    compiler.set_exports(ExportOptions::Only(vec!["main".into()]));
+                    let error = compiler.compile_source(source).unwrap_err();
+                    assert_eq!(
+                        error.span(),
+                        Some(was_compiler::tokens::Span::new(start, end))
+                    );
+                    let expected = format!(
+                        "{}\n",
+                        was_compiler::diagnostic::render("program.was", source, &error)
+                    );
+                    let before = scratch.entries();
+                    let stderr = failure(
+                        scratch.cli(
+                            &[
+                                "program.was",
+                                flag,
+                                "--export",
+                                "main",
+                                "--emit",
+                                format,
+                                "-o",
+                                destination,
+                            ],
+                            None,
+                        ),
+                        1,
+                        &[&location, message, "/* é🦀 */", &caret],
+                    );
+                    assert_eq!(stderr, expected);
+                    assert!(!stderr.contains('\r'));
+                    assert!(!stderr.contains('\t'));
+                    assert_eq!(fs::read(&input).unwrap(), source.as_bytes());
+                    if existing {
+                        assert_eq!(fs::read(scratch.0.join(destination)).unwrap(), sentinel);
+                    } else {
+                        assert!(!scratch.0.join(destination).exists());
+                    }
+                    assert_eq!(scratch.entries(), before, "failed compilation leaked files");
+                }
+            }
+        }
+    }
+    scratch.assert_entries(&["program.was", "program.wasm", "program.wat"]);
 }
 
 #[test]
@@ -2126,6 +2339,84 @@ fn malformed_or_invalid_host_declarations_exit_one_without_outputs() {
         &["host registration error", "already registered"],
     );
     scratch.assert_entries(&["program.was"]);
+}
+
+#[test]
+#[ignore = "requires Node.js"]
+fn named_defaults_node_cli_forward_wrapper_and_raw_full_arity_at_every_level() {
+    let scratch = Scratch::new("named_defaults_node");
+    scratch.write(
+        "provider.cjs",
+        r#"
+const assert = require("node:assert/strict");
+const events = [];
+module.exports = {
+    app: {unused() { throw new Error("unused import executed"); }},
+    env: {mark(value) {
+        events.push(value);
+        if (events.length === 2) assert.deepEqual(events, [9, 3]);
+        return value;
+    }}
+};
+"#,
+    );
+    for flag in ["-O0", "-O1", "-O2", "-O3"] {
+        scratch.compile(
+            NAMED_DEFAULT_SOURCE,
+            &[
+                flag,
+                "--host",
+                "idle=app.unused()->void",
+                "--host",
+                "mark=env.mark(number)->number",
+                "--export",
+                "target",
+                "--export",
+                "main",
+            ],
+        );
+        for (entry, args, expected) in [
+            ("main", "[]", "747\n"),
+            ("target", "[4,5,6]", "456\n"),
+            ("target", "[4,0,0]", "400\n"),
+        ] {
+            assert_eq!(
+                text(scratch.node(&[
+                    "program.wasm",
+                    "--entry",
+                    entry,
+                    "--args",
+                    args,
+                    "--imports",
+                    "provider.cjs"
+                ])),
+                expected,
+            );
+        }
+        assert!(
+            success(scratch.node_script(
+                r#"
+const assert = require("node:assert/strict");
+const module = new WebAssembly.Module(require("node:fs").readFileSync("program.wasm"));
+const events = [];
+const e = new WebAssembly.Instance(module, {
+    app: {unused() { throw new Error("unused import executed"); }},
+    env: {mark(value) { events.push(value); return value; }}
+}).exports;
+assert.deepEqual(Object.keys(e), ["main", "target", "memory", "__alloc"]);
+assert.equal(e.main(), 747);
+assert.deepEqual(events, [9, 3]);
+assert.equal(e.target.length, 3);
+assert.equal(e.target(4, 5, 6), 456);
+assert.equal(e.target(4, 0, 0), 400);
+assert.ok(Number.isNaN(e.target(4)));
+assert.deepEqual(events, [9, 3]);
+"#
+            ))
+            .is_empty()
+        );
+    }
+    scratch.assert_entries(&["program.was", "program.wasm", "provider.cjs"]);
 }
 
 #[test]

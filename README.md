@@ -81,14 +81,21 @@ fn main() -> number { return total(3); }
 Explicit arguments are captured once in written order; omitted defaults run
 afterward in formal order on each invocation. Defaults allow scalar literals,
 earlier parameter reads, existing unary/arithmetic/comparison/equality/logical
-operators, and positional builtin `len`. They cannot allocate, write, index, or
-call user/host functions, and every declaration is checked even when unused.
-Pure defaults may read shared arrays or trap. Raw exports still require every
-machine argument; source defaults do not add host-side argument generation.
+operators (including string/array equality), and positional builtin `len(array)`.
+Indexing, array/range construction, membership, blocks/if/loops, writes, and
+user/host calls are forbidden, including in skipped logical operands. Every
+declaration is checked even when unused or explicitly supplied. Pure defaults
+perform no writes or runtime allocation but may read shared arrays or trap.
+Raw exports still require every machine argument; source defaults do not add
+host-side argument generation.
 Named host/builtin arguments and omitted function result annotations remain
-unsupported on this branch. Issues #10/#12 are incremental WP6 slices, not the
-WP6 release gate (#13). #11 development remains isolated until that gate passes.
-See the [development handoff](docs/wp6-wp7-development.md).
+unsupported on main. WP6 named/default parameters are implemented, and
+[#13 release validation passed](docs/was_language_extensions_plan.md#issue-13-wp6-release-validation).
+The [development handoff](docs/wp6-wp7-development.md) records historical worktree
+evidence; see the
+[current named/default interface and AST migration](docs/named-call-interface.md#current-wp6-contract-issues-1012).
+WP7 result inference is not integrated; contracts, match, pipelines, closures,
+and placeholders remain later packages with ordered integration/release gates.
 
 Local declarations support both `let name = initializer;` and the existing
 `let name: type = initializer;`. Without an annotation, the initializer determines

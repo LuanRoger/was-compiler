@@ -1,5 +1,12 @@
 # Issues #12 and #11: development handoff
 
+This is the historical independent-development record. WP6 is now integrated on
+`main` and #13's release validation passed; see
+[the release evidence](was_language_extensions_plan.md#issue-13-wp6-release-validation).
+WP7 remains isolated in `target/wp7-inference`; its combined integration/release
+has not occurred. References below to uncommitted branches and pending #13 describe
+the earlier development checkpoint, not current release status.
+
 ## Starting point and gates
 
 Base: `1d7dbf3` on `main`, including #10 commit `156512e`. The working tree

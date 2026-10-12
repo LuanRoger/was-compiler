@@ -28,12 +28,12 @@ The [runtime integration guide](runtime-integration.md) covers CLI and embedding
 usage. The [roadmap](compilation-roadmap.md) describes milestone scope and
 implemented language extensions.
 
-Issues #10/#12 add incremental WP6 slices: named/mixed-prefix arguments and
-trailing defaults resolved against earlier formals. The WP6 release gate (#13)
-remains separate and incomplete. Result inference is not enabled on this branch;
-#11 develops in an isolated worktree and cannot integrate before #13 passes.
-See the [named-call interface gate](named-call-interface.md) and
-[development handoff](wp6-wp7-development.md) for ownership, migration, and gates.
+WP6 named/mixed-prefix arguments and trailing defaults resolved against earlier
+formals are implemented. [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation),
+including adapter coverage and the full ignored suite. Result inference is not
+enabled on main; WP7 remains isolated and is not integrated. See the
+[named/default interface](named-call-interface.md) for migration and the
+[development handoff](wp6-wp7-development.md) for historical worktree evidence.
 
 ## Source language and frontend
 
@@ -78,9 +78,13 @@ array contents. No general user-function purity analysis is implemented.
 
 The raw AST uses `Vec<CallArgument>` instead of `Vec<Expr>` for calls; raw `Param`
 now also requires `default: Option<DefaultExpression>` with `value` and declaration
-`span` (use `None` in existing constructors). Typed signatures remain concrete and
-full-arity. Normalized sequences store explicit values in written order, then
-omitted defaults in formal order; earlier-formal template IDs are remapped to
+`span` (use `None` in existing constructors). Raw `Function.return_type` remains
+`Type`, not `Option<Type>`; omitted result annotations belong to isolated WP7.
+Typed `Call` operands remain `Vec<TypedExpr>` and `TypedParam` has no default
+metadata. Exhaustive typed-expression consumers must handle `NormalizedCall`;
+see the [current interface and migration](named-call-interface.md#current-wp6-contract-issues-1012).
+Typed signatures remain concrete and full-arity. Normalized sequences store explicit
+values in written order, then omitted defaults in formal order; earlier-formal template IDs are remapped to
 invocation bindings. Checked lowering validates default origins, ordering,
 whitelist, and earlier-formal reads in mutable public trees. Raw callers must
 still supply all arguments, and private range restrictions are unchanged.
@@ -339,7 +343,10 @@ Evidence: [tokens.rs](../src/tokens.rs), [typed_ast.rs](../src/typed_ast.rs),
   statement-vector block aliases remain unchanged. Raw/typed value-block wrappers
   carry statements, an optional boxed tail, and a span. Individual expressions
   still have no independent spans, so wrappers do not promise precise locations
-  for every nested expression error.
+  for every nested expression error. WP6 adds argument/default origin spans:
+  normalized explicit initializer errors use the written argument, while default
+  errors use the declaration expression; ordinary positional calls retain legacy
+  enclosing-statement locations.
 - `TypedProgram` and its nodes/IDs/type annotations are public and mutable.
   `Compiler::analyze` creates a checked program, including an owned host-import
   snapshot, but callers can forge inconsistent input before `compile`. The

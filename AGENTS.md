@@ -122,10 +122,10 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
 
 ## Current language support
 
-- Issues #10/#12 implement user-function named/mixed-prefix calls and trailing pure
-  defaults, not the WP6 release gate (#13). Result inference remains isolated in
-  `target/wp7-inference` until that gate passes; preserve that uncommitted worktree
-  when cleaning generated output. Before changing defaults, call binding, or
+- WP6 implements user-function named/mixed-prefix calls and trailing pure defaults;
+  #13's release gates passed with [recorded evidence](docs/was_language_extensions_plan.md#issue-13-wp6-release-validation).
+  Result inference remains isolated in `target/wp7-inference`, not integrated or
+  released; preserve that worktree when cleaning generated output. Before changing defaults, call binding, or
   normalized lowering, read [the handoff](docs/wp6-wp7-development.md) and
   [named-call interface](docs/named-call-interface.md) for origins, ownership,
   diagnostic staging, whitelist, and earlier-formal read rules.

@@ -1,11 +1,11 @@
 # WAS Language Extensions — Unified Design and Implementation Specification
 
-**Status:** Design baseline with the 13 approved decisions and implementation clarifications (WP1–WP5 implementation complete: compound assignments, while transfers, block/if values, internal Never, statement/value loops, and range construction/internal calls, numeric membership, and range/array statement for; issue #6 adapter/interaction support implemented, all WP5 release gates passed (exact evidence in plan §5), and WP6–WP13 remain proposals)
+**Status:** Design baseline with the 13 approved decisions and implementation clarifications (WP1–WP5 implementation complete: compound assignments, while transfers, block/if values, internal Never, statement/value loops, and range construction/internal calls, numeric membership, and range/array statement for; issue #6 adapter/interaction support implemented, all WP5 release gates passed (exact evidence in plan §5), WP6 named/default parameters are implemented and #13 release validation passed; WP7 remains isolated, not integrated and WP8–WP13 remain proposals)
 **Version:** 0.3 — 9 October 2026 (implementation clarification update)  
 **Target:** Core WebAssembly, initially the MVP-compatible instruction set already used by `was-compiler`, with optional optimizations gated by Wasm features.  
 **Repository:** https://github.com/LuanRoger/was-compiler
 
-> **Normative language.** **MUST**, **SHOULD**, and **MAY** describe requirements, strong recommendations, and optional implementation choices. This document establishes a coherent *proposed* semantic model. Decisions tagged **Open decision** need confirmation before being frozen as language guarantees. Compound assignments (§4/WP1), bare `while` transfers (§7/WP2), block/if values with internal Never (§§3.2, 8.1/WP3), and statement/value loops (§7/WP4) are implemented. Range construction, internal calls, exact numeric membership (§5/WP5), and range/array statement `for` (§6/issues #4–#5) are also implemented, with adapter/interaction support under issue #6; all WP5 release gates passed (exact evidence in plan §5). Other extension examples remain proposed `.was` syntax, not claims about the present compiler.
+> **Normative language.** **MUST**, **SHOULD**, and **MAY** describe requirements, strong recommendations, and optional implementation choices. This document establishes a coherent *proposed* semantic model. Decisions tagged **Open decision** need confirmation before being frozen as language guarantees. Compound assignments (§4/WP1), bare `while` transfers (§7/WP2), block/if values with internal Never (§§3.2, 8.1/WP3), and statement/value loops (§7/WP4) are implemented. Range construction, internal calls, exact numeric membership (§5/WP5), and range/array statement `for` (§6/issues #4–#5) are also implemented, with adapter/interaction support under issue #6; all WP5 release gates passed (exact evidence in plan §5). WP6 user-function named/mixed-prefix calls and trailing pure defaults (§14/issues #10/#12) are implemented, and [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation). WP7 result inference remains isolated, not integrated; other extension examples remain proposed `.was` syntax, not claims about the present compiler.
 
 The [concrete implementation plan](was_language_extensions_plan.md) maps this
 specification to ordered work packages, repository files, acceptance tests, and
@@ -16,7 +16,7 @@ and bare `while` transfers (§7/WP2), followed by block/if values and internal N
 (§§3.2, 8.1/WP3) and statement/value loops (§7/WP4), are implemented;
 WP5's construction/internal-call, numeric membership, range-for, and array-for checkpoints are implemented;
 issue #6 completes adapter/interaction implementation and all release gates passed.
-Exact evidence is recorded in [plan §5](was_language_extensions_plan.md#5-documentation-and-validation-workflow). WP6–WP13 remain proposed; WP13 requires separate authorization.
+Exact evidence is recorded in [plan §5](was_language_extensions_plan.md#5-documentation-and-validation-workflow). WP6 named/default parameters are implemented on main, and [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation). WP7 remains isolated and is not integrated; WP8–WP12 remain later packages and WP13 requires separate authorization.
 
 ## 1. Goals and non-goals
 
@@ -46,7 +46,8 @@ The current compiler supports `fn` with required parameter/return annotations,
 annotated `let name: type = value;` and inferred `let name = value;` declarations,
 reassignment, numeric compound assignments, `if`, `while`, bare `break;` /
 `continue;`, range/array statement `for`, `return`, statement/value `loop`, value breaks in loop expressions,
-tail-valued blocks, value-context `if` / `else if`, named calls, and `number`,
+tail-valued blocks, value-context `if` / `else if`, named/mixed-prefix calls,
+trailing pure parameter defaults, and `number`,
 `bool`, `string`, `number[]`, `range`, and
 `void`. Every local requires an initializer and retains a fixed type. `//` line comments and non-nesting `/* ... */` block comments are implemented.
 Use the local implementation and tests, alongside README and grammar, as evidence
@@ -999,6 +1000,14 @@ Initially: at function entry, emit `if (!condition) unreachable`. Later: a local
 
 ## 14. Feature specification: named and default parameters
 
+**Implementation status:** User-function named/mixed-prefix calls and trailing
+pure defaults are implemented on main under #10/#12, and
+[#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation).
+Earlier worktree-development evidence in the handoff is historical. WP7 remains
+isolated, not integrated. Contracts, pipeline
+injection, and local closure calls mentioned below belong to later packages, not
+the current compiler. See the [current public AST/interface migration](named-call-interface.md#current-wp6-contract-issues-1012).
+
 ### 14.1 Syntax
 
 ```
@@ -1050,7 +1059,7 @@ Defaults are evaluated **for each invocation**, not once at declaration time. Ex
 
 ### 14.3 ABI and local callable restrictions
 
-The compiler MUST preserve one canonical full-arity machine signature per named function. Bind written positional/named arguments to formal parameters before emitting a call. Evaluate explicit arguments once in source order, then omitted defaults in formal declaration order, then execute contracts and the body.
+The compiler MUST preserve one canonical full-arity machine signature per named function. Bind written positional/named arguments to formal parameters before emitting a call. Evaluate explicit arguments once in source order, then omitted defaults in formal declaration order, then enter the callee and execute its body (contracts are a later WP8 entry check).
 
 ```
 clamp(120, max: 200)
@@ -1481,7 +1490,7 @@ has one writer. The implementation plan §4 defines the approved development wav
 This permits overlapping development, not parallel compiler execution or waived
 predecessor release gates:
 
-6. Named/default parameters with declaration-site lexical resolution and full-arity call normalization.
+6. Named/default parameters with declaration-site lexical resolution and full-arity call normalization (implemented under #10/#12; [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation)).
 7. Inferred function return types with acyclic inference first, then recursive dependency handling; reject named-function implicit nonvoid tails.
 8. `requires` with allowlisted pure builtins, runtime traps, and later sound range refinement.
 9. `match` statements/expressions and patterns.
@@ -1497,7 +1506,7 @@ Place (evaluate once) -> += -= *= /= %=
 Loop targets -> while break/continue -> statement/value loop -> for ranges/arrays
 Block results + Never -> if expressions -> value loop + return inference
 Range validation + i64 progression -> range values -> for -> membership optimizations
-Known named-call binding -> named pipelines -> named/default argument integration
+Named/default call normalization -> contracts -> match -> named pipelines
 Local lambda parsing -> shared capture cells -> local invocation -> placeholder sugar -> extended pipelines
 Contracts -> entry checks -> optional sound numeric/range refinement
 ```

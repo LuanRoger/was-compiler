@@ -238,9 +238,10 @@
 <argument> ::= ( <identifier> <ws> ":" <ws> )? <expression>
 
 # Named arguments target user functions only. Positionals form an initial prefix;
-# subsequent arguments must be named. All formals are supplied exactly once with
-# exact types. Explicit expressions evaluate once in written order; the direct
-# machine call remains full-arity in formal order. Defaults remain unsupported.
+# subsequent arguments must be named. Each formal is bound exactly once, by an
+# explicit argument or an omitted trailing default, with exact types. Explicit
+# expressions evaluate once in written order, then omitted defaults in formal order;
+# the direct machine call remains full-arity in formal order.
 
 
 <array_access> ::= <identifier>

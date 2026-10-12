@@ -13,6 +13,8 @@ are remapped by resolved formal identity; ordinary full-positional calls retain 
 existing path where normalization is unnecessary, preserving legacy bytes.
 
 Issues #10/#12 implement this accepted decision incrementally for named calls and
-trailing pure defaults; WP6's separate release gate #13 remains open. See the
+trailing pure defaults; #13 completed WP6's separate release gate, with
+[validation evidence](../was_language_extensions_plan.md#issue-13-wp6-release-validation).
+See the
 [WP6/WP7 interface decisions](../was_language_extensions_plan.md#wp6wp7-shared-interface-decisions)
 and [specification §14.3](../was_language_extensions_spec.md#143-abi-and-local-callable-restrictions).

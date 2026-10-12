@@ -1,12 +1,90 @@
-# Issue #10 interface gate
+# Named/default call interface
 
 The user approved the WP6/WP7 shared design and parser/semantic, public typed-tree
-compilation, and source-to-Wasm/runtime test seams. This is the named-argument
-slice only; defaults and omitted result annotations were disabled at that gate.
-Issue #12's enabled default policy and isolated #11 development are recorded in
-[the follow-up handoff](wp6-wp7-development.md); the #10 evidence below is historical.
+compilation, and source-to-Wasm/runtime test seams. This document distinguishes
+the current #10/#12 named/default contract from the historical #10 named-only
+gate, when defaults and omitted result annotations were disabled.
+Issue #12's default policy and isolated #11 development are recorded as historical
+worktree-development evidence in [the follow-up handoff](wp6-wp7-development.md).
 
-## Concrete records and identities
+## Current WP6 contract (issues #10/#12)
+
+WP6 user-function named/mixed-prefix calls and trailing pure defaults are
+implemented on main. [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation),
+including adapter coverage, freshly rebuilt browser bindings, and the full ignored
+suite. WP7 remains isolated in `target/wp7-inference` and is not integrated;
+result annotations are still mandatory on main. Later packages reuse the approved
+interfaces only after their ordered integration/release gates.
+
+### Public AST migration
+
+- Raw calls now use `Vec<ast::CallArgument>`, not `Vec<Expr>`. Wrap positional
+  operands with `name: None`, `value`, and the written argument's byte `span`;
+  named operands use `name: Some(formal_name)`.
+- Raw `ast::Param` requires `default: Option<DefaultExpression>`; existing
+  constructors use `None`. `DefaultExpression { value: Expr, span: Span }` keeps
+  the declaration expression's origin. Raw `Function.return_type` is still
+  `Type`, not the proposed WP7 `Option<Type>`.
+- Typed parameters/signatures stay concrete and full-arity with no default
+  metadata. Ordinary typed `Call` still takes `Vec<TypedExpr>`. Exhaustive typed
+  expression consumers must handle `NormalizedCall(TypedNormalizedCall)` and
+  visit its ordered binding values, then its final call.
+
+### Binding, scope, and checked lowering
+
+The records below remain unchanged from #10, but `Default { formal }` is now
+accepted. Explicit origins are contiguous zero-based written-argument indices;
+all explicit bindings precede defaults. Default origins index their actual
+formal, match the formal mapping, and increase strictly. The mapping is a
+bijection over owned bindings; the final call reads them in formal order.
+
+Explicit initializers cannot read any binding owned by their enclosing sequence.
+Default initializers may read only owned earlier-formal bindings, already bound
+by an explicit argument or an earlier default. References are remapped by resolved
+formal identity, never by caller names or copied callee-local IDs. Generated IDs
+come from the caller's per-function allocator and do not enter source lookup.
+All bindings leave scope on sequence exit; normalization adds no function or
+loop context. The final call has the signature's result; the enclosing sequence
+may be Never when explicit argument evaluation cannot complete.
+
+Checked lowering verifies origins, order, IDs, mapping, types, default whitelist
+and earlier-formal reads, including skipped/unreachable children. Public metadata
+is mutable: these checks do not prove that a forged default came from a source
+declaration or constitute complete source-semantic revalidation.
+
+### Defaults, diagnostics, and ABI
+
+Every declared default is checked before function bodies, even when unused or
+explicitly supplied. Defaults are trailing-only, exact-typed, and restricted to
+scalar literals, earlier-formal reads, existing type-valid unary/arithmetic/
+comparison/equality/logical operations (including string/array equality), and
+positional builtin `len(array)`. Reject indexing, array/range construction,
+membership, blocks/if/loops, writes, and user/host calls, even in skipped operands.
+An earlier handle read may copy an array/string/private range handle; it does not
+allocate or snapshot its contents. Pure defaults may observe shared array contents
+or trap. See [spec §14.2](was_language_extensions_spec.md#142-default-expression-restrictions-and-scope).
+
+Resolve lexical targets first, reject named host/builtin calls, scan written
+structural errors, check missing required formals, then analyze explicit expressions
+in written order and instantiate omitted defaults in formal order. Defaults retain
+declaration spans; normalized explicit expressions retain argument spans. Ordinary
+full-positional calls retain their direct path, legacy diagnostics and bytes even
+when their target declares defaults. Default literal syntax/overflow is checked
+semantically; ordinary body literal staging remains unchanged.
+
+Defaults run per source invocation after all normally completing explicit arguments.
+Scalars are captured values; handles remain shared. Transfers/traps prevent later
+evaluation and preserve caller context. Raw exports still require every machine
+argument: neither Node nor browser calls synthesize defaults, and no default
+metadata is emitted. Private range host/selected-export rejection is unchanged.
+
+## Historical #10 gate
+
+The remaining sections record the narrower named-only interface and its evidence
+at #10, before defaults were enabled. Their default rejection and future metadata
+wording are historical, superseded by the current contract above and #12 handoff.
+
+### Concrete records and identities
 
 - `ast::CallArgument { name: Option<String>, value: Expr, span: Span }` replaces
   raw call operands. Spans cover each entire written argument, including its name.

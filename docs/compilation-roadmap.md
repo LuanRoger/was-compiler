@@ -57,8 +57,10 @@ and `semantic/call_binding.rs` instantiates earlier-formal templates into caller
 bindings. Shared numeric-literal rules live in private `number_literal.rs` without
 changing ordinary body errors. Default-origin bindings follow explicit bindings,
 and checked lowering admits only owned earlier-formal reads and whitelist nodes.
-WP6's release gate (#13) remains separate. Result inference is not enabled here;
-#11 development is isolated behind that gate. See the
+WP6's release gate (#13) passed; see the
+[release evidence](was_language_extensions_plan.md#issue-13-wp6-release-validation).
+Result inference is not enabled here; #11 development remains isolated and awaits
+separate integration/release. See the
 [interface gate](named-call-interface.md) and [handoff](wp6-wp7-development.md).
 
 The compiler emits bytes. The embedding application decides whether to write a

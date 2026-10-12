@@ -260,12 +260,17 @@ fn full_positional_default_declarations_preserve_bytes_import_snapshot_and_selec
 #[test]
 #[ignore = "requires Node.js and freshly rebuilt browser bindings in pkg"]
 fn rebuilt_browser_defaults_match_native_bytes_origins_raw_arity_and_recovery() {
-    let source = "fn f(a: number, b: number = a + 1) -> number { return a * 10 + b; } fn main() -> number { return f(3); }";
+    let source = "fn main() -> number { return f(c: 9, a: 3); } fn f(a: number, b: number = a + 1, c: number = b * 2) -> number { return a * 100 + b * 10 + c; } fn omitted() -> number { return f(2); }";
     let native = Compiler::new().compile_source(source).unwrap();
     let cases = [
         "// é\r\nfn f(a: number, b: number = missing) -> number { return b; }",
         "// é\r\nfn f(a: number, b: number = 1) -> number { return b; }\r\nfn main() -> number {\r\n\treturn f(b: true, a: 1);\r\n}",
         "fn f(a: number, b: number = a[0]) -> number { return b; }",
+        "fn f(a: number, b: number = 1) -> number { return b; } fn main() -> number { return f(b: 2); }",
+        "fn f(a: number = 1) -> number { return a; } fn main() -> number { return f(a: 2, a: 3); }",
+        "fn f(a: number = 1) -> number { return a; } fn main() -> number { return f(unknown: 2); }",
+        "fn f(a: number, b: number = 1) -> number { return b; } fn main() -> number { return f(a: 2, 3); }",
+        "fn f(xs: number[], n: number = len(xs: xs)) -> number { return n; }",
     ];
     let mut checks = String::new();
     for case in cases {
@@ -298,9 +303,11 @@ fn rebuilt_browser_defaults_match_native_bytes_origins_raw_arity_and_recovery() 
                     compiler.setOptimizationLevel(level);
                     assert.deepEqual(Array.from(compiler.compile({source:?})), {native:?});
                     const e = new WebAssembly.Instance(new WebAssembly.Module(compiler.compile({source:?}))).exports;
-                    assert.equal(e.main(), 34);
-                    assert.equal(e.f.length, 2);
-                    assert.equal(e.f(3, 8), 38);
+                    assert.equal(e.main(), 349);
+                    assert.equal(e.omitted(), 236);
+                    assert.equal(e.f.length, 3);
+                    assert.equal(e.f(3, 8, 5), 385);
+                    assert.equal(e.f(3, 0, 0), 300);
                     {checks}
                     assert.deepEqual(Array.from(compiler.compile({source:?})), {native:?});
                 }}

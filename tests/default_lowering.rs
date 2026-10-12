@@ -2,7 +2,7 @@ use was_compiler::{
     CodegenError, Compiler, ExportOptions, OptimizationLevel, Type, codegen,
     typed_ast::{
         CallBindingOrigin, TypedExpr, TypedExprKind, TypedNormalizedCall, TypedProgram,
-        TypedStatementKind,
+        TypedStatement, TypedStatementKind,
     },
 };
 use wasmparser::{Operator, Parser, Payload, ValType, Validator};
@@ -139,6 +139,88 @@ fn forged_default_origins_order_reads_and_whitelist_are_checked() {
                 "case {case}: {error}"
             );
             assert!(error.span().is_some());
+        }
+    }
+}
+
+#[test]
+fn forged_defaults_in_unreachable_and_short_circuited_unexported_bodies_are_checked() {
+    for skipped in [false, true] {
+        for malformed_mapping in [false, true] {
+            let mut program = fixture();
+            let span = program.functions[1].body[0].span;
+            let seq = sequence(&mut program);
+            let default_span = seq.bindings[1].span;
+            if malformed_mapping {
+                seq.formal_to_binding[0] = seq.formal_to_binding[1];
+            } else {
+                seq.bindings[1].value = *seq.call.clone();
+            }
+            let TypedStatementKind::Return(Some(value)) = program.functions[1].body.remove(0).kind
+            else {
+                panic!("return")
+            };
+            let expression = if skipped {
+                TypedExpr {
+                    kind: TypedExprKind::Binary {
+                        left: Box::new(TypedExpr {
+                            kind: TypedExprKind::Bool(false),
+                            ty: Type::Bool.into(),
+                        }),
+                        op: was_compiler::ast::BinaryOp::And,
+                        right: Box::new(TypedExpr {
+                            kind: TypedExprKind::Binary {
+                                left: Box::new(value),
+                                op: was_compiler::ast::BinaryOp::Equal,
+                                right: Box::new(TypedExpr {
+                                    kind: TypedExprKind::Number("0".into()),
+                                    ty: Type::Number.into(),
+                                }),
+                            },
+                            ty: Type::Bool.into(),
+                        }),
+                    },
+                    ty: Type::Bool.into(),
+                }
+            } else {
+                value
+            };
+            program.functions[1].body = vec![
+                TypedStatement {
+                    kind: TypedStatementKind::Return(Some(TypedExpr {
+                        kind: TypedExprKind::Number("8".into()),
+                        ty: Type::Number.into(),
+                    })),
+                    span,
+                },
+                TypedStatement {
+                    kind: TypedStatementKind::Expression(expression),
+                    span,
+                },
+            ];
+            if skipped {
+                program.functions[1].body.swap(0, 1);
+            }
+            for level in [
+                OptimizationLevel::None,
+                OptimizationLevel::Basic,
+                OptimizationLevel::Standard,
+                OptimizationLevel::Aggressive,
+            ] {
+                let mut compiler = Compiler::new();
+                compiler.set_optimization_level(level);
+                compiler.set_exports(ExportOptions::Only(vec!["target".into()]));
+                let error = compiler.compile(&program).unwrap_err();
+                assert!(matches!(error, CodegenError::InvalidNormalizedCall { .. }));
+                assert_eq!(
+                    error.span(),
+                    Some(if malformed_mapping {
+                        span
+                    } else {
+                        default_span
+                    })
+                );
+            }
         }
     }
 }
