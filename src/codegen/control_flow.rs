@@ -9,7 +9,7 @@ use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
 use super::{
     CodegenError, abi, expect_operand, expect_result, expression,
     function::{BodyEmitter, LoopKind},
-    range,
+    memory, range,
 };
 
 pub(super) fn emit_if(
@@ -104,6 +104,9 @@ pub(super) fn emit_for(
     emitter: &mut BodyEmitter<'_>,
     span: Span,
 ) -> Result<Flow, CodegenError> {
+    if iterable.ty == ExprResult::Value(Type::NumberArray) {
+        return emit_array_for(id, variable, iterable, block, emitter, span);
+    }
     expect_operand(emitter.name(), Type::Range, iterable.ty, span)?;
 
     emitter.scoped(|emitter| {
@@ -181,6 +184,78 @@ pub(super) fn emit_for(
         emitter.local_get(step);
         emitter.instruction(&Instruction::I64Add);
         emitter.local_set(current);
+        emitter.branch(backedge)?;
+        emitter.end();
+        emitter.end();
+
+        let flow = iterable_flow.then(body_flow.while_loop());
+        if !flow.can_fall_through() {
+            emitter.instruction(&Instruction::Unreachable);
+        }
+
+        Ok(flow)
+    })
+}
+
+fn emit_array_for(
+    id: LoopId,
+    variable: VariableId,
+    iterable: &TypedExpr,
+    block: &TypedBlock,
+    emitter: &mut BodyEmitter<'_>,
+    span: Span,
+) -> Result<Flow, CodegenError> {
+    emitter.scoped(|emitter| {
+        emitter.register_loop(id, span)?;
+        let binding = emitter.declaration(variable, Type::Number, span)?;
+        let handle = emitter.temporary(ValType::I32);
+        let index = emitter.temporary(ValType::I32);
+        let count = emitter.temporary(ValType::I32);
+
+        // Validate even empty arrays before caching their fixed length.
+        let iterable_flow = emitter.emit_expr(iterable, span)?;
+        emitter.call(emitter.helper(memory::Helper::ValidateArray));
+        emitter.local_set(handle);
+        emitter.local_get(handle);
+        emitter.instruction(&Instruction::I32Load(MemArg {
+            offset: abi::DESCRIPTOR_LENGTH_OFFSET,
+            align: abi::DESCRIPTOR_FIELD_ALIGN_LOG2,
+            memory_index: 0,
+        }));
+        emitter.local_set(count);
+        emitter.instruction(&Instruction::I32Const(0));
+        emitter.local_set(index);
+
+        let break_label = emitter.begin_block()?;
+        let backedge = emitter.begin_loop()?;
+        emitter.local_get(index);
+        emitter.local_get(count);
+        emitter.instruction(&Instruction::I32GeU);
+        emitter.branch_if(break_label)?;
+
+        // Keep checked addressing on each yield, not a cached payload pointer:
+        // future element mutations through aliases must remain observable.
+        emitter.local_get(handle);
+        emitter.local_get(index);
+        emitter.instruction(&Instruction::F64ConvertI32U);
+        emitter.call(emitter.helper(memory::Helper::ArrayAddress));
+        emitter.instruction(&Instruction::F64Load(MemArg {
+            offset: 0,
+            align: abi::NUMBER_ELEMENT_ALIGN_LOG2,
+            memory_index: 0,
+        }));
+        emitter.local_set(binding);
+        emitter.initialize(variable);
+
+        let continue_label = emitter.begin_block()?;
+        emitter.enter_loop(id, LoopKind::Statement, break_label, continue_label);
+        let body_flow = emitter.emit_block(block)?;
+        emitter.end();
+
+        emitter.local_get(index);
+        emitter.instruction(&Instruction::I32Const(1));
+        emitter.instruction(&Instruction::I32Add);
+        emitter.local_set(index);
         emitter.branch(backedge)?;
         emitter.end();
         emitter.end();

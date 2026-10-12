@@ -33,14 +33,27 @@ publishing a value, mutate string payloads, or reinterpret strings as arrays.
 Trusted hosts may modify array elements. Exported memory is shared with the host;
 these checks are not an isolation mechanism against a host that violates the ABI.
 
+## Numeric-array for consumption
+
+Array `for` evaluates the iterable once in the enclosing context before activating
+its loop or read-only numeric binding. It fully validates the descriptor and
+payload with existing `ValidateArray`, including for an empty array, then caches
+the handle and unsigned `u32` length once. Unsigned index iteration calls existing
+checked `ArrayAddress` and loads the current `f64` element on each iteration;
+it does not snapshot elements or retain a raw payload pointer across body effects.
+Mutations through aliases remain visible, while source-variable reassignment does
+not change the captured handle. Continue reaches index advancement through a body
+latch before retesting. Hosts still must preserve descriptor metadata; these checks
+do not grant permission to mutate it. No descriptor ABI or helper-order change is
+introduced, and array-only iteration needs no private range helpers.
+
 ## Private range record
 
 Partial WP5 implements range construction, internal calls, exact numeric membership,
-and range-only statement `for`; array iteration and broader WP5 adapter/interaction
-acceptance remain proposed. Current CLI/browser compilation already uses this core
-range-for support. `range` uses an `i32` handle internally, but is **not**
-a public string/array descriptor or host
-marshaling type. Every successfully completed construction allocates an immutable,
+and range/array statement `for`; broader WP5 adapter/interaction release gates
+remain pending. Current CLI/browser compilation uses this shared core support.
+`range` uses an `i32` handle internally, but is **not** a public string/array
+descriptor or host marshaling type. Every successfully completed construction allocates an immutable,
 eight-byte-aligned 32-byte record with the existing bump allocator:
 
 | Offset | Field | Representation |

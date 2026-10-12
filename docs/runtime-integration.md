@@ -130,20 +130,33 @@ default export-all rejects those signatures. A scalar membership function may
 be exported normally; its bool result uses raw `i32` `0`/`1`. There is no public
 range marshaling API.
 
-Range-only statement `for name in range_expr { body }` uses the same private
-records and needs no new host callback or range helper. `for` is reserved for
+Statement `for name in iterable { body }` accepts `range` or `number[]` with Never
+compatibility and needs no new host callback or helper. Ranges use the same private
+records; arrays use the existing public descriptors. `for` is reserved for
 source/host-language names, not host module/field names. Its iterable evaluates
 once in the enclosing context before the loop/binding is active; iterable
 break/continue targets the outer nearest loop, and return/divergence is preserved.
 The body has a read-only `number` binding (a distinct inner shadowing let remains
 mutable), permits bare breaks, and rejects value breaks even when unreachable.
-Continue reaches advancement before retesting. Cached `i64` fields and signed
+Continue reaches advancement before retesting. For ranges, cached `i64` fields and signed
 endpoint checks before exact `f64` yield avoid rounding stalls; yielded zero is
 `+0`, and a valid advance past bounds exhausts normally even outside the safe domain.
 For is a void statement, not a value expression, and adds no public range ABI.
-CLI and browser compilation already support range-only for through the shared
-core. Array iteration and broader WP5 adapter/cross-feature acceptance remain
-proposed, not pending adapter support for the current feature or full WP5 completion.
+
+For arrays, full `ValidateArray` precedes caching the handle and unsigned `u32`
+length once, including for an empty array. Unsigned index iteration loads each
+element through existing checked `ArrayAddress` then `f64` load on its iteration,
+not from an element snapshot or cached raw payload pointer. Alias mutations to
+unvisited elements are visible; source reassignment does not replace the captured
+handle. Continue exits the body latch before index advancement/retest. ABI/helper
+order is unchanged, and array-only iteration needs no range helpers. Issue #5
+changes no parser or AST shapes.
+
+CLI and browser compilation supports both iterable types through the shared core.
+Range and array iteration remain **partial WP5**: broader adapter/cross-feature
+release gates remain pending. Browser validation requires rebuilt bindings.
+`tests/array_for_loops.rs` is the array-for suite; listing it does not establish
+runtime validation or completion of release gates.
 `tests/for_frontend.rs` covers frontend contracts, `tests/for_lowering.rs` covers
 forged input and decoded lowering, and `tests/for_loops.rs` covers deterministic
 layout/imports/exports and bounded Node execution at all optimization levels.

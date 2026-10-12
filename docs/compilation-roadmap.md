@@ -531,8 +531,8 @@ belong to WP11, not this milestone.
 `break;` exits the nearest enclosing while and `continue;` reevaluates its
 condition, including under nested branches and loops. Transfers cannot cross
 function boundaries. WP2 introduces bare semicolon-terminated transfers; WP4
-below adds statement/value loop and value breaks. Partial WP5 adds range-only
-statement for; labels and array iteration remain future work. Break/continue reserve previously usable source and host-language names;
+below adds statement/value loop and value breaks. Partial WP5 adds range/array
+statement for; labels remain future work. Break/continue reserve previously usable source and host-language names;
 rename existing bindings/functions using them. Host module/field names remain
 unaffected.
 
@@ -679,14 +679,15 @@ cases retain the ignored-test policy; default tests alone do not prove they ran.
 Membership coverage in `tests/range_frontend.rs` and `tests/ranges.rs` includes
 reserved names, precedence/associativity, exact/Never typing, checking both children,
 and decoded integer lowering without floating remainder.
-This is **not full WP5**: range-only statement for follows below; array iteration
-and remaining adapter/interaction coverage remain proposed in the
+This is **not full WP5**: range and array statement for checkpoints follow below;
+adapter/interaction release gates remain pending in the
 [extension plan](was_language_extensions_plan.md).
 
 ### Range-only statement for checkpoint (issue #4)
 
-Reserved `for name in range_expr { body }` accepts range iterables only, with
-existing Never compatibility; arrays remain proposed. Raw statements add
+Issue #4 introduced reserved `for name in range_expr { body }` with existing
+Never compatibility; issue #5 below extends the same node to numeric arrays.
+Raw statements add
 `For { name, iterable, body }`; typed statements add
 `For { id, variable, name, iterable: Box<TypedExpr>, body }`. For is a void statement,
 not a value expression, and retains a strict statement-vector body. Loop and
@@ -731,9 +732,29 @@ once-only effects, nested transfers, consumed-record validation, and cached fiel
 All optimization levels are covered. Node cases retain the ignored-test policy;
 default Cargo success alone does not establish runtime coverage.
 
-CLI/browser support already uses the shared range-for core pipeline. Array iteration
-and broader WP5 adapter/cross-feature acceptance remain proposed, not pending
-range-for adapter support or full WP5 completion.
+### Numeric-array statement for checkpoint (issue #5)
+
+The same `for name in iterable { body }` accepts `number[]` or `range` with Never
+compatibility, without parser or raw/typed AST shape changes. Array evaluation is
+once in the enclosing context before activating the loop/binding; shared transfer,
+return/divergence, read-only numeric binding and mutable inner-shadowing rules are
+preserved. An empty array can skip the body and does not establish definite return.
+
+Fully validate the descriptor/payload with existing `ValidateArray`, even when
+empty, then cache handle and unsigned `u32` length once. Use unsigned index tests
+and load each current element through existing checked `ArrayAddress` then `f64`
+load. Do not snapshot elements or cache a raw payload pointer: alias mutations to
+unvisited elements are visible, while source reassignment leaves the captured
+handle unchanged. Continue exits the body latch before index advancement/retest;
+break/return skip advancement. ABI and helper order are unchanged, and array-only
+iteration needs no range helpers.
+
+`tests/array_for_loops.rs` is the array-for suite, alongside shared frontend and
+forged-lowering coverage in `tests/for_frontend.rs` and `tests/for_lowering.rs`.
+These test locations do not establish that runtime validation or release gates
+passed. CLI/browser compilation uses the shared core for both iterable types;
+browser validation requires rebuilt bindings. Range and array iteration remain
+**partial WP5** until broader adapter/cross-feature release gates are met.
 
 ## Remaining work
 

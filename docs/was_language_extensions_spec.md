@@ -1,11 +1,11 @@
 # WAS Language Extensions — Unified Design and Implementation Specification
 
-**Status:** Design baseline with the 13 approved decisions and implementation clarifications (WP1–WP4 and partial WP5 implemented: compound assignments, while transfers, block/if values, internal Never, statement/value loops, and range construction/internal calls, numeric membership, and range-only statement for; array iteration and remaining extensions proposed)
+**Status:** Design baseline with the 13 approved decisions and implementation clarifications (WP1–WP4 and partial WP5 implemented: compound assignments, while transfers, block/if values, internal Never, statement/value loops, and range construction/internal calls, numeric membership, and range/array statement for; adapter/interaction release gates pending and remaining extensions proposed)
 **Version:** 0.3 — 9 October 2026 (implementation clarification update)  
 **Target:** Core WebAssembly, initially the MVP-compatible instruction set already used by `was-compiler`, with optional optimizations gated by Wasm features.  
 **Repository:** https://github.com/LuanRoger/was-compiler
 
-> **Normative language.** **MUST**, **SHOULD**, and **MAY** describe requirements, strong recommendations, and optional implementation choices. This document establishes a coherent *proposed* semantic model. Decisions tagged **Open decision** need confirmation before being frozen as language guarantees. Compound assignments (§4/WP1), bare `while` transfers (§7/WP2), block/if values with internal Never (§§3.2, 8.1/WP3), and statement/value loops (§7/WP4) are implemented. Range construction, internal calls, exact numeric membership (§5/partial WP5), and range-only statement `for` (§6/issue #4) are also implemented; array iteration and remaining adapter/interaction coverage remain proposed. Other extension examples remain proposed `.was` syntax, not claims about the present compiler.
+> **Normative language.** **MUST**, **SHOULD**, and **MAY** describe requirements, strong recommendations, and optional implementation choices. This document establishes a coherent *proposed* semantic model. Decisions tagged **Open decision** need confirmation before being frozen as language guarantees. Compound assignments (§4/WP1), bare `while` transfers (§7/WP2), block/if values with internal Never (§§3.2, 8.1/WP3), and statement/value loops (§7/WP4) are implemented. Range construction, internal calls, exact numeric membership (§5/partial WP5), and range/array statement `for` (§6/issues #4–#5) are also implemented; remaining adapter/interaction release gates are pending. Other extension examples remain proposed `.was` syntax, not claims about the present compiler.
 
 The [concrete implementation plan](was_language_extensions_plan.md) maps this
 specification to ordered work packages, repository files, acceptance tests, and
@@ -14,7 +14,7 @@ shared mutable captures and local-only closures; it clarifies implementation
 safety and corrects the current-language baseline. Compound assignments (§4/WP1)
 and bare `while` transfers (§7/WP2), followed by block/if values and internal Never
 (§§3.2, 8.1/WP3) and statement/value loops (§7/WP4), are implemented;
-WP5's construction/internal-call, numeric membership, and range-for checkpoints are implemented;
+WP5's construction/internal-call, numeric membership, range-for, and array-for checkpoints are implemented;
 the rest of WP5 and WP6 onward remain proposed.
 
 ## 1. Goals and non-goals
@@ -44,7 +44,7 @@ the rest of WP5 and WP6 onward remain proposed.
 The current compiler supports `fn` with required parameter/return annotations,
 annotated `let name: type = value;` and inferred `let name = value;` declarations,
 reassignment, numeric compound assignments, `if`, `while`, bare `break;` /
-`continue;`, range-only statement `for`, `return`, statement/value `loop`, value breaks in loop expressions,
+`continue;`, range/array statement `for`, `return`, statement/value `loop`, value breaks in loop expressions,
 tail-valued blocks, value-context `if` / `else if`, named calls, and `number`,
 `bool`, `string`, `number[]`, `range`, and
 `void`. Every local requires an initializer and retains a fixed type. `//` line comments and non-nesting `/* ... */` block comments are implemented.
@@ -242,8 +242,9 @@ Use a `Place` abstraction (`Local`, `ArrayElement {array_temp, index_temp}`, lat
 private records, locals/assignment, and internal parameters/results. Range values
 also work in blocks, ifs, and value loops with exact joins and Never compatibility.
 Exact numeric membership (`in`) is implemented; range equality is rejected.
-Range-only statement `for` and exact progression advancement are implemented.
-Array iteration and remaining adapter/interaction coverage remain proposed, not full WP5 support.
+Range statement `for` with exact progression advancement and numeric-array
+iteration are implemented. Adapter/interaction release gates remain pending,
+so both remain partial WP5.
 
 ### 5.1 Syntax
 
@@ -263,7 +264,8 @@ let contains: bool = 6 in (0..10 by 2); // true
 `..` excludes the end; `..=` includes the end. Contextual `by` supplies a nonzero
 explicit step and binds to the range construct, not arbitrary arithmetic. The default step is `+1`. `in`
 tests exact progression membership. Construction with `..`, `..=`, optional `by`,
-numeric membership, and range-for iteration are implemented; array iteration is not.
+numeric membership, and range-for iteration are implemented; §6 also implements
+numeric-array iteration without changing the range representation.
 
 ### 5.2 Type and validation
 
@@ -392,9 +394,10 @@ default Cargo success alone does not establish runtime coverage.
 **Implemented range-for coverage (issue #4):** The suites in §6.3 cover yielded
 values, advancement/exhaustion, effects, transfer rules, forged input, and decoded
 lowering at all optimization levels. Runtime execution uses ignored, bounded Node
-cases; default Cargo success alone does not establish runtime coverage. Array
-iteration and broader WP5 adapter/interaction acceptance remain proposed;
-current CLI/browser compilation already supports range-only for through the shared core.
+cases; default Cargo success alone does not establish runtime coverage. Numeric-array
+iteration is implemented under issue #5; broader WP5 adapter/interaction release
+gates remain pending. Current CLI/browser compilation supports both iterable types
+through the shared core.
 
 `0..3` yields 0,1,2; `0..=3` yields 0,1,2,3; `3..0 by -1` yields 3,2,1;
 `5..5` is empty; `5..=5` has one item. Fractional/NaN/infinite/out-of-domain
@@ -409,9 +412,10 @@ parameters/results and selected-export/host-import rejection, and reject range
 
 ## 6. Feature specification: `for` loops and direct array iteration
 
-**Implemented scope (issue #4):** Range-only statement `for` with exact `i64`
-advancement and a continue latch. Direct `number[]` iteration and remaining
-adapter/cross-feature acceptance coverage are proposed; this is not full WP5.
+**Implemented scope (issues #4–#5):** Statement `for` over ranges with exact `i64`
+advancement and over `number[]` with unsigned index iteration and live element
+loads. Both use a continue latch. Adapter/cross-feature release gates remain
+pending; range and array iteration are still **partial WP5**.
 
 ### 6.1 Syntax
 
@@ -426,7 +430,7 @@ for i in bounds {
 }
 ```
 
-Proposed array syntax (not currently accepted):
+Implemented numeric-array syntax:
 
 ```
 let values: number[] = [10, 20, 30];
@@ -435,24 +439,28 @@ for value in values {
 }
 ```
 
-Implemented syntax is `for name in range_expr { body }`, accepting only a `range`
-with existing Never compatibility, not `number[]`, `number`, `bool`, `string`, or
+Implemented syntax is `for name in iterable { body }`, accepting `range` or
+`number[]` with existing Never compatibility, not `number`, `bool`, `string`, or
 Void. `for` is reserved for source and host-language names, never host module/field
 names. The body remains a strict statement vector, not a value block; for is never
-a value expression, including when last in a value block. Array iteration uses the
-same proposed syntax but remains a separate checkpoint. Strings and arbitrary user
-iterators are out of scope for v1; no implicit iterator protocol is introduced.
+a value expression, including when last in a value block. Issue #5 reuses the
+existing parser and raw/typed For shapes. Strings and arbitrary user iterators are
+out of scope for v1; no implicit iterator protocol is introduced.
 
 ### 6.2 Semantics
 
 - The iterable expression is evaluated once before the first iteration, in the enclosing context before activating the new `for` or introducing its iteration binding. Break/continue there target an existing enclosing loop under its usual rules, or are invalid without one. Unlike a while condition, the iterable cannot transfer to the new loop. Return/divergence during iterable evaluation is preserved; it does not create a normally completing `for` path.
-- The implemented range loop variable is a body-local, read-only `number`. Ordinary
+- The range/array loop variable is a body-local, read-only `number`. Ordinary
   and compound assignment to it is rejected even in unreachable code. A distinct
   inner shadowing let is mutable; the iterable sees only enclosing bindings.
 - The range yields arithmetic-progression elements per §5.
-- **Proposed array semantics:** Array iteration uses the same underlying array reference for the loop's lifetime; array elements are loaded at each iteration, not snapshotted, so mutations to unvisited indices may be observed. The iteration length is captured once on entry; current arrays have fixed length.
+- Array iteration captures its handle and unsigned `u32` length once after full
+  `ValidateArray`, including for empty arrays. Elements are loaded on each iteration,
+  not snapshotted: alias mutations to unvisited elements are visible. Reassigning
+  the source variable does not replace the captured handle. Current arrays have
+  fixed length; hosts must preserve descriptor metadata under the existing ABI.
 - `break;` exits the nearest active loop. `continue;` starts its next iteration
-  (for a range this performs the step; proposed array iteration advances its index).
+  (for a range this performs the step; array iteration advances its index).
   `return` exits the function.
 - A loop body may shadow its iteration variable with a distinct inner binding.
 - The `for` loop itself is a void statement, not a value expression. `break VALUE;`
@@ -487,16 +495,18 @@ block break_target {
 }
 ```
 
-Proposed array lowering (not part of issue #4):
+Implemented array lowering (issue #5; iterable evaluation precedes loop/binding activation):
 
 ```
-let array_ref = eval_array_once();
-let count = len(array_ref);
-let index = 0;
+let array_ref: i32 = eval_array_once();
+ValidateArray(array_ref); // full descriptor/payload validation, even when empty
+let count: u32 = load_descriptor_length(array_ref);
+let index: u32 = 0;
 block break_target {
     loop backedge_target {
-        if index >= count { break break_target; }
-        let value = array_ref[index];
+        if unsigned_ge(index, count) { break break_target; }
+        let address = ArrayAddress(array_ref, exact_f64_conversion(index));
+        let value: f64 = load_f64(address);
         block continue_target {
             BODY // continue exits this block and reaches advancement
         }
@@ -511,22 +521,27 @@ with signed bounds checks before every `f64` conversion/yield; §5.4 proves safe
 advancement and normal exhaustion even when next leaves the safe domain. A body
 latch block makes continue reach advancement and retest instead of skipping them.
 Resolve all branch depths from label identity, including nested value ifs/blocks.
-Range helpers are unchanged; iteration adds no helper or floating remainder need.
+Array lowering uses `i32` handle/length/index scratch with unsigned comparisons.
+Each yield calls existing checked `ArrayAddress` before its `f64` load; it does not
+cache a raw payload pointer across body effects or eliminate per-element checks.
+No ABI or helper-order change is introduced: array-only iteration needs no range
+helpers, and range iteration adds no helper or floating remainder need.
 
-Public typed statements add
+Issue #4's public typed statements add
 `For { id, variable, name, iterable: Box<TypedExpr>, body }`. LoopId and VariableId
 follow existing per-function uniqueness, scope, initialization, and active-target
 checks, including forged typed input. Reconstruct read-only write restrictions
 from For provenance, without public mutable-binding metadata or a second validator.
+Issue #5 extends iterable typing/lowering without changing parser or AST shapes.
 The structural walker visits iterable then body within body block hooks; retain
 separate local/memory/temporary/remainder policies and no-reuse scratch slots.
 
 **Implemented test coverage:**
 
-- `tests/for_frontend.rs` covers syntax/reserved names and source spans, range-only
+- `tests/for_frontend.rs` covers syntax/reserved names and source spans, iterable
   typing, statement versus expression contexts, read-only writes and mutable
   shadowing, binding scope, nearest-active/iterable transfer targets, unreachable
-  value-break rejection, conservative empty-range flow, and analyzer reuse after errors.
+  value-break rejection, conservative empty-iterable flow, and analyzer reuse after errors.
 - `tests/for_lowering.rs` covers forged types/results/IDs/targets, read-only writes
   and exact error spans, initialization/scope restoration, scratch types/preorder,
   consumed-record validation/caching before loop regions, and independent decoded
@@ -540,18 +555,23 @@ separate local/memory/temporary/remainder policies and no-reuse scratch slots.
   nested body/iterable transfers, consumed-record validation even for empty ranges,
   and field caching before body effects. Node cases are ignored by default;
   default Cargo success alone does not establish runtime coverage.
+- `tests/array_for_loops.rs` is the numeric-array iteration suite; the existing
+  `tests/for_frontend.rs` and `tests/for_lowering.rs` cover shared frontend and
+  checked-lowering boundaries. Test presence is not a claim that runtime validation
+  or adapter/interaction release gates passed.
 
-Current CLI/browser adapters compile range-only for through the shared core;
-array iteration and broader WP5 adapter/interaction acceptance remain proposed.
+Current CLI/browser adapters compile range and array for through the shared core;
+broader WP5 adapter/interaction release gates remain pending. Rebuild browser
+bindings before adapter validation; stale bindings do not validate current source.
 
 **Lowering warning:** `continue` must target the increment/latch path rather than jump around the induction-variable update. Implement an explicit latch block or equivalent structured region; naive `br loop` from the middle of the body can produce an infinite loop.
 
 ### 6.4 Optimization opportunities
 
-These are future WP13 opportunities, not new optimization passes for issue #4.
-Once-only iterable evaluation and cached range fields are already semantics.
+These are future WP13 opportunities, not new optimization passes for issues #4–#5.
+Once-only iterable evaluation, cached range fields, and captured array handle/length
+are already semantics, not optional optimizations.
 
-- Hoist proposed array length reads where justified.
 - For arrays with a verified fixed length, bounds-check elimination MAY occur for the compiler-generated index; mutable aliasing by itself does not change length, but memory corruption or host-memory mutation assumptions must be documented.
 - Range fields are already cached; optional literal-step specialization and proposed
   array offset strength reduction require separate correctness/measurement gates.
@@ -564,8 +584,8 @@ Once-only iterable evaluation and cached range fields are already semantics.
 **Implementation status:** WP2–WP4 implement while transfers, transfers through
 expression regions/conditions, and statement/value loops with value breaks.
 Typed while/for/loop nodes carry per-function LoopIds; transfers carry resolved
-innermost active targets. Range-only for is implemented as specified in §6;
-labels and array iteration remain proposed. A transfer is not a function
+innermost active targets. Range/array for is implemented as specified in §6;
+labels remain proposed. A transfer is not a function
 return, but a loop without reachable exit explicitly diverges. Nonvoid functions
 allow returns or explicit divergence, never normal fallthrough. Ordinary while
 remains conservative even with literal true; a noncompleting condition consumes
@@ -1062,8 +1082,8 @@ Issue #4 adds raw `StatementKind::For { name, iterable, body }` and typed
 `TypedStatementKind::For { id, variable, name, iterable: Box<TypedExpr>, body }`.
 For is statement-only; no raw/typed For expression variant or public mutable-binding
 metadata is added. The original typed node is lowered directly through the existing
-checked boundary, not desugared into another public tree or IR. Array iteration
-remains proposed.
+checked boundary, not desugared into another public tree or IR. Issue #5 adds
+numeric-array iteration without changing these parser/AST shapes.
 
 WP3's implemented raw/typed expression enums add `Block` and `If`. `ValueBlock`
 and `TypedValueBlock` hold statements, an optional boxed tail, and span, while
@@ -1287,8 +1307,8 @@ Both local closures access the **same cell** for `count`. Returning a closure fr
 |---|---|
 | `break;` outside a loop | Break has no enclosing loop |
 | `continue;` outside a loop | Continue has no enclosing loop |
-| `break 1;` inside `while` or range `for`, even unreachable | Value break is only supported by `loop` expressions |
-| `for x in [1, 2] {}` | Range iterable required; array iteration remains proposed |
+| `break 1;` inside `while` or range/array `for`, even unreachable | Value break is only supported by `loop` expressions |
+| `for x in 42 {}` (also bool, string, or Void iterables) | Iterable must be `range` or `number[]`, with Never compatibility |
 | Ordinary or compound assignment to a for iteration binding, even unreachable | Iteration binding is read-only; a distinct inner shadowing let is mutable |
 | `let x = if flag { 1 };` | Value-producing `if` requires an `else` |
 | `match n { 1 => 10 }` used as a value | Non-exhaustive match; add `_` |
@@ -1370,9 +1390,9 @@ The first five milestones are approved **in this exact order**, building only th
 4. **Statement/value `loop` (implemented WP4):** break-value typing, reachable
    result constraints and explicit divergence with the existing loop-target stack.
 5. **Ranges and `for` (partial WP5 implemented):** eager range validation, internal
-   calls, exact membership, and range-only statement iteration with exact `i64`
-   advancement and continue latch. `number[]` iteration and remaining
-   adapter/interaction coverage are proposed.
+   calls, exact membership, range iteration with exact `i64` advancement, and
+   `number[]` iteration with captured handle/length and live element loads. Both
+   use a continue latch; adapter/interaction release gates remain pending.
 
 Following these milestones, incremental later work (ordering within a group MAY be adjusted according to dependencies):
 

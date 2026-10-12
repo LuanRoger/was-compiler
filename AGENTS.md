@@ -127,7 +127,7 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   function inference, or whole-program type unification. `number` remains `f64`.
 - Named functions support forward, nested, self-recursive, mutual, and registered
   host calls. Statements include `let`, variable/index assignment, expression
-  statements, `return`, `if`/`else`, `while`, range-only `for`, and `loop`. Bare
+  statements, `return`, `if`/`else`, `while`, range/array `for`, and `loop`. Bare
   `break;` exits while/for and statement loops; `break value;` exits value loops.
   Continue reevaluates a while condition or advances a for before retesting.
   Statement-only `+= -= *= /= %=` accept `number` variables and numeric-array elements, not whole arrays.
@@ -138,15 +138,16 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   types. Value-context if requires else and exact branch joins, allowing `Never`.
   Statement-if may omit else and discards branch tails. No `match` expressions yet.
 - Partial WP5 implements range construction/internal calls, exact numeric membership,
-  and range-only statement iteration:
+  and range/array statement iteration:
   `start..end` / `start..=end`, optional contextual `by step`, default `+1`.
   Precedence is below arithmetic and above comparisons, non-associative. Range
   values work with locals/assignment, internal signatures, blocks/if/value loops,
   and exact/Never joins; equality is rejected. `number in range` yields `bool` at
   comparison precedence with existing left associativity; `in` is reserved.
-  Reserved `for name in range_expr { body }` introduces a read-only `number`
-  binding; an inner shadowing `let` remains mutable. Array iteration remains
-  proposed. Before changing ranges or for, read extension spec §§5–6 and the
+  Reserved `for name in iterable { body }` accepts `range` or `number[]` with
+  Never compatibility and introduces a read-only `number` binding; an inner
+  shadowing `let` remains mutable. WP5 adapter/interaction release gates remain
+  pending. Before changing ranges or for, read extension spec §§5–6 and the
   [private record contract](docs/memory-abi.md#private-range-record).
 - Strings are immutable raw UTF-8 values. Numeric arrays have fixed lengths and
   mutable shared storage; every evaluated array literal allocates fresh storage.
@@ -154,7 +155,7 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   between tokens anywhere whitespace can appear; delimiters inside strings remain text.
 - Statement/value `loop` supports all concrete result types through value breaks;
   no reachable exit yields Never. Explicit divergence is allowed in nonvoid
-  functions. No array `for`, `foreach`, loop labels, value breaks in while/for, string
+  functions. No `foreach`, loop labels, value breaks in while/for, string
   escapes, exponent literals,
   `.5`, `1.`, string concatenation/indexing/`len`, or general postfix
   chaining. Source indexing starts from an identifier.
@@ -281,23 +282,33 @@ refactors; specify and test any intentional behavior change explicitly.
   typed AST. Construction-only bytes and existing helper indices remain unchanged;
   membership alone does not require the floating remainder helper.
 
-### Range-only statement for loops
+### Range and numeric-array statement for loops
 
 - Raw statements add `For { name, iterable, body }`; typed statements add
   `For { id, variable, name, iterable: Box<TypedExpr>, body }`. IDs participate in
   existing per-function loop/binding checks. For is a void statement, never a value
   expression; its body is a strict statement vector. Bare breaks are permitted,
   value breaks are rejected even when unreachable.
-- Evaluate the range iterable once in the enclosing context before activating the
+- Accept only `range` or `number[]` iterables with Never compatibility. Issue #5
+  reuses the existing parser and raw/typed For shapes.
+- Evaluate the iterable once in the enclosing context before activating the
   loop or binding. Iterable break/continue targets the outer nearest loop, or is
   invalid without one; preserve return/divergence without inventing fallthrough.
   Check the body even if the iterable cannot complete. A completing iterable can
-  describe an empty range, so body return alone does not establish definite return.
+  describe an empty range or array, so body return alone does not establish
+  definite return.
 - Iteration bindings are read-only for ordinary and compound assignment. Reconstruct
   checked-lowering write restrictions from For provenance, not new public mutable
   metadata. Distinct inner shadowing lets retain ordinary mutable behavior.
-- Validate the consumed record and cache `i64` current/end/step and `i32` inclusivity
-  scratch. Test signed endpoints before exact `f64` conversion/yield (zero is +0).
+- Array iteration caches its handle and `u32` length once after full `ValidateArray`,
+  even for empty arrays. Use unsigned index tests and load each element through
+  existing checked `ArrayAddress` then `f64` load on its iteration, never snapshot
+  elements or cache a raw payload pointer. Alias mutations remain visible; source
+  reassignment does not change the captured handle. Continue exits the body latch
+  before index advancement/retest. ABI/helper order is unchanged; array-only for
+  requires no range helpers.
+- For ranges, validate the consumed record and cache `i64` current/end/step and
+  `i32` inclusivity scratch. Test signed endpoints before exact `f64` conversion/yield (zero is +0).
   Continue exits a body latch block, then `I64Add` advances and the loop retests;
   resolve branch depths from label identity, including nested expression regions.
 - With `M = 2^53−1`, every yielded current and nonzero step have magnitude ≤ M,
@@ -311,7 +322,9 @@ refactors; specify and test any intentional behavior change explicitly.
   `tests/for_frontend.rs` covers syntax/types/scopes and transfer rules;
   `tests/for_lowering.rs` covers forged trees and decoded planner/lowering contracts;
   `tests/for_loops.rs` covers deterministic layout, imports/exports, and bounded
-  runtime behavior at all optimization levels. Its Node execution cases are ignored
+  runtime behavior at all optimization levels. `tests/array_for_loops.rs` is the
+  array-for suite. Range and array iteration remain partial WP5 until adapter and
+  interaction release gates are met. Node execution cases retain the ignored policy
   by default; default Cargo success alone does not establish runtime coverage.
 
 ### Evaluation, scopes, and module layout

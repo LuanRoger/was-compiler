@@ -357,14 +357,8 @@ fn iterable_finishes_and_record_is_cached_before_for_regions_and_binding() {
 }
 
 #[test]
-fn completing_iterables_require_range_not_another_storage_type_or_void() {
-    for ty in [
-        Type::Number,
-        Type::Bool,
-        Type::String,
-        Type::NumberArray,
-        Type::Void,
-    ] {
+fn completing_iterables_require_range_or_array_not_another_storage_type_or_void() {
+    for ty in [Type::Number, Type::Bool, Type::String, Type::Void] {
         let mut program = analyze("fn hidden() -> void { for i in 0..1 {} } fn main() -> void {}");
         let span = program.functions[0].body[0].span;
         let (_, _, iterable, _) = for_parts(&mut program.functions[0].body[0]);
@@ -373,7 +367,7 @@ fn completing_iterables_require_range_not_another_storage_type_or_void() {
                 Type::Number => TypedExprKind::Number("1".into()),
                 Type::Bool => TypedExprKind::Bool(true),
                 Type::String => TypedExprKind::String("x".into()),
-                Type::NumberArray => TypedExprKind::Array(vec![]),
+                Type::NumberArray => unreachable!(),
                 Type::Void => TypedExprKind::Block(was_compiler::typed_ast::TypedValueBlock {
                     statements: vec![],
                     tail: None,
@@ -392,6 +386,27 @@ fn completing_iterables_require_range_not_another_storage_type_or_void() {
                 span,
             },
         );
+    }
+}
+
+#[test]
+fn valid_array_iterables_are_accepted_by_checked_lowering() {
+    for elements in [vec![], vec![number()]] {
+        let mut program = analyze("fn main() -> void { for i in 0..1 { i; } }");
+        let (_, _, iterable, _) = for_parts(&mut program.functions[0].body[0]);
+        **iterable = TypedExpr {
+            kind: TypedExprKind::Array(elements),
+            ty: Type::NumberArray.into(),
+        };
+        let snapshot = program.clone();
+        let baseline = codegen::compile(&program).expect("valid numeric array iterable");
+        function_body(&baseline, 0);
+        let mut compiler = Compiler::new();
+        for level in LEVELS {
+            compiler.set_optimization_level(level);
+            assert_eq!(compiler.compile(&program).unwrap(), baseline);
+            assert_eq!(program, snapshot);
+        }
     }
 }
 
@@ -455,7 +470,19 @@ fn genuine_never_iterable_preserves_completion_but_still_checks_the_body() {
     ] {
         let program = analyze(source);
         let bytes = codegen::compile(&program).unwrap();
-        function_body(&bytes, 0);
+        let body = function_body(&bytes, 0);
+        assert_eq!(
+            local_types(&body),
+            [
+                ValType::F64,
+                ValType::I32,
+                ValType::I64,
+                ValType::I64,
+                ValType::I64,
+                ValType::I32
+            ],
+            "Never retains the default range scratch shape"
+        );
     }
 
     let original = analyze(
@@ -501,6 +528,13 @@ fn genuine_never_iterable_preserves_completion_but_still_checks_the_body() {
 
 #[test]
 fn iteration_binding_annotations_are_checked_against_numeric_storage() {
+    for iterable in ["0..1", "[1]"] {
+        check_binding_annotations(iterable);
+    }
+}
+
+fn check_binding_annotations(iterable: &str) {
+    let analyze = |source: &str| analyze(&source.replace("0..1", iterable));
     for ty in [
         ExprResult::Value(Type::Bool),
         ExprResult::Never,
@@ -564,6 +598,13 @@ fn read_statement(body: &mut TypedBlock) -> &mut TypedStatement {
 
 #[test]
 fn ordinary_and_all_compound_writes_reject_exact_readonly_id_and_span_everywhere() {
+    for iterable in ["0..1", "[1]"] {
+        check_readonly_writes(iterable);
+    }
+}
+
+fn check_readonly_writes(iterable: &str) {
+    let analyze = |source: &str| analyze(&source.replace("0..1", iterable));
     for fixture in [
         "i;",
         "continue; i;",
@@ -613,6 +654,13 @@ fn ordinary_and_all_compound_writes_reject_exact_readonly_id_and_span_everywhere
 
 #[test]
 fn inner_shadow_is_mutable_and_readonly_restriction_restores_after_its_scope() {
+    for iterable in ["0..1", "[1]"] {
+        check_shadow_restrictions(iterable);
+    }
+}
+
+fn check_shadow_restrictions(iterable: &str) {
+    let analyze = |source: &str| analyze(&source.replace("0..1", iterable));
     let original = analyze(
         "fn hidden() -> void {
         for i in 0..1 { { let i = i; i = 2; i += 1; i -= 1; i *= 2; i /= 2; i %= 2; }; i; }
@@ -660,6 +708,21 @@ fn inner_shadow_is_mutable_and_readonly_restriction_restores_after_its_scope() {
 
 #[test]
 fn sparse_ids_are_valid_and_function_local_without_affecting_wasm_indices() {
+    for iterable in ["0..1", "[1]"] {
+        check_sparse_ids(iterable);
+    }
+}
+
+fn check_sparse_ids(iterable: &str) {
+    let analyze = |source: &str| {
+        let source = source.replace("0..1", iterable);
+        let source = if iterable == "[1]" {
+            source.replace("seed..3", "[seed]")
+        } else {
+            source
+        };
+        analyze(&source)
+    };
     let original = analyze(
         "fn hidden(seed: number) -> void {
         for i in seed..3 { i; for j in 0..1 { j; continue; } break; }
@@ -679,10 +742,11 @@ fn sparse_ids_are_valid_and_function_local_without_affecting_wasm_indices() {
     let (id, variable, iterable, body) = for_parts(&mut program.functions[0].body[0]);
     *id = outer_loop;
     *variable = outer_variable;
-    let TypedExprKind::Range { start, .. } = &mut iterable.kind else {
-        panic!("range");
-    };
-    **start = identifier(parameter, Type::Number);
+    match &mut iterable.kind {
+        TypedExprKind::Range { start, .. } => **start = identifier(parameter, Type::Number),
+        TypedExprKind::Array(elements) => elements[0] = identifier(parameter, Type::Number),
+        _ => panic!("range or array"),
+    }
     body[0].kind = TypedStatementKind::Expression(identifier(outer_variable, Type::Number));
     let (id, variable, _, nested) = for_parts(&mut body[1]);
     *id = inner_loop;
@@ -713,6 +777,21 @@ fn sparse_ids_are_valid_and_function_local_without_affecting_wasm_indices() {
 
 #[test]
 fn for_bindings_participate_in_function_wide_variable_id_uniqueness() {
+    for iterable in ["0..1", "[1]"] {
+        check_variable_ids(iterable);
+    }
+}
+
+fn check_variable_ids(iterable: &str) {
+    let analyze = |source: &str| {
+        let source = source.replace("0..1", iterable);
+        let source = if iterable == "[1]" {
+            source.replace("0..x", "[x]")
+        } else {
+            source
+        };
+        analyze(&source)
+    };
     for fixture in [
         "fn hidden(p: number) -> void { for i in 0..1 {} } fn main() -> void {}",
         "fn hidden() -> void { let p = 1; for i in 0..1 {} } fn main() -> void {}",
@@ -779,6 +858,13 @@ fn for_bindings_participate_in_function_wide_variable_id_uniqueness() {
 
 #[test]
 fn loop_ids_remain_unique_in_iterable_body_and_unreachable_siblings() {
+    for iterable in ["0..1", "[1]"] {
+        check_loop_ids(iterable);
+    }
+}
+
+fn check_loop_ids(iterable: &str) {
+    let analyze = |source: &str| analyze(&source.replace("0..1", iterable));
     for (case, source) in [
         "fn hidden() -> void { for i in { for j in 0..1 {} 0..1 } {} } fn main() -> void {}",
         "fn hidden() -> void { for i in 0..1 { if false { while false {} } } } fn main() -> void {}",
@@ -819,6 +905,13 @@ fn loop_ids_remain_unique_in_iterable_body_and_unreachable_siblings() {
 
 #[test]
 fn both_transfers_reject_unknown_inactive_outer_and_cross_function_targets() {
+    for iterable in ["0..1", "[1]"] {
+        check_transfer_targets(iterable);
+    }
+}
+
+fn check_transfer_targets(iterable: &str) {
+    let analyze = |source: &str| analyze(&source.replace("0..1", iterable));
     let original = analyze(
         "fn hidden() -> void {
         for i in 0..1 { for j in 0..1 { continue; } }
@@ -865,6 +958,13 @@ fn both_transfers_reject_unknown_inactive_outer_and_cross_function_targets() {
 
 #[test]
 fn iterable_transfers_use_the_enclosing_loop_never_the_new_for() {
+    for iterable in ["0..1", "[1]"] {
+        check_iterable_transfers(iterable);
+    }
+}
+
+fn check_iterable_transfers(iterable: &str) {
+    let analyze = |source: &str| analyze(&source.replace("0..1", iterable));
     for keyword in ["break", "continue"] {
         let source = format!(
             "fn hidden() -> void {{ while true {{
@@ -902,6 +1002,13 @@ fn iterable_transfers_use_the_enclosing_loop_never_the_new_for() {
 
 #[test]
 fn iteration_binding_is_uninitialized_in_its_iterable_and_after_its_scope() {
+    for iterable in ["0..1", "[1]"] {
+        check_binding_initialization(iterable);
+    }
+}
+
+fn check_binding_initialization(iterable: &str) {
+    let analyze = |source: &str| analyze(&source.replace("0..1", iterable));
     for during_iterable in [true, false] {
         let mut program =
             analyze("fn hidden() -> void { for i in 0..1 { i; } 1; } fn main() -> void {}");
@@ -909,10 +1016,11 @@ fn iteration_binding_is_uninitialized_in_its_iterable_and_after_its_scope() {
         let (_, variable, iterable, _) = for_parts(&mut program.functions[0].body[0]);
         let id = *variable;
         let span = if during_iterable {
-            let TypedExprKind::Range { start, .. } = &mut iterable.kind else {
-                panic!("range");
-            };
-            **start = identifier(id, Type::Number);
+            match &mut iterable.kind {
+                TypedExprKind::Range { start, .. } => **start = identifier(id, Type::Number),
+                TypedExprKind::Array(elements) => elements[0] = identifier(id, Type::Number),
+                _ => panic!("range or array"),
+            }
             for_span
         } else {
             let statement = &mut program.functions[0].body[1];
@@ -932,6 +1040,13 @@ fn iteration_binding_is_uninitialized_in_its_iterable_and_after_its_scope() {
 
 #[test]
 fn wrong_kind_value_breaks_are_rejected_even_when_unreachable_or_rhs_is_never() {
+    for iterable in ["0..1", "[1]"] {
+        check_value_breaks(iterable);
+    }
+}
+
+fn check_value_breaks(iterable: &str) {
+    let analyze = |source: &str| analyze(&source.replace("0..1", iterable));
     for prefix in ["", "continue;", "break;", "return;"] {
         let source = format!(
             "fn hidden() -> void {{ for i in 0..1 {{ {prefix} i; }} }} fn main() -> void {{}}"
@@ -968,6 +1083,13 @@ fn wrong_kind_value_breaks_are_rejected_even_when_unreachable_or_rhs_is_never() 
 
 #[test]
 fn normally_completing_iterable_does_not_make_body_return_definite() {
+    for iterable in ["0..1", "[1]"] {
+        check_body_return(iterable);
+    }
+}
+
+fn check_body_return(iterable: &str) {
+    let analyze = |source: &str| analyze(&source.replace("0..1", iterable));
     let mut program = analyze(
         "fn hidden() -> number { for i in 0..1 { return i; } return 7; } fn main() -> void {}",
     );
@@ -1057,4 +1179,89 @@ fn planning_keeps_preorder_slots_for_nested_unreachable_and_short_circuited_fors
         );
         assert_eq!(program, snapshot);
     }
+}
+
+#[test]
+fn array_annotations_do_not_disguise_numbers_or_forged_never_results() {
+    for corruption in 0..4 {
+        let mut program = analyze("fn hidden() -> void { for i in [1] {} } fn main() -> void {}");
+        let span = program.functions[0].body[0].span;
+        let (_, _, iterable, _) = for_parts(&mut program.functions[0].body[0]);
+        let expected = match corruption {
+            0 => {
+                iterable.kind = TypedExprKind::Number("1".into());
+                CodegenError::TypeMismatch {
+                    function: "hidden".into(),
+                    expected: Type::Number,
+                    found: Type::NumberArray,
+                    span,
+                }
+            }
+            1 | 2 => {
+                iterable.ty = if corruption == 1 {
+                    ExprResult::Never
+                } else {
+                    ExprResult::Value(Type::Void)
+                };
+                CodegenError::ExprResultMismatch {
+                    function: "hidden".into(),
+                    expected: if corruption == 1 {
+                        Type::NumberArray.into()
+                    } else {
+                        Type::Range.into()
+                    },
+                    found: iterable.ty,
+                    span,
+                }
+            }
+            _ => {
+                let TypedExprKind::Array(elements) = &mut iterable.kind else {
+                    panic!("array");
+                };
+                elements[0].ty = ExprResult::Never;
+                iterable.ty = ExprResult::Never;
+                CodegenError::ExprResultMismatch {
+                    function: "hidden".into(),
+                    expected: Type::Number.into(),
+                    found: ExprResult::Never,
+                    span,
+                }
+            }
+        };
+        assert_rejected(&program, expected);
+    }
+}
+
+#[test]
+fn divergent_array_iterable_still_checks_hidden_body_and_annotation() {
+    let original =
+        analyze("fn hidden() -> number { for i in { return 7; [1] } { i; } } fn main() -> void {}");
+    let bytes = codegen::compile(&original).unwrap();
+    function_body(&bytes, 0);
+    let mut forged = original.clone();
+    let span = forged.functions[0].body[0].span;
+    for_parts(&mut forged.functions[0].body[0]).2.ty = Type::NumberArray.into();
+    assert_rejected(
+        &forged,
+        CodegenError::ExprResultMismatch {
+            function: "hidden".into(),
+            expected: ExprResult::Never,
+            found: Type::NumberArray.into(),
+            span,
+        },
+    );
+    let mut forged = original;
+    let (_, _, _, body) = for_parts(&mut forged.functions[0].body[0]);
+    let span = body[0].span;
+    body[0].kind = TypedStatementKind::Continue {
+        target: LoopId(usize::MAX),
+    };
+    assert_rejected(
+        &forged,
+        CodegenError::InvalidLoopTarget {
+            function: "hidden".into(),
+            target: LoopId(usize::MAX),
+            span,
+        },
+    );
 }

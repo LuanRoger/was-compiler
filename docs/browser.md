@@ -142,21 +142,31 @@ Range handles remain private, with no host range type or marshaling API. Use
 range user exports and all range host imports are rejected. Exported scalar
 membership results use raw `i32` `0`/`1`.
 
-The core pipeline also supports range-only statement
-`for name in range_expr { body }`, without a new JavaScript API, host callback,
-or range helper. `for` is reserved for source/host-language names, not host
+The core pipeline also supports statement `for name in iterable { body }` over
+`range` or `number[]` with Never compatibility, without a new JavaScript API, host
+callback, or helper. `for` is reserved for source/host-language names, not host
 module/field names. The iterable evaluates once in the enclosing context before
 activating the new loop/binding; iterable break/continue targets the outer nearest
 loop, and return/divergence is preserved. The body's `number` binding is read-only;
 a distinct inner shadowing let remains mutable. Bare breaks are permitted, value
 breaks are rejected even when unreachable, and continue advances before retesting.
-For is a void statement, not a value expression. Cached `i64` fields and signed
+For is a void statement, not a value expression. For ranges, cached `i64` fields and signed
 endpoint checks precede exact `f64` conversion/yield (zero is +0); advancement
 outside the safe domain exhausts normally before conversion, without a trap.
-The browser adapter already compiles range-only for through this shared core.
-Array iteration and broader WP5 adapter/interaction acceptance remain proposed;
-that remaining work is not pending browser support for the current range-for
-feature or full WP5 completion. `tests/for_frontend.rs` and `tests/for_lowering.rs`
+
+For arrays, full `ValidateArray` precedes caching the handle and unsigned `u32`
+length once, even when empty. Unsigned index iteration loads each current element
+through existing checked `ArrayAddress` then `f64` load, without an element snapshot
+or cached raw payload pointer. Alias mutations remain visible; source reassignment
+does not replace the captured handle. Continue exits the body latch before index
+advancement/retest. ABI/helper order is unchanged, and array-only iteration needs
+no range helpers. Issue #5 changes no parser or AST shapes.
+
+The browser adapter uses this shared core for both iterable types. Range and array
+iteration remain **partial WP5** until broader adapter/interaction release gates
+are met. `tests/array_for_loops.rs` is the array-for suite; its presence is not a
+claim that runtime validation or release gates passed.
+`tests/for_frontend.rs` and `tests/for_lowering.rs`
 cover frontend and checked-lowering contracts; `tests/for_loops.rs` covers layout,
 optimization parity and bounded Node execution, including exact yields/exhaustion,
 effects, transfers, consumed-record validation and caching. Its Node cases are

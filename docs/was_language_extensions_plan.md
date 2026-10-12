@@ -1,6 +1,6 @@
 # WAS language extensions implementation plan
 
-**Status:** WP1–WP4 and WP5's construction/internal-call, numeric membership, and range-only statement for checkpoints implemented; array iteration, remaining adapter/interaction coverage, and WP6–WP12 proposed; WP13 requires separate authorization.
+**Status:** WP1–WP4 and WP5's construction/internal-call, numeric membership, and range/array statement for checkpoints implemented; adapter/interaction release gates pending and WP6–WP12 proposed; WP13 requires separate authorization.
 **Baseline:** Extension specification v0.3.
 
 Follow the [agent guide](../AGENTS.md), [extension specification](was_language_extensions_spec.md),
@@ -15,7 +15,7 @@ tracking; WP3 adds block/if values and internal `Never`; WP4 adds statement/valu
 loops with reachable break-result constraints and explicit divergence. The baseline
 implementation notes below reflect those completed packages and partial WP5:
 range construction, immutable private records, internal calls, exact numeric
-membership, and range-only statement for. Frontend, checked-lowering, deterministic
+membership, and range/array statement for. Frontend, checked-lowering, deterministic
 layout and bounded runtime coverage are implemented in the for suites below;
 Node execution retains the ignored-test policy.
 
@@ -97,8 +97,9 @@ These paths exist today; ownership denotes responsibility, not mandatory edits f
 
 **Implemented WP5 module:** `src/codegen/range.rs` owns range discovery,
 construction, private-record validation, and exact numeric membership helpers.
-Range-for advancement is inline checked control-flow lowering, not a new range
-helper; array iteration remains future work.
+Range advancement and array index iteration are inline checked control-flow
+lowering, not new helpers. Array iteration reuses checked `ArrayAddress` and
+preserves live alias observation without changing the descriptor ABI.
 
 **Proposed new files, not existing implementation:** `src/semantic/inference.rs` in WP7 and `src/semantic/captures.rs` in WP11 if those policies
 outgrow `semantic.rs`; `src/codegen/closures.rs` in WP11 for direct helpers/cells.
@@ -288,13 +289,13 @@ checkpoint follows below.
 ### WP5 — Safe ranges, range/array `for`, membership (spec §§5–6)
 
 **Entry:** WP4. Range representation/export gates are approved as specified below;
-construction/internal calls, numeric membership, and range-only statement for are
+construction/internal calls, numeric membership, and range/array statement for are
 implemented, not the full package.
 See [ADR-0001](adr/0001-private-range-representation.md)
 for the representation and external-boundary rationale.
 Split this package into sequential checkpoints: construction/internal calls → exact
 numeric membership → range-only statement for with exact advancement/latch → array
-iteration → adapters/interactions. The first three are implemented; no partial
+iteration → adapters/interactions. The first four are implemented; no partial
 checkpoint is advertised as full WP5 support.
 
 **Implemented first checkpoint:** `Type::Range` and raw/typed range expressions
@@ -309,8 +310,8 @@ Coverage lives in `tests/range_frontend.rs`, `tests/ranges.rs`, and
 `src/codegen/range_tests.rs`: frontend rejection, forged trees, Validator plus
 independent record/instruction/layout assertions, export/import gates,
 optimization parity, and ignored bounded Node validation/effect cases.
-Exact numeric membership and range-only statement for are implemented as described
-below; array iteration and remaining adapter/interaction coverage are proposed.
+Exact numeric membership and range/array statement for are implemented as described
+below; adapter/interaction release gates remain pending.
 
 The approved MVP uses a single `i32` handle to an immutable private, eight-byte-aligned
 32-byte record. Validated signed `i64` start/end/step occupy byte offsets 0/8/16;
@@ -362,7 +363,8 @@ Frontend and decoded-lowering coverage lives in `tests/range_frontend.rs` and
 
 **Implemented range-only statement for checkpoint (issue #4):** Reserve `for` for
 source and host-language names, not host module/field names. Accept
-`for name in range_expr { body }` with exact range/Never compatibility, not arrays.
+`for name in range_expr { body }` with exact range/Never compatibility; issue #5
+below extends the same syntax/node to numeric arrays.
 Raw statements add `For { name, iterable, body }`; typed statements add
 `For { id, variable, name, iterable: Box<TypedExpr>, body }`, retaining strict
 statement-vector bodies and existing per-function loop/binding ID checks. For is
@@ -402,7 +404,7 @@ must preserve invalid-constant construction traps at their original effect posit
 
 **Implemented range-for coverage:**
 
-- `tests/for_frontend.rs`: syntax/reserved names, range-only typing, statement versus
+- `tests/for_frontend.rs`: syntax/reserved names, iterable typing, statement versus
   value contexts, read-only ordinary/compound updates and mutable inner shadowing,
   body checking after divergent iterables, iterable transfers to outer loops and
   rejection without one, binding scope, unreachable value-break rejection.
@@ -422,13 +424,28 @@ These suites check unexported, unreachable, and runtime-skipped children. Node
 execution retains the ignored-test policy and bounded subprocess helper; default
 Cargo success alone does not establish runtime coverage.
 
-**Remaining full-WP5 checkpoints (proposed):** Array iteration accepts `number[]`
-only after its own typing/lowering gates; cache handle/length and load each element
-on its iteration so alias mutations to future elements remain visible. Keep its
-iteration binding read-only and its continuation on an index-advancement latch.
-Array/aliasing and broader WP5 adapter/cross-feature acceptance remain proposed.
-Current CLI/browser adapters already compile range-only for through the shared core;
-remaining acceptance work does not defer current feature support or complete WP5.
+**Implemented numeric-array iteration checkpoint (issue #5):** Accept `number[]`
+or `range` with Never compatibility; reject other iterable types. Reuse the parser
+and raw/typed For shapes. Evaluate once in the enclosing context before the new
+binding/loop is active; preserve iterable transfers, return/divergence, body checks,
+read-only `number` bindings and mutable inner shadowing. Empty arrays preserve the
+same conservative return analysis as empty ranges.
+
+After full `ValidateArray`, including for an empty array, cache its handle and
+unsigned `u32` length once. Use unsigned index tests and existing checked
+`ArrayAddress` followed by `f64` load each iteration, without snapshotting elements
+or caching a raw payload pointer. Alias mutations to unvisited elements are visible;
+source-variable reassignment does not replace the captured handle. Continue exits
+the body latch to increment/retest; break/return skip advancement. ABI and helper
+order are unchanged; array-only iteration needs no range helpers. Array coverage
+lives in `tests/array_for_loops.rs`, alongside shared frontend/forged-lowering
+contracts in `tests/for_frontend.rs` and `tests/for_lowering.rs`. This records test
+locations, not a claim that runtime validation or release gates passed.
+
+**Remaining full-WP5 checkpoints (proposed):** Broader adapter/cross-feature
+acceptance remains pending. Range and array iteration are still **partial WP5**.
+Current CLI/browser adapters compile both through the shared core; remaining
+acceptance work does not defer current feature support or complete WP5.
 Further adapter coverage must preserve range import/selected-export rejection,
 internal signatures under explicit selection, mandatory memory exports and legacy
 ABI. Rebuild browser bindings after core/browser changes before adapter validation.

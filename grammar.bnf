@@ -102,13 +102,17 @@
                     <ws> <block>
 
 # For is statement-only, including when final in a value block, and accepts only
-# range iterables (array iteration remains proposed). Analyze/evaluate the iterable
+# range or number[] iterables with Never compatibility. Analyze/evaluate the iterable
 # once in the enclosing context before activating the for or binding its name.
 # Iterable return/divergence and transfers to enclosing loops are preserved.
 # The iteration binding is a read-only number in a scope outside the body; an
 # inner let may shadow it with a distinct mutable binding. All bodies are checked,
 # including empty iteration and unreachable writes/transfers. For may execute zero
 # times. Continue advances before retesting; bare break exits; value break is invalid.
+# Arrays capture handle and u32 length once after full validation, including empty
+# arrays; unsigned index iteration loads each current element through checked
+# ArrayAddress. Alias mutations are visible; source reassignment does not replace
+# the captured handle. There is no element snapshot or parser/AST shape change.
 # for is reserved for source and host-language names, not host module/field names.
 
 <loop_statement> ::= "loop" <ws> <block> ( <ws> ";" )?

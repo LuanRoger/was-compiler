@@ -234,6 +234,52 @@ fn truncated_for_programs_and_token_slices_do_not_panic() {
 }
 
 #[test]
+fn for_accepts_array_values_from_existing_expression_forms() {
+    for iterable in [
+        "[]",
+        "[1, 2]",
+        "values",
+        "make()",
+        "{ let a = [1]; a }",
+        "if true { [1] } else { [] }",
+        "loop { break [1]; }",
+    ] {
+        let source = format!(
+            "fn make() -> number[] {{ return [1, 2]; }}
+             fn main(values: number[]) -> void {{ for i in {iterable} {{ let n: number = i; }} }}"
+        );
+        Compiler::new().analyze(&source).unwrap();
+    }
+}
+
+#[test]
+fn array_iteration_preserves_readonly_scope_and_checks_skipped_children() {
+    for iterable in ["[]", "[1, 2]"] {
+        for prefix in ["", "continue;", "break;", "return;"] {
+            for operator in ["=", "+=", "-=", "*=", "/=", "%="] {
+                let source = format!(
+                    "fn main() -> void {{ if false {{ for i in {iterable} {{ {prefix} i {operator} missing; }} }} }}"
+                );
+                assert!(
+                    matches!(semantic_error(&source), SemanticError::ReadOnlyVariable { name, .. } if name == "i")
+                );
+            }
+        }
+    }
+    Compiler::new()
+        .analyze("fn main(i: number[]) -> void { for i in i { let i = i; i += 1; } i = []; }")
+        .unwrap();
+    for source in [
+        "fn main() -> void { for i in [] {} i; }",
+        "fn main() -> void { for i in [] { return; break 1; } }",
+        "fn main() -> void { for i in [] { missing; } }",
+        "fn main() -> number { for i in [1] { return i; } }",
+    ] {
+        assert!(Compiler::new().analyze(source).is_err(), "{source}");
+    }
+}
+
+#[test]
 fn for_accepts_range_values_from_existing_expression_forms() {
     for iterable in [
         "0..3",
@@ -254,13 +300,11 @@ fn for_accepts_range_values_from_existing_expression_forms() {
 }
 
 #[test]
-fn iterable_requires_range_without_enabling_array_iteration() {
+fn iterable_rejects_types_other_than_range_or_numeric_array() {
     for (iterable, found) in [
         ("1", Type::Number),
         ("true", Type::Bool),
         ("\"text\"", Type::String),
-        ("[1, 2]", Type::NumberArray),
-        ("[]", Type::NumberArray),
         ("noop()", Type::Void),
         ("0 in 0..1", Type::Bool),
     ] {

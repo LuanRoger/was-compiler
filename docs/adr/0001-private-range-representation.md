@@ -39,6 +39,16 @@ the safe domain fails the endpoint test and exhausts normally before conversion,
 with no further addition. Yielded zero is canonical +0. No new range helpers or
 public mutable-binding metadata are introduced: checked lowering reconstructs
 read-only iteration-binding restrictions from For provenance. This is not
-completion of WP5: array iteration and broader WP5 adapter/interaction acceptance
-remain proposed. Current CLI/browser compilation already supports range-only for
-through the shared core; proposed acceptance work does not defer that support.
+completion of WP5: broader WP5 adapter/interaction release gates remain pending.
+
+Issue #5 extends the same statement For to `number[]` without changing parser/AST
+shapes or this range decision. Arrays use the existing public descriptor ABI, not
+private range records: evaluate once before activating the loop/binding, fully
+validate, then cache the handle and `u32` length. Unsigned index iteration loads
+current elements through checked `ArrayAddress`, so alias mutation is visible
+without snapshotting; source reassignment leaves the captured handle unchanged.
+The numeric binding remains read-only with mutable inner shadowing, and continue
+uses the index-advancement latch. No ABI/helper-order changes are introduced;
+array-only iteration needs no range helpers. Current CLI/browser compilation uses
+the shared core for both iterable types, but range and array iteration remain
+partial WP5 until the adapter/interaction release gates are met.

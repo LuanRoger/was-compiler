@@ -1,6 +1,11 @@
 use std::ops::ControlFlow;
 
-use crate::typed_ast::{TypedBlock, TypedExpr, TypedExprKind, TypedStatement, TypedStatementKind};
+use crate::{
+    ast::Type,
+    typed_ast::{
+        ExprResult, TypedBlock, TypedExpr, TypedExprKind, TypedStatement, TypedStatementKind,
+    },
+};
 use wasm_encoder::ValType;
 
 use super::{
@@ -61,14 +66,18 @@ impl Visitor for TemporaryVisitor {
             self.reserve(&[ValType::I32, ValType::F64])?;
         }
 
-        if matches!(statement.kind, TypedStatementKind::For { .. }) {
-            self.reserve(&[
-                ValType::I32,
-                ValType::I64,
-                ValType::I64,
-                ValType::I64,
-                ValType::I32,
-            ])?;
+        if let TypedStatementKind::For { iterable, .. } = &statement.kind {
+            if iterable.ty == ExprResult::Value(Type::NumberArray) {
+                self.reserve(&[ValType::I32, ValType::I32, ValType::I32])?;
+            } else {
+                self.reserve(&[
+                    ValType::I32,
+                    ValType::I64,
+                    ValType::I64,
+                    ValType::I64,
+                    ValType::I32,
+                ])?;
+            }
         }
 
         ControlFlow::Continue(())

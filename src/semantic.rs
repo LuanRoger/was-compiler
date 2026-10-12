@@ -506,7 +506,9 @@ impl SemanticAnalyzer {
                 // resolve before the iteration binding exists.
                 let (iterable, iterable_flow) = self.analyze_expr(iterable, span, return_type)?;
 
-                self.expect_type(Type::Range, iterable.ty, span)?;
+                if iterable.ty != ExprResult::Value(Type::NumberArray) {
+                    self.expect_type(Type::Range, iterable.ty, span)?;
+                }
                 self.scopes.push(HashMap::new());
 
                 let result = (|| {

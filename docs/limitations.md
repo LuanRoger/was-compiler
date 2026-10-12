@@ -10,9 +10,10 @@ M0–M9, including CLI/runtime integration, numeric-array equality, and floating
 remainder, are implemented, as are WP1–WP4: compound assignments, while
 transfers, tail-valued block/if expressions, and statement/value loops. Partial WP5
 implements range construction, internal calls, exact numeric membership, and
-range-only statement `for`; array iteration and remaining adapter/interaction
-acceptance remain proposed. Range-for coverage lives in `tests/for_frontend.rs`,
-`tests/for_lowering.rs`, and `tests/for_loops.rs`; Node execution cases are ignored
+range/array statement `for`; adapter/interaction release gates remain pending.
+Coverage lives in `tests/for_frontend.rs`, `tests/for_lowering.rs`,
+`tests/for_loops.rs`, and the array-for suite `tests/array_for_loops.rs`.
+Node execution cases retain the ignored-test policy
 by default, so default Cargo success alone does not establish runtime coverage.
 Behavior below is grounded in the frontend/backend, [CLI](../src/cli.rs), [diagnostics](../src/diagnostic.rs),
 [export policy](../src/exports.rs), [Node runtime](../runtime/index.cjs), and their
@@ -109,16 +110,16 @@ are rejected in all host imports and only selected user exports. Use explicit
 functions; default export-all fails rather than silently omitting them. There is
 no public range marshaling or allocation-free representation.
 
-Range-only `for name in range_expr { body }` is a void statement, never a value
-expression. Only range iterables (with existing Never compatibility) are accepted;
-arrays remain proposed. Evaluate the iterable once in the enclosing context before
+`for name in iterable { body }` is a void statement, never a value expression.
+Only `range` or `number[]` iterables (with existing Never compatibility) are accepted.
+Evaluate the iterable once in the enclosing context before
 activating the loop/binding: break/continue there targets the outer nearest loop,
 or is invalid without one, and return/divergence is preserved. Its `number` binding
 is read-only for ordinary/compound writes; a distinct inner shadowing let remains
 mutable. For permits bare breaks and forbids value breaks even when unreachable;
 continue exits a body latch to advance once before retesting. A returning body
-alone cannot establish definite return because the range may be empty. Cached
-validated `i64` current/end/step and `i32` inclusivity use signed endpoint checks
+alone cannot establish definite return because the range or array may be empty.
+For ranges, cached validated `i64` current/end/step and `i32` inclusivity use signed endpoint checks
 before exact `f64` yield (+0 for zero). The advancement proof in the memory ABI
 allows next to leave the safe domain and exhaust normally before conversion,
 without a trap or another addition. No new range helper or public mutable-binding
@@ -127,14 +128,23 @@ For provenance. `tests/for_frontend.rs` covers syntax, types, scopes, read-only
 writes and transfer rules; `tests/for_lowering.rs` covers forged input and decoded
 scratch/cache/latch contracts; `tests/for_loops.rs` covers deterministic layout,
 imports/exports and bounded Node effects, exact yields/exhaustion, record validation,
-and caching at all optimization levels. CLI/browser support uses the same core;
-broader WP5 adapter/interaction acceptance remains separate proposed work.
+and caching at all optimization levels. Array iteration (issue #5) changes no parser
+or AST shapes: after full `ValidateArray`, even when empty, cache handle and unsigned
+`u32` length once. Use unsigned index tests and load each element through existing
+checked `ArrayAddress` then `f64` load on its iteration, without snapshotting or
+caching a raw payload pointer. Alias mutations remain visible; source reassignment
+does not replace the captured handle. Continue uses the index-advancement latch.
+No ABI or helper-order change is introduced; array-only iteration needs no range
+helpers. `tests/array_for_loops.rs` is the array-for suite. CLI/browser support uses
+the same core; broader WP5 adapter/interaction release gates remain pending, and
+browser validation requires rebuilt bindings. Listing tests is not evidence that
+runtime validation or release gates passed.
 
 | Restriction now | Practical effect | Current alternative | Possible future choice and tradeoff |
 | --- | --- | --- | --- |
 | Only `number`, `bool`, `string`, `number[]`, `range`, and `void` exist. Parameters and return types require annotations; every `let` requires an initializer. No function inference, whole-program type unification, promotions, implicit coercions, or source `i32` type. | Local inference does not change the `f64` numeric model or allow later assignments of another type. A boolean cannot stand in for a number, and a numeric value cannot serve as a condition; `void` is not a variable/parameter type. | Use inferred or explicitly annotated locals and explicit helper functions, branches, or registered host conversions with matching signatures. | Explicit conversions or broader inference require separate type-system and error-ordering decisions; neither is implied by local initializer inference. |
 | No source modules/import declarations, structs, generics, first-class functions, or closures. Calls resolve named user functions, registered hosts, or the built-in `len`. | The source program is one collection of functions; host registration is an embedding/CLI responsibility. | Put related functions in one source unit and supply external capabilities through host functions. Numeric-array conventions can model simple records, but have no field/type safety. | Modules or dedicated aggregate/function types need name-resolution, type-system, and ABI decisions. Host-side modeling avoids those changes but keeps application-specific conventions outside the language. |
-| No labels, array `for`, or `foreach`. Transfers target the nearest active while/for/loop; only value loops allow value breaks. Range for is statement-only with a read-only numeric binding. Nonvoid functions must return or explicitly diverge, never fall through. | Loops cannot transfer across function boundaries. A range may be empty, so its body alone does not guarantee return. A no-exit syntactic loop is Never; arbitrary calls or possible traps do not prove divergence. | Use range-only for, statement/value `loop`, numeric-index while plus `len(array)`, and explicit returns. Shadow an iteration binding with a distinct inner let when a mutable local is needed. | Array iteration still requires alias-observation, continuation/latch, and adapter/interaction tests in WP5; labels need their own target-resolution contract. |
+| No labels or `foreach`. Transfers target the nearest active while/for/loop; only value loops allow value breaks. Range/array for is statement-only with a read-only numeric binding. Nonvoid functions must return or explicitly diverge, never fall through. | Loops cannot transfer across function boundaries. A range or array may be empty, so its body alone does not guarantee return. A no-exit syntactic loop is Never; arbitrary calls or possible traps do not prove divergence. | Use range/array for, statement/value `loop`, numeric-index while plus `len(array)`, and explicit returns. Shadow an iteration binding with a distinct inner let when a mutable local is needed. | Range and array iteration remain partial WP5 pending adapter/interaction release gates; labels need their own target-resolution contract. |
 | Array indexing in source starts from an identifier; there is no general postfix chaining. | `make_values()[0]` and `[1, 2][0]` are not supported source forms. | Assign the result/literal to an inferred or annotated `number[]` local, then index that local. | General postfix parsing is a grammar feature and needs explicit assignment-target rules. |
 | Identifiers are ASCII letters/underscore followed by ASCII letters/digits/underscore. | Unicode identifiers are unsupported. | Use ASCII identifiers. | Define a Unicode identifier policy with normalization/confusable-name decisions. |
 | Numeric literals contain digits, optionally a dot with digits on both sides. No exponent notation, `.5`, or `1.`. A leading minus is an operator. | `1e3`, `.5`, and `1.` cannot be used as number literals. | Write `1000`, `0.5`, and `1.0`; use unary `-` for negative values. | Broader literal syntax needs matching lexer and backend validation so forged typed literals do not bypass the grammar. |

@@ -55,7 +55,7 @@ support `cwasm` artifacts.
 The compiler emits valid modules containing registered function imports,
 parameters and locals of every nonvoid language type, variable reads and
 assignments (including numeric compound updates), expression statements, returns,
-user/host function calls, `if`/`else`, and `while` / range-only `for` with
+user/host function calls, `if`/`else`, and `while` / range/array `for` with
 `break;` / `continue;`. Strings, numeric arrays, checked array access/assignment, and built-in
 `len` are supported. Empty `void` functions and bare `return;` statements work too.
 Calls can be forward, nested, self-recursive, or mutually recursive; arguments
@@ -185,8 +185,8 @@ condition or advancing a for). Transfers work beneath nested branches and expres
 cannot cross function boundaries. An active loop is required even in unreachable
 source. `break`, `continue`, and `loop` are reserved source/host-language names;
 rename existing bindings/functions using them. Host import module/field names
-retain their unrestricted nonempty contract. `for` is also reserved for range
-iteration; labels and array iteration remain future work.
+retain their unrestricted nonempty contract. `for` is also reserved for range/array
+iteration; labels remain future work.
 
 ```text
 fn main() -> number {
@@ -451,7 +451,7 @@ candidates. Nonfinite, fractional, or out-of-safe-domain candidates return false
 both signed zeros are accepted. Interval and congruence checks use exact signed
 `i64` arithmetic, not floating remainder.
 
-Range-only statement `for` is implemented:
+Range and numeric-array statement `for` are implemented:
 
 ```text
 fn main() -> number {
@@ -464,9 +464,9 @@ fn main() -> number {
 }
 ```
 
-This yields `0`, `2`, `4`, `6` and returns `10`. `for name in range_expr { body }`
-accepts only a `range`, not an array. The iterable evaluates once in the enclosing
-context **before** activating the new loop or introducing its read-only `number`
+This yields `0`, `2`, `4`, `6` and returns `10`. `for name in iterable { body }`
+accepts `range` or `number[]` with Never compatibility. The iterable evaluates once
+in the enclosing context **before** activating the new loop or introducing its read-only `number`
 binding. Break/continue inside that expression targets the outer nearest loop,
 or is invalid without one; return/divergence is preserved. The body may introduce
 an inner shadowing `let` that is mutable; assigning or compound-updating the
@@ -475,28 +475,53 @@ iteration binding itself is rejected.
 Bare `break;` exits the for; `continue;` advances once before retesting; `return`
 exits the function. Value breaks are rejected even when unreachable. For is a void
 statement with a strict statement body, not a value-producing expression. An empty
-range can skip the body, so a returning body alone does not guarantee a function
-return. Cached validated fields use exact `i64` advancement and signed endpoint
+range or array can skip the body, so a returning body alone does not guarantee a
+function return. For ranges, cached validated fields use exact `i64` advancement and signed endpoint
 checks **before** `f64` conversion/yield; yielded integers are exact and zero is
 `+0`. Advancing past the endpoint, including outside the safe-integer domain,
 exhausts normally without a trap or out-of-range yield. The bounds proof is in the
 [memory ABI](docs/memory-abi.md#private-range-record).
 
+For numeric arrays (issue #5), the handle and unsigned `u32` length are captured
+once after full array validation, even for an empty array. An unsigned index test
+precedes each checked `ArrayAddress` call and `f64` element load. Elements are
+loaded on their iteration, not snapshotted: mutations through aliases to unvisited
+elements are visible, while reassigning the source variable does not replace the
+captured handle. Continue reaches index advancement through the body latch.
+
+```text
+fn main() -> number {
+    let values = [1, 2, 3];
+    let alias = values;
+    let total = 0;
+    for value in values {
+        if value == 1 { alias[1] = 20; values = [100]; }
+        total += value;
+    }
+    return total;
+}
+```
+
+This returns `24`, observing the changed second element of the original array.
+
 **AST addition (issue #4):** typed statements add
 `For { id, variable, name, iterable: Box<TypedExpr>, body }`; public consumers must
 update constructors and exhaustive matches. Read-only checks derive from For
-provenance, without new public mutable-binding metadata.
+provenance, without new public mutable-binding metadata. Issue #5 changes no
+parser or raw/typed AST shape.
 
-This remains **partial WP5**: array iteration and broader WP5 adapter/interaction
-acceptance remain proposed. The CLI and browser already support range-only for
-through the shared core pipeline. `tests/for_frontend.rs` covers syntax, types,
+Range and array iteration remain **partial WP5**: broader WP5 adapter/interaction
+release gates remain pending. The CLI and browser support both through the shared
+core pipeline; browser validation requires rebuilt bindings. `tests/array_for_loops.rs`
+is the array-for suite. `tests/for_frontend.rs` covers syntax, types,
 scopes, read-only bindings, and transfers; `tests/for_lowering.rs` covers forged
 input, scratch layout, cached fields, and decoded conversion/latch ordering.
 `tests/for_loops.rs` covers deterministic output, import snapshots/export selection,
 and bounded execution against an independent BigInt progression reference at all
 optimization levels. Node execution cases retain the ignored-test policy: default
 Cargo success alone does not establish runtime coverage.
-No optimization passes were added. For adds no range helpers.
+No optimization passes, ABI changes, or helper-order changes were added. For adds
+no range helpers; array-only iteration requires none.
 The optional `Contains` helper follows `Construct` and `Validate` only when membership exists;
 construction-only programs retain their bytes, as do programs without ranges.
 Membership alone needs no floating remainder helper or host callback.

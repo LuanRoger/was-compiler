@@ -92,8 +92,10 @@ pub(super) fn needed(program: &TypedProgram) -> bool {
                 TypedStatementKind::Let {
                     ty: Type::Range,
                     ..
-                } | TypedStatementKind::For { .. }
-            ) {
+                }
+            ) || matches!(&statement.kind, TypedStatementKind::For { iterable, .. }
+                if iterable.ty != Type::NumberArray)
+            {
                 return ControlFlow::Break(());
             }
             ControlFlow::Continue(())
