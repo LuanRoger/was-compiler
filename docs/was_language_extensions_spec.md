@@ -1,11 +1,11 @@
 # WAS Language Extensions — Unified Design and Implementation Specification
 
-**Status:** Design baseline with the 13 approved decisions and implementation clarifications (WP1–WP4 and partial WP5 implemented: compound assignments, while transfers, block/if values, internal Never, statement/value loops, and range construction/internal calls, numeric membership, and range/array statement for; adapter/interaction release gates pending and remaining extensions proposed)
+**Status:** Design baseline with the 13 approved decisions and implementation clarifications (WP1–WP5 implementation complete: compound assignments, while transfers, block/if values, internal Never, statement/value loops, and range construction/internal calls, numeric membership, and range/array statement for; issue #6 adapter/interaction support implemented, all WP5 release gates passed (exact evidence in plan §5), and WP6–WP13 remain proposals)
 **Version:** 0.3 — 9 October 2026 (implementation clarification update)  
 **Target:** Core WebAssembly, initially the MVP-compatible instruction set already used by `was-compiler`, with optional optimizations gated by Wasm features.  
 **Repository:** https://github.com/LuanRoger/was-compiler
 
-> **Normative language.** **MUST**, **SHOULD**, and **MAY** describe requirements, strong recommendations, and optional implementation choices. This document establishes a coherent *proposed* semantic model. Decisions tagged **Open decision** need confirmation before being frozen as language guarantees. Compound assignments (§4/WP1), bare `while` transfers (§7/WP2), block/if values with internal Never (§§3.2, 8.1/WP3), and statement/value loops (§7/WP4) are implemented. Range construction, internal calls, exact numeric membership (§5/partial WP5), and range/array statement `for` (§6/issues #4–#5) are also implemented; remaining adapter/interaction release gates are pending. Other extension examples remain proposed `.was` syntax, not claims about the present compiler.
+> **Normative language.** **MUST**, **SHOULD**, and **MAY** describe requirements, strong recommendations, and optional implementation choices. This document establishes a coherent *proposed* semantic model. Decisions tagged **Open decision** need confirmation before being frozen as language guarantees. Compound assignments (§4/WP1), bare `while` transfers (§7/WP2), block/if values with internal Never (§§3.2, 8.1/WP3), and statement/value loops (§7/WP4) are implemented. Range construction, internal calls, exact numeric membership (§5/WP5), and range/array statement `for` (§6/issues #4–#5) are also implemented, with adapter/interaction support under issue #6; all WP5 release gates passed (exact evidence in plan §5). Other extension examples remain proposed `.was` syntax, not claims about the present compiler.
 
 The [concrete implementation plan](was_language_extensions_plan.md) maps this
 specification to ordered work packages, repository files, acceptance tests, and
@@ -15,7 +15,8 @@ safety and corrects the current-language baseline. Compound assignments (§4/WP1
 and bare `while` transfers (§7/WP2), followed by block/if values and internal Never
 (§§3.2, 8.1/WP3) and statement/value loops (§7/WP4), are implemented;
 WP5's construction/internal-call, numeric membership, range-for, and array-for checkpoints are implemented;
-the rest of WP5 and WP6 onward remain proposed.
+issue #6 completes adapter/interaction implementation and all release gates passed.
+Exact evidence is recorded in [plan §5](was_language_extensions_plan.md#5-documentation-and-validation-workflow). WP6–WP13 remain proposed; WP13 requires separate authorization.
 
 ## 1. Goals and non-goals
 
@@ -243,8 +244,8 @@ private records, locals/assignment, and internal parameters/results. Range value
 also work in blocks, ifs, and value loops with exact joins and Never compatibility.
 Exact numeric membership (`in`) is implemented; range equality is rejected.
 Range statement `for` with exact progression advancement and numeric-array
-iteration are implemented. Adapter/interaction release gates remain pending,
-so both remain partial WP5.
+iteration are implemented, as is issue #6 adapter/interaction support. WP5
+implementation is complete and all release gates passed (exact evidence in plan §5).
 
 ### 5.1 Syntax
 
@@ -395,9 +396,10 @@ default Cargo success alone does not establish runtime coverage.
 values, advancement/exhaustion, effects, transfer rules, forged input, and decoded
 lowering at all optimization levels. Runtime execution uses ignored, bounded Node
 cases; default Cargo success alone does not establish runtime coverage. Numeric-array
-iteration is implemented under issue #5; broader WP5 adapter/interaction release
-gates remain pending. Current CLI/browser compilation supports both iterable types
-through the shared core.
+iteration is implemented under issue #5; issue #6 adds adapter/interaction coverage.
+Current CLI/browser compilation supports both iterable types through the shared
+core. All release gates passed; see the
+[exact release evidence (§5)](was_language_extensions_plan.md#5-documentation-and-validation-workflow).
 
 `0..3` yields 0,1,2; `0..=3` yields 0,1,2,3; `3..0 by -1` yields 3,2,1;
 `5..5` is empty; `5..=5` has one item. Fractional/NaN/infinite/out-of-domain
@@ -414,8 +416,8 @@ parameters/results and selected-export/host-import rejection, and reject range
 
 **Implemented scope (issues #4–#5):** Statement `for` over ranges with exact `i64`
 advancement and over `number[]` with unsigned index iteration and live element
-loads. Both use a continue latch. Adapter/cross-feature release gates remain
-pending; range and array iteration are still **partial WP5**.
+loads. Both use a continue latch. Issue #6 completes adapter/cross-feature
+implementation; all WP5 release gates passed (exact evidence in plan §5).
 
 ### 6.1 Syntax
 
@@ -560,9 +562,18 @@ separate local/memory/temporary/remainder policies and no-reuse scratch slots.
   checked-lowering boundaries. Test presence is not a claim that runtime validation
   or adapter/interaction release gates passed.
 
-Current CLI/browser adapters compile range and array for through the shared core;
-broader WP5 adapter/interaction release gates remain pending. Rebuild browser
-bindings before adapter validation; stale bindings do not validate current source.
+Current CLI/browser adapters compile range and array for through the shared core.
+Issue #6 adds adapter/interaction coverage in `tests/cli.rs` and `tests/browser.cjs`
+across optimization levels, including export/private-signature rejection,
+diagnostics, aliases, compounds, value regions, and trap/effect order. The CLI
+passes `range` host types to core rejection with supported-type guidance; the
+browser raises an actionable private-type registration error. Neither exposes a
+range host ABI. Cross-feature acceptance coverage is detailed in the
+[WP5 checkpoint](was_language_extensions_plan.md#wp5--safe-ranges-rangearray-for-membership-spec-56).
+Implementation and all release gates are complete as recorded
+in plan §5, including the full ignored-test run; default tests still skip Node cases.
+Rebuild browser bindings before adapter validation; stale bindings do not validate
+current source.
 
 **Lowering warning:** `continue` must target the increment/latch path rather than jump around the induction-variable update. Implement an explicit latch block or equivalent structured region; naive `br loop` from the middle of the body can produce an infinite loop.
 
@@ -1389,10 +1400,12 @@ The first five milestones are approved **in this exact order**, building only th
    unreachable/skipped children.
 4. **Statement/value `loop` (implemented WP4):** break-value typing, reachable
    result constraints and explicit divergence with the existing loop-target stack.
-5. **Ranges and `for` (partial WP5 implemented):** eager range validation, internal
+5. **Ranges and `for` (WP5 implementation complete):** eager range validation, internal
    calls, exact membership, range iteration with exact `i64` advancement, and
    `number[]` iteration with captured handle/length and live element loads. Both
-   use a continue latch; adapter/interaction release gates remain pending.
+   use a continue latch; issue #6 adds adapter/interaction support. All release
+   gates passed (exact evidence in plan §5); external range signatures, equality, and allocation-free
+   range optimization are not included.
 
 Following these milestones, incremental later work (ordering within a group MAY be adjusted according to dependencies):
 

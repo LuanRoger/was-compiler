@@ -20,7 +20,7 @@ cargo install wasm-pack --locked
 From the project root, build the web package:
 
 ```text
-wasm-pack build browser --target web --out-dir ../pkg --out-name was_compiler --offline --no-opt
+wasm-pack build browser --target web --out-dir ../pkg --out-name was_compiler --mode no-install --no-opt --offline
 ```
 
 The output directory is relative to the `browser/` crate, so `../pkg` places the
@@ -29,7 +29,8 @@ filenames used by the demo's existing imports.
 
 `wasm-pack` uses release mode by default. `--no-opt` skips its external
 `wasm-opt` step; this is separate from the compiler's source optimization setting.
-`--offline` requires the Rust dependencies to be cached. Installing the target,
+`--offline` requires the Rust dependencies to be cached; `--mode no-install`
+requires compatible wasm-bindgen tooling already installed. Installing the target,
 `wasm-pack`, or any missing matching `wasm-bindgen` tooling may require network
 access before the offline build can succeed.
 
@@ -95,7 +96,12 @@ constructing a compiler. The interface is synchronous after initialization:
 
 Host parameter/result types are spelled `number`, `bool`, `string`, and
 `number[]`; `void` is allowed only as a result. An empty parameter array declares
-a zero-argument host function. Invalid registrations, configuration, or source
+a zero-argument host function. A host parameter/result spelled `range` throws an
+actionable host-registration `Error`: ranges are private to guest functions; use
+supported host types instead. Registration uses core validation and preserves its
+first-error ordering for names, import fields, and types. Failed registration leaves
+the registry unchanged.
+Invalid registrations, configuration, or source
 compilation throw JavaScript `Error` objects. Source diagnostics use the shared
 compiler library diagnostic module and include the synthetic filename `<browser>`
 and located source excerpts where applicable.
@@ -139,8 +145,9 @@ callback or floating remainder helper. Optional `Contains` follows `Construct`
 and `Validate` only when membership exists, preserving construction-only bytes.
 Range handles remain private, with no host range type or marshaling API. Use
 `setExports(["main"])` for programs with internal range-signature helpers; selected
-range user exports and all range host imports are rejected. Exported scalar
-membership results use raw `i32` `0`/`1`.
+range user exports and all range host imports are rejected. Export failures retain
+the shared diagnostic and suggest `setExports(["main"])` or `exportNone()` using
+JavaScript API names. Exported scalar membership results use raw `i32` `0`/`1`.
 
 The core pipeline also supports statement `for name in iterable { body }` over
 `range` or `number[]` with Never compatibility, without a new JavaScript API, host
@@ -162,10 +169,16 @@ does not replace the captured handle. Continue exits the body latch before index
 advancement/retest. ABI/helper order is unchanged, and array-only iteration needs
 no range helpers. Issue #5 changes no parser or AST shapes.
 
-The browser adapter uses this shared core for both iterable types. Range and array
-iteration remain **partial WP5** until broader adapter/interaction release gates
-are met. `tests/array_for_loops.rs` is the array-for suite; its presence is not a
-claim that runtime validation or release gates passed.
+The browser adapter uses this shared core for both iterable types. **WP5
+implementation is complete and all release gates passed.** See
+[extension plan §5](was_language_extensions_plan.md#5-documentation-and-validation-workflow)
+for exact evidence: rebuilt offline/no-install bindings, 22 browser groups, and
+the full ignored-test run passed. Issue #6
+adds `tests/browser.cjs` coverage for private signatures, export selection,
+byte/WAT and diagnostic parity across optimization levels, and interactions with
+value regions, aliases, compounds, abrupt flow, and trap/effect order.
+`tests/array_for_loops.rs` is the array-for suite; shared-core interaction coverage
+is detailed in the [WP5 checkpoint](was_language_extensions_plan.md#wp5--safe-ranges-rangearray-for-membership-spec-56).
 `tests/for_frontend.rs` and `tests/for_lowering.rs`
 cover frontend and checked-lowering contracts; `tests/for_loops.rs` covers layout,
 optimization parity and bounded Node execution, including exact yields/exhaustion,

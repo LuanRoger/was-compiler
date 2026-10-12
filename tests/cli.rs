@@ -1282,6 +1282,58 @@ fn export_selection_preserves_source_order_bodies_and_memory_abi() {
 }
 
 #[test]
+fn range_exports_report_cli_remedies_and_preserve_outputs_at_every_level() {
+    let scratch = Scratch::new("range_export_errors");
+    for source in [
+        "fn private(value: range) -> number { return 1; }\nfn main() -> number { return 65; }",
+        "fn private() -> range { return 1..5; }\nfn main() -> number { return 65; }",
+    ] {
+        scratch.write("program.was", source);
+        scratch.write("existing.wasm", b"keep artifact");
+        let mut baseline = None;
+        for selection in [
+            vec![],
+            vec!["--export", "private"],
+            vec!["--export", "main", "--export", "private"],
+        ] {
+            for level in ["-O0", "-O1", "-O2", "-O3"] {
+                for destination in [Some("existing.wasm"), Some("missing.wasm"), None] {
+                    let mut args = vec!["program.was", level];
+                    args.extend_from_slice(&selection);
+                    if let Some(path) = destination {
+                        args.extend(["-o", path]);
+                    }
+                    let stderr = failure(
+                        scratch.cli(&args, None),
+                        1,
+                        &[
+                            "code generation error",
+                            "function `private` has a private range signature",
+                            "--export",
+                            "--no-exports",
+                        ],
+                    );
+                    assert!(
+                        !stderr.contains(" --> "),
+                        "export errors have no source span"
+                    );
+                    if let Some(previous) = &baseline {
+                        assert_eq!(&stderr, previous);
+                    } else {
+                        baseline = Some(stderr);
+                    }
+                    assert_eq!(
+                        fs::read(scratch.0.join("existing.wasm")).unwrap(),
+                        b"keep artifact"
+                    );
+                    scratch.assert_entries(&["program.was", "existing.wasm"]);
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn private_range_signatures_require_explicit_cli_exports_and_preserve_library_bytes() {
     let scratch = Scratch::new("range_exports");
     let source = r#"
@@ -1293,23 +1345,6 @@ fn main() -> number {
 "#;
     scratch.write("program.was", source);
     let host = "by=env.step()->number";
-    failure(
-        scratch.cli(&["program.was", "-o", "program.wasm", "--host", host], None),
-        1,
-        &[
-            "code generation error",
-            "function `identity` has a private range signature",
-            "explicit export selection",
-            "ExportOptions::Only",
-            "ExportOptions::None",
-        ],
-    );
-    scratch.assert_entries(&["program.was"]);
-
-    let mut compiler = Compiler::new();
-    compiler
-        .register_host_function("by", "env", "step", vec![], Type::Number)
-        .unwrap();
     let mut selected: Option<Decoded> = None;
     for (flags, exports, expected_names) in [
         (
@@ -1323,27 +1358,55 @@ fn main() -> number {
             vec![],
         ),
     ] {
-        compiler.set_exports(exports);
-        let bytes = scratch.compile(source, &flags);
-        assert_eq!(bytes, compiler.compile_source(source).unwrap());
-        let decoded = decode(&bytes);
-        assert_eq!(user_exports(&decoded), expected_names);
-        assert_eq!(decoded.imports, [("env".into(), "step".into())]);
-        let abi = abi_exports(&decoded);
-        assert_eq!(abi.len(), 2);
-        assert!(abi.iter().any(|(name, kind, index)| name == "memory"
-            && *kind == ExternalKind::Memory
-            && *index == 0));
-        assert!(
-            abi.iter()
-                .any(|(name, kind, _)| name == "__alloc" && *kind == ExternalKind::Func)
-        );
-        if let Some(previous) = &selected {
-            assert_eq!(decoded.bodies, previous.bodies);
-            assert_eq!(decoded.functions, previous.functions);
-            assert_eq!(abi, abi_exports(previous));
+        let mut baseline = None;
+        for (level, optimization_level) in [
+            ("-O0", was_compiler::OptimizationLevel::None),
+            ("-O1", was_compiler::OptimizationLevel::Basic),
+            ("-O2", was_compiler::OptimizationLevel::Standard),
+            ("-O3", was_compiler::OptimizationLevel::Aggressive),
+        ] {
+            let mut compiler =
+                Compiler::with_options(was_compiler::CompilerOptions { optimization_level });
+            compiler
+                .register_host_function("by", "env", "step", vec![], Type::Number)
+                .unwrap();
+            compiler.set_exports(exports.clone());
+            let mut args = flags.clone();
+            args.push(level);
+            let bytes = scratch.compile(source, &args);
+            assert_eq!(bytes, compiler.compile_source(source).unwrap());
+            if let Some(previous) = &baseline {
+                assert_eq!(&bytes, previous);
+            } else {
+                baseline = Some(bytes.clone());
+            }
+            let mut wat_args = vec!["program.was", "--emit", "wat"];
+            wat_args.extend_from_slice(&args);
+            let wat = success(scratch.cli(&wat_args, None));
+            assert_eq!(
+                assert_plain_wat(&wat),
+                wasmprinter::print_bytes(&bytes).unwrap()
+            );
+            let decoded = decode(&bytes);
+            assert_eq!(user_exports(&decoded), expected_names);
+            assert_eq!(decoded.imports, [("env".into(), "step".into())]);
+            let abi = abi_exports(&decoded);
+            assert_eq!(abi.len(), 2);
+            assert!(abi.iter().any(|(name, kind, index)| name == "memory"
+                && *kind == ExternalKind::Memory
+                && *index == 0));
+            assert!(
+                abi.iter()
+                    .any(|(name, kind, _)| name == "__alloc" && *kind == ExternalKind::Func)
+            );
+            if let Some(previous) = &selected {
+                assert_eq!(decoded.sections, previous.sections);
+                assert_eq!(decoded.bodies, previous.bodies);
+                assert_eq!(decoded.functions, previous.functions);
+                assert_eq!(abi, abi_exports(previous));
+            }
+            selected = Some(decoded);
         }
-        selected = Some(decoded);
     }
     scratch.assert_entries(&["program.was", "program.wasm"]);
 }
@@ -1972,6 +2035,50 @@ fn loop_is_reserved_only_as_a_host_language_name() {
 }
 
 #[test]
+fn range_host_signatures_report_private_abi_and_preserve_outputs_at_every_level() {
+    let scratch = Scratch::new("range_hosts");
+    scratch.write("program.was", SIMPLE_SOURCE);
+    scratch.write("existing.wasm", b"keep artifact");
+    for declaration in [
+        "consume=env.consume(range)->void",
+        "produce=env.produce()->range",
+    ] {
+        let mut baseline = None;
+        for level in ["-O0", "-O1", "-O2", "-O3"] {
+            for destination in [Some("existing.wasm"), Some("missing.wasm"), None] {
+                let mut args = vec!["program.was", "--host", declaration, level];
+                if let Some(path) = destination {
+                    args.extend(["-o", path]);
+                }
+                let stderr = failure(
+                    scratch.cli(&args, None),
+                    1,
+                    &[
+                        "host registration error",
+                        declaration,
+                        "unsupported ABI type Range",
+                        "range values are private",
+                        "host imports",
+                        "number, bool, string, number[]",
+                    ],
+                );
+                assert!(!stderr.contains("unknown type"));
+                if let Some(previous) = &baseline {
+                    assert_eq!(&stderr, previous);
+                } else {
+                    baseline = Some(stderr);
+                }
+                assert_eq!(
+                    fs::read(scratch.0.join("existing.wasm")).unwrap(),
+                    b"keep artifact"
+                );
+                scratch.assert_entries(&["program.was", "existing.wasm"]);
+            }
+        }
+    }
+}
+
+#[test]
 fn malformed_or_invalid_host_declarations_exit_one_without_outputs() {
     let scratch = Scratch::new("invalid_hosts");
     scratch.write("program.was", SIMPLE_SOURCE);
@@ -1980,8 +2087,6 @@ fn malformed_or_invalid_host_declarations_exit_one_without_outputs() {
         ("print=env.log_number(number,)->void", "unknown type"),
         ("print=env.log_number(unknown)->void", "unknown type"),
         ("print=env.log_number(number)->unknown", "unknown type"),
-        ("print=env.log_number(range)->void", "unknown type"),
-        ("print=env.log_number()->range", "unknown type"),
         ("print=env.log_number(void)->void", "unsupported ABI type"),
         ("print=.log_number(number)->void", "module cannot be empty"),
         ("print=env.(number)->void", "field cannot be empty"),

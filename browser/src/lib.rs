@@ -1,7 +1,10 @@
 use js_sys::{Array, Error};
 use wasm_bindgen::prelude::*;
 
-use was_compiler::{Compiler, ExportOptions, OptimizationLevel, Type, diagnostic};
+use was_compiler::{
+    CodegenError, CompileError, Compiler, ExportOptions, HostRegistrationError, OptimizationLevel,
+    Type, diagnostic,
+};
 
 #[wasm_bindgen(js_name = Compiler)]
 pub struct BrowserCompiler {
@@ -18,9 +21,22 @@ impl BrowserCompiler {
     }
 
     pub fn compile(&self, source: &str) -> Result<Vec<u8>, JsValue> {
-        self.compiler
-            .compile_source(source)
-            .map_err(|error| js_error(&diagnostic::render("<browser>", source, &error)))
+        self.compiler.compile_source(source).map_err(|error| {
+            let range_export = matches!(
+                error,
+                CompileError::Codegen(CodegenError::RangeExport { .. })
+            );
+            let mut message = diagnostic::render("<browser>", source, &error);
+
+            if range_export {
+                message.push_str(
+                    "\nSelect only compatible functions with setExports([\"main\"]), \
+                     or use exportNone() to keep all user functions internal.",
+                );
+            }
+
+            js_error(&message)
+        })
     }
 
     #[wasm_bindgen(js_name = compileWat)]
@@ -49,7 +65,24 @@ impl BrowserCompiler {
         self.compiler
             .register_host_function(name, module, field, params, result)
             .map(|_| ())
-            .map_err(|error| js_error(&format!("host registration error: {error}")))
+            .map_err(|error| {
+                let mut message = format!("host registration error: {error}");
+
+                if matches!(
+                    error,
+                    HostRegistrationError::UnsupportedType {
+                        ty: Type::Range,
+                        ..
+                    }
+                ) {
+                    message.push_str(
+                        "; range values are private and cannot cross host imports; \
+                         use number, bool, string, number[] parameters/results or void results",
+                    );
+                }
+
+                js_error(&message)
+            })
     }
 
     #[wasm_bindgen(js_name = setExports)]
@@ -123,6 +156,7 @@ fn parse_type(name: &str) -> Result<Type, JsValue> {
         "string" => Ok(Type::String),
         "number[]" => Ok(Type::NumberArray),
         "void" => Ok(Type::Void),
+        "range" => Ok(Type::Range),
         _ => Err(js_error(&format!(
             "unknown type {name:?}; expected number, bool, string, number[], or void"
         ))),

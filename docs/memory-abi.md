@@ -49,9 +49,12 @@ introduced, and array-only iteration needs no private range helpers.
 
 ## Private range record
 
-Partial WP5 implements range construction, internal calls, exact numeric membership,
-and range/array statement `for`; broader WP5 adapter/interaction release gates
-remain pending. Current CLI/browser compilation uses this shared core support.
+WP5 implements range construction, internal calls, exact numeric membership,
+and range/array statement `for`, with shared CLI/browser adapter support. All
+release gates passed; see [extension plan §5](was_language_extensions_plan.md#5-documentation-and-validation-workflow)
+for exact evidence, including rebuilt browser bindings and the full ignored-test run.
+Cross-feature ABI compatibility coverage is detailed in the
+[WP5 checkpoint](was_language_extensions_plan.md#wp5--safe-ranges-rangearray-for-membership-spec-56).
 `range` uses an `i32` handle internally, but is **not** a public string/array
 descriptor or host marshaling type. Every successfully completed construction allocates an immutable,
 eight-byte-aligned 32-byte record with the existing bump allocator:

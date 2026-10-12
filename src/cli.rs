@@ -201,7 +201,16 @@ fn compile(options: Options) -> Result<(), String> {
         .map_err(|error| diagnostic::render(&label, &source, &error))?;
     let wasm = compiler
         .compile(&program)
-        .map_err(|error| diagnostic::render(&label, &source, &CompileError::Codegen(error)))?;
+        .map_err(|error| {
+            let range_export = matches!(error, was_compiler::codegen::CodegenError::RangeExport { .. });
+            let mut message = diagnostic::render(&label, &source, &CompileError::Codegen(error));
+
+            if range_export {
+                message.push_str("\nSelect only compatible functions with --export NAME, or use --no-exports to keep all user functions internal.");
+            }
+
+            message
+        })?;
     let bytes = match format {
         Format::Wasm => wasm,
         Format::Wat => wasmprinter::print_bytes(&wasm)
@@ -253,7 +262,22 @@ fn register_host(compiler: &mut Compiler, declaration: &str) -> Result<(), Strin
 
     compiler
         .register_host_function(name.trim(), module.trim(), field.trim(), params, result)
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| {
+            if matches!(
+                error,
+                was_compiler::HostRegistrationError::UnsupportedType {
+                    ty: Type::Range,
+                    ..
+                }
+            ) {
+                format!(
+                    "{error}; range values are private and cannot cross host imports; \
+                     use number, bool, string, number[] parameters/results or void results"
+                )
+            } else {
+                error.to_string()
+            }
+        })?;
 
     Ok(())
 }
@@ -264,6 +288,7 @@ fn parse_type(name: &str) -> Result<Type, String> {
         "bool" => Ok(Type::Bool),
         "string" => Ok(Type::String),
         "number[]" => Ok(Type::NumberArray),
+        "range" => Ok(Type::Range),
         "void" => Ok(Type::Void),
         name => Err(format!(
             "unknown type {name:?}; expected number, bool, string, number[], or void"

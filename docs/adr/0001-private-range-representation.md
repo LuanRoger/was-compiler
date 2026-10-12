@@ -38,8 +38,7 @@ With `M = 2^53−1`, `|current + step| <= 2M < 2^54` fits i64; a next value outs
 the safe domain fails the endpoint test and exhausts normally before conversion,
 with no further addition. Yielded zero is canonical +0. No new range helpers or
 public mutable-binding metadata are introduced: checked lowering reconstructs
-read-only iteration-binding restrictions from For provenance. This is not
-completion of WP5: broader WP5 adapter/interaction release gates remain pending.
+read-only iteration-binding restrictions from For provenance.
 
 Issue #5 extends the same statement For to `number[]` without changing parser/AST
 shapes or this range decision. Arrays use the existing public descriptor ABI, not
@@ -49,6 +48,12 @@ current elements through checked `ArrayAddress`, so alias mutation is visible
 without snapshotting; source reassignment leaves the captured handle unchanged.
 The numeric binding remains read-only with mutable inner shadowing, and continue
 uses the index-advancement latch. No ABI/helper-order changes are introduced;
-array-only iteration needs no range helpers. Current CLI/browser compilation uses
-the shared core for both iterable types, but range and array iteration remain
-partial WP5 until the adapter/interaction release gates are met.
+array-only iteration needs no range helpers. CLI/browser compilation uses the
+shared core for both iterable types. Issue #6 completes adapter/interaction
+implementation, including actionable rejection of private range host types;
+all WP5 release gates passed, with exact evidence in extension plan §5. Release
+completion does not
+change this decision: external range signatures, range equality, and allocation-free
+range optimization remain out of scope. See the
+[validation workflow](../was_language_extensions_plan.md#5-documentation-and-validation-workflow)
+for exact release commands/results, including the full ignored-test run.

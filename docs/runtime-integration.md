@@ -70,7 +70,10 @@ NAME=MODULE.FIELD(PARAMETER_TYPES)->RESULT_TYPE
 ```
 
 Types are `number`, `bool`, `string`, `number[]`, and `void`; `void` is only legal
-as a result. Empty parentheses mean no parameters. The declaration's source name
+as a result. `range` is recognized but passed to core host registration for
+unsupported-ABI rejection, with CLI guidance to use supported host types; it is
+not an unknown type or a public range ABI. Empty parentheses mean no parameters.
+The declaration's source name
 still follows host-registration identifier/reserved-name rules. This compact
 notation is not an escaping format for arbitrary import names; the Rust API is
 available when module/field names need characters that collide with delimiters.
@@ -152,11 +155,16 @@ handle. Continue exits the body latch before index advancement/retest. ABI/helpe
 order is unchanged, and array-only iteration needs no range helpers. Issue #5
 changes no parser or AST shapes.
 
-CLI and browser compilation supports both iterable types through the shared core.
-Range and array iteration remain **partial WP5**: broader adapter/cross-feature
-release gates remain pending. Browser validation requires rebuilt bindings.
-`tests/array_for_loops.rs` is the array-for suite; listing it does not establish
-runtime validation or completion of release gates.
+CLI and browser compilation support both iterable types through the shared core.
+**WP5 implementation is complete and all release gates passed.** See
+[extension plan §5](was_language_extensions_plan.md#5-documentation-and-validation-workflow)
+for exact commands/results, including the full ignored-test run.
+Issue #6 adds adapter/cross-feature coverage, including private host-signature
+rejection and export selection across optimization levels. Range host declarations
+fail with exit status `1` and supported-type guidance; registration failures leave
+existing output files unchanged. Browser validation requires rebuilt bindings.
+`tests/array_for_loops.rs` is the array-for suite; cross-feature execution coverage
+is detailed in the [WP5 checkpoint](was_language_extensions_plan.md#wp5--safe-ranges-rangearray-for-membership-spec-56).
 `tests/for_frontend.rs` covers frontend contracts, `tests/for_lowering.rs` covers
 forged input and decoded lowering, and `tests/for_loops.rs` covers deterministic
 layout/imports/exports and bounded Node execution at all optimization levels.

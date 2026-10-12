@@ -953,9 +953,11 @@ async function main() {
     test('private ranges require explicit exports and allow contextual by host calls', compiler => {
         const source = `
             fn identity(value: range) -> range { return value; }
+            fn contains(value: range) -> bool { return 3 in value; }
+            fn bounds() -> range { return 1..=5 by by(); }
             fn main() -> number {
-                let value = identity(1..=5 by by());
-                return 65;
+                let value = identity(bounds());
+                return if contains(value) { 65 } else { 0 };
             }
         `;
         compiler.registerHostFunction('by', 'env', 'step', [], 'number');
@@ -964,7 +966,7 @@ async function main() {
             fails(() => compiler[method](source), privateRange);
         }
         compiler.setExports(['main']);
-        const selected = compile(compiler, source).module;
+        const { bytes: selectedBytes, module: selected } = compile(compiler, source);
         assert.deepEqual(WebAssembly.Module.exports(selected), [
             { name: 'main', kind: 'function' },
             { name: 'memory', kind: 'memory' },
@@ -986,15 +988,162 @@ async function main() {
         ]);
         assert.deepEqual(WebAssembly.Module.imports(none), WebAssembly.Module.imports(selected));
         assert.doesNotMatch(compiler.compileWat(source), /\(export "(?:main|identity)"/);
-        compiler.exportAll();
-        fails(() => compiler.compile(source), privateRange);
+        const expected = compile(compiler, source).bytes;
+        const wat = compiler.compileWat(source);
+        const diagnostics = new Map();
+        for (const level of [0, 1, 2, 3]) {
+            compiler.setOptimizationLevel(level);
+            assert.deepEqual(compile(compiler, source).bytes, expected);
+            assert.equal(compiler.compileWat(source), wat);
+            for (const selection of ['all', 'identity', 'contains', 'bounds']) {
+                if (selection === 'all') compiler.exportAll();
+                else compiler.setExports(['main', selection]);
+                for (const method of ['compile', 'compileWat']) {
+                    assert.throws(() => compiler[method](source), error => {
+                        assert.ok(error instanceof Error);
+                        const name = selection === 'all' ? 'identity' : selection;
+                        assert.match(error.message, new RegExp(`function \`${name}\` has a private range signature.*explicit export selection.*ExportOptions::Only.*ExportOptions::None`));
+                        assert.match(error.message, /^<browser>: code generation error:/);
+                        assert.match(error.message, /setExports\(\["main"\]\).*exportNone\(\)/);
+                        if (diagnostics.has(selection)) assert.equal(error.message, diagnostics.get(selection));
+                        else diagnostics.set(selection, error.message);
+                        return true;
+                    });
+                }
+                compiler.exportNone();
+                assert.deepEqual(compile(compiler, source).bytes, expected);
+            }
+            compiler.setExports(['main']);
+            assert.deepEqual(compile(compiler, source).bytes, selectedBytes);
+            assert.deepEqual(WebAssembly.Module.exports(compile(compiler, source).module), WebAssembly.Module.exports(selected));
+            calls = 0;
+            assert.equal(instantiate(compiler, source, { env: { step() { calls += 1; return 2; } } }).exports.main(), 65);
+            assert.equal(calls, 1);
+            compiler.exportNone();
+        }
+    });
+
+    test('ranges and array for compose with value regions, aliases, compounds, and abrupt flow', compiler => {
+        compiler.registerHostFunction('mark', 'env', 'mark', ['number'], 'number');
+        compiler.setExports(['main', 'early', 'targetTrap', 'invalidRange']);
+        const source = `
+            fn bounds() -> range {
+                return loop { break if true { mark(1)..=mark(5) by mark(2) } else { 0..0 }; };
+            }
+            fn main(values: number[]) -> number {
+                let alias = values;
+                let progression = { bounds() };
+                let total = 0;
+                for n in { mark(10); progression } {
+                    total += { if n == 3 { continue; } mark(n); n };
+                }
+                let index = 0;
+                for item in { mark(20); values } {
+                    mark(item);
+                    if index == 0 {
+                        alias[1] += { alias[1] = 100; values = [99]; mark(3); 3 };
+                    }
+                    index += 1;
+                    total += {
+                        if index == 2 { continue; }
+                        if index == 3 { break; }
+                        item
+                    };
+                }
+                let bonus = loop { break { mark(30); if 3 in progression { 10 } else { 0 } }; };
+                return total + bonus;
+            }
+            fn early() -> number {
+                for n in { mark(40); return 41; 0..2 } { mark(99); }
+                return 0;
+            }
+            fn targetTrap(values: number[]) -> void {
+                for n in 0..1 { values[9] += { mark(50); n }; }
+            }
+            fn invalidRange() -> void { let unused = mark(60)..mark(61) by mark(0); }
+        `;
+        const expected = compile(compiler, source).bytes;
+        const wat = compiler.compileWat(source);
+        for (const level of [0, 1, 2, 3]) {
+            compiler.setOptimizationLevel(level);
+            const { bytes, module } = compile(compiler, source);
+            assert.deepEqual(bytes, expected);
+            assert.equal(compiler.compileWat(source), wat);
+            assert.deepEqual(WebAssembly.Module.exports(module), [
+                { name: 'main', kind: 'function' },
+                { name: 'early', kind: 'function' },
+                { name: 'targetTrap', kind: 'function' },
+                { name: 'invalidRange', kind: 'function' },
+                { name: 'memory', kind: 'memory' },
+                { name: '__alloc', kind: 'function' },
+            ]);
+            assert.deepEqual(WebAssembly.Module.imports(module), [{ module: 'env', name: 'mark', kind: 'function' }]);
+            const events = [];
+            const instance = new WebAssembly.Instance(module, { env: { mark(value) { events.push(value); return value; } } });
+            const values = writeDescriptor(instance, 'number[]', [2, 4, 6]);
+            assert.equal(instance.exports.main(values), 18);
+            assert.deepEqual(events, [1, 5, 2, 10, 1, 5, 20, 2, 3, 7, 6, 30]);
+            assert.deepEqual(readDescriptor(instance, 'number[]', values), [2, 7, 6]);
+            events.length = 0;
+            assert.equal(instance.exports.early(), 41);
+            assert.deepEqual(events, [40]);
+            events.length = 0;
+            assert.throws(() => instance.exports.targetTrap(values), WebAssembly.RuntimeError);
+            assert.deepEqual(events, []);
+            assert.throws(() => instance.exports.invalidRange(), WebAssembly.RuntimeError);
+            assert.deepEqual(events, [60, 61, 0]);
+        }
+    });
+
+    test('range and for diagnostics preserve source spans, skipped checks, and recovery', compiler => {
+        compiler.setExports(['main']);
+        const valid = 'fn hidden(r: range) -> range { return r; } fn main() -> number { return 7; }';
+        const cases = [
+            ['fn main() -> void {\n    let r = true..3;\n}', /Type mismatch: expected Number, found Bool/, 'let r = true..3;', 5],
+            ['fn main() -> void {\n    let member = false && (true in (0..3));\n}', /Operator 'in' cannot be applied to Bool and Range/, 'let member = false && (true in (0..3));', 5],
+            ['fn main() -> void {\n    for n in 0..3 { n += 1; }\n}', /Variable 'n' is read-only/, 'for n in 0..3 { n += 1; }', 21],
+            ['fn main() -> void {\n    for n in [1] { return; n = 2; }\n}', /Variable 'n' is read-only/, 'for n in [1] { return; n = 2; }', 28],
+        ];
+        const expected = compile(compiler, valid).bytes;
+        const diagnostics = new Map();
+        for (const level of [0, 1, 2, 3]) {
+            compiler.setOptimizationLevel(level);
+            for (const [source, message, excerpt, column] of cases) {
+                for (const method of ['compile', 'compileWat']) {
+                    assert.throws(() => compiler[method](source), error => {
+                        assert.ok(error instanceof Error);
+                        assert.equal(error.name, 'Error');
+                        assert.match(error.message, new RegExp(`^<browser>:2:${column}: semantic error:`));
+                        assert.match(error.message, message);
+                        assert.ok(error.message.includes(`2 |     ${excerpt}`));
+                        assert.ok(error.message.includes(` |${' '.repeat(column)}^`));
+                        if (diagnostics.has(source)) assert.equal(error.message, diagnostics.get(source));
+                        else diagnostics.set(source, error.message);
+                        return true;
+                    });
+                    assert.deepEqual(compile(compiler, valid).bytes, expected);
+                    assert.equal(instantiate(compiler, valid).exports.main(), 7);
+                }
+            }
+        }
     });
 
     test('range host parameters, results, and reserved names are rejected atomically', compiler => {
-        fails(() => compiler.registerHostFunction('candidate', 'env', 'run', ['range'], 'void'), /unknown type.*range/i);
-        fails(() => compiler.registerHostFunction('candidate', 'env', 'run', [], 'range'), /unknown type.*range/i);
+        const privateRange = /^host registration error: Host function 'candidate' uses unsupported ABI type Range; range values are private and cannot cross host imports; use number, bool, string, number\[\] parameters\/results or void results$/;
+        for (const [params, result] of [[['range'], 'void'], [[], 'range'], [['number', 'range'], 'number']]) {
+            fails(() => compiler.registerHostFunction('candidate', 'env', 'run', params, result), privateRange);
+        }
         fails(() => compiler.registerHostFunction('range', 'env', 'run', [], 'void'), /reserved/i);
+        for (const [name, module, field, expected] of [
+            ['range', 'env', 'run', /reserved/i],
+            ['bad-name', 'env', 'run', /invalid/i],
+            ['candidate', '', 'run', /module.*empty/i],
+            ['candidate', 'env', '', /field.*empty/i],
+        ]) {
+            fails(() => compiler.registerHostFunction(name, module, field, ['range'], 'void'), expected);
+        }
         compiler.registerHostFunction('candidate', 'env', 'run', [], 'number');
+        fails(() => compiler.registerHostFunction('candidate', 'env', 'run', ['range'], 'void'), /already registered/i);
         const instance = instantiate(compiler, 'fn main() -> number { return candidate(); }', { env: { run: () => 17 } });
         assert.equal(instance.exports.main(), 17);
     });

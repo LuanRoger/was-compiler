@@ -177,6 +177,10 @@
 # valid operands but semantic analysis requires numeric endpoints and steps.
 # by is an ordinary identifier except when attaching a step after a range endpoint.
 # range is a reserved type keyword. Range == and != are semantic errors.
+# Ranges support internal parameters/results but not host imports or selected user
+# exports. Use explicit export selection for programs with internal range helpers.
+# Construction, membership, and range/number[] statement for are implemented WP5;
+# allocation-free range representation and a public range ABI are not implied.
 # in is reserved and tests number-in-range membership, producing bool with exact
 # operand types and Never compatibility. Both operands are checked even when
 # unreachable or skipped; evaluation sequences the candidate before the range.

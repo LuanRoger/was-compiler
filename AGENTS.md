@@ -137,7 +137,7 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   Tail-valued blocks and `if`/`else if` expressions support all concrete result
   types. Value-context if requires else and exact branch joins, allowing `Never`.
   Statement-if may omit else and discards branch tails. No `match` expressions yet.
-- Partial WP5 implements range construction/internal calls, exact numeric membership,
+- WP5 implements range construction/internal calls, exact numeric membership,
   and range/array statement iteration:
   `start..end` / `start..=end`, optional contextual `by step`, default `+1`.
   Precedence is below arithmetic and above comparisons, non-associative. Range
@@ -146,8 +146,10 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   comparison precedence with existing left associativity; `in` is reserved.
   Reserved `for name in iterable { body }` accepts `range` or `number[]` with
   Never compatibility and introduces a read-only `number` binding; an inner
-  shadowing `let` remains mutable. WP5 adapter/interaction release gates remain
-  pending. Before changing ranges or for, read extension spec §§5–6 and the
+  shadowing `let` remains mutable. Issue #6 completes adapter/interaction implementation;
+  all WP5 release gates passed, with exact evidence in
+  [extension plan §5](docs/was_language_extensions_plan.md#5-documentation-and-validation-workflow).
+  Before changing ranges or for, read extension spec §§5–6 and the
   [private record contract](docs/memory-abi.md#private-range-record).
 - Strings are immutable raw UTF-8 values. Numeric arrays have fixed lengths and
   mutable shared storage; every evaluated array literal allocates fresh storage.
@@ -323,9 +325,13 @@ refactors; specify and test any intentional behavior change explicitly.
   `tests/for_lowering.rs` covers forged trees and decoded planner/lowering contracts;
   `tests/for_loops.rs` covers deterministic layout, imports/exports, and bounded
   runtime behavior at all optimization levels. `tests/array_for_loops.rs` is the
-  array-for suite. Range and array iteration remain partial WP5 until adapter and
-  interaction release gates are met. Node execution cases retain the ignored policy
-  by default; default Cargo success alone does not establish runtime coverage.
+  array-for suite. Issue #6 adds CLI/browser and cross-feature coverage; adapters
+  give actionable private-range host errors while retaining external-signature
+  rejection. For cross-feature test coverage, read the
+  [WP5 checkpoint](docs/was_language_extensions_plan.md#wp5--safe-ranges-rangearray-for-membership-spec-56).
+  All WP5 release gates passed; exact evidence, including the full ignored run,
+  is in extension plan §5. Node execution cases retain the ignored policy by default;
+  default Cargo success alone does not establish runtime coverage.
 
 ### Evaluation, scopes, and module layout
 

@@ -1,6 +1,6 @@
 # WAS language extensions implementation plan
 
-**Status:** WP1–WP4 and WP5's construction/internal-call, numeric membership, and range/array statement for checkpoints implemented; adapter/interaction release gates pending and WP6–WP12 proposed; WP13 requires separate authorization.
+**Status:** WP1–WP5 implementation complete, including issue #6 adapter/interaction support; all WP5 release gates passed (exact evidence in §5). WP6–WP12 remain proposed; WP13 requires separate authorization.
 **Baseline:** Extension specification v0.3.
 
 Follow the [agent guide](../AGENTS.md), [extension specification](was_language_extensions_spec.md),
@@ -13,7 +13,7 @@ Comments, local initializer inference, exact `%`, and export selection are imple
 WP1 adds numeric compound assignments; WP2 adds bare while transfers and flow/label
 tracking; WP3 adds block/if values and internal `Never`; WP4 adds statement/value
 loops with reachable break-result constraints and explicit divergence. The baseline
-implementation notes below reflect those completed packages and partial WP5:
+implementation notes below reflect those completed packages and WP5:
 range construction, immutable private records, internal calls, exact numeric
 membership, and range/array statement for. Frontend, checked-lowering, deterministic
 layout and bounded runtime coverage are implemented in the for suites below;
@@ -60,9 +60,9 @@ Evidence: `src/lexer.rs`, `src/parser.rs`, `src/semantic.rs`, `src/codegen/numer
 - Old-source Wasm fixtures must remain unchanged unless an explicit contract decision
   justifies a difference. Never regenerate goldens to conceal incidental drift.
 
-WP1–WP4 and WP5's construction/internal-call, membership, and range-for checkpoints
-are implemented; array iteration, remaining adapter/interaction coverage, and
-subsequent extensions below remain proposed. New keywords require matching host source-name
+WP1–WP5 are implemented, including array iteration and issue #6 adapter/interaction
+support; all WP5 release gates passed as recorded in §5. WP6–WP12 remain proposed, and
+WP13 requires separate authorization. New keywords require matching host source-name
 validation, not restrictions on arbitrary
 nonempty host module/field names. Reserve standalone `_`
 when its syntax arrives, reject its bindings, retain `_temp`, and keep `by` contextual.
@@ -289,14 +289,15 @@ checkpoint follows below.
 ### WP5 — Safe ranges, range/array `for`, membership (spec §§5–6)
 
 **Entry:** WP4. Range representation/export gates are approved as specified below;
-construction/internal calls, numeric membership, and range/array statement for are
-implemented, not the full package.
+construction/internal calls, numeric membership, range/array statement for, and
+issue #6 adapter/interaction support are implemented. All release gates passed;
+exact commands/results are recorded in [§5](#5-documentation-and-validation-workflow).
 See [ADR-0001](adr/0001-private-range-representation.md)
 for the representation and external-boundary rationale.
 Split this package into sequential checkpoints: construction/internal calls → exact
 numeric membership → range-only statement for with exact advancement/latch → array
-iteration → adapters/interactions. The first four are implemented; no partial
-checkpoint is advertised as full WP5 support.
+iteration → adapters/interactions. All five are implemented and the release gates
+passed, with validation evidence recorded separately from test presence.
 
 **Implemented first checkpoint:** `Type::Range` and raw/typed range expressions
 carry start/end, optional step, and inclusivity. `..` / `..=` bind below arithmetic
@@ -311,7 +312,7 @@ Coverage lives in `tests/range_frontend.rs`, `tests/ranges.rs`, and
 independent record/instruction/layout assertions, export/import gates,
 optimization parity, and ignored bounded Node validation/effect cases.
 Exact numeric membership and range/array statement for are implemented as described
-below; adapter/interaction release gates remain pending.
+below; all release gates passed as recorded in §5.
 
 The approved MVP uses a single `i32` handle to an immutable private, eight-byte-aligned
 32-byte record. Validated signed `i64` start/end/step occupy byte offsets 0/8/16;
@@ -442,13 +443,26 @@ lives in `tests/array_for_loops.rs`, alongside shared frontend/forged-lowering
 contracts in `tests/for_frontend.rs` and `tests/for_lowering.rs`. This records test
 locations, not a claim that runtime validation or release gates passed.
 
-**Remaining full-WP5 checkpoints (proposed):** Broader adapter/cross-feature
-acceptance remains pending. Range and array iteration are still **partial WP5**.
-Current CLI/browser adapters compile both through the shared core; remaining
-acceptance work does not defer current feature support or complete WP5.
-Further adapter coverage must preserve range import/selected-export rejection,
-internal signatures under explicit selection, mandatory memory exports and legacy
-ABI. Rebuild browser bindings after core/browser changes before adapter validation.
+**Implemented adapter/interaction checkpoint (issue #6):** CLI/browser adapters
+compile both iterable types through the shared core. The CLI maps `range` host
+declarations to core unsupported-ABI rejection with CLI guidance; the browser
+reports an actionable private-type host-registration error. `tests/cli.rs` and
+`tests/browser.cjs` add coverage across optimization levels for internal range
+signatures under explicit selection, range import/selected-export rejection,
+mandatory memory exports, diagnostics, and legacy ABI preservation. Cross-feature
+cases compose ranges/iteration with block/if/value loops, aliases, compounds,
+abrupt flow, and observable trap/effect order. `tests/wp5_interactions.rs` adds
+import-snapshot, independent decoded layout/helper and export-independence checks,
+skipped/unreachable/unexported children and forged-metadata rejection, plus bounded
+Node effects/aliases/transfers/traps at all four optimization levels.
+
+**Release acceptance:** Implementation and all release gates are complete. Exact
+commands/results in [§5](#5-documentation-and-validation-workflow) include the
+offline/no-install browser rebuild, 22 browser groups, and the full ignored-test
+run with no remaining ignored cases. Ordinary default Cargo tests retain the
+ignored policy. Rebuild bindings after any subsequent core/browser changes before
+adapter validation. External range signatures, range equality, and allocation-free
+range optimization are out of scope.
 
 ### WP6 — Named/default parameters (spec §14)
 
@@ -595,6 +609,44 @@ passes may change optimized bytes only under a documented new parity contract;
 retain semantic/diagnostic equivalence and the unoptimized compatibility baseline.
 
 ## 5. Documentation and validation workflow
+
+**Issue #6 release validation (2026-10-12):** WP5 implementation and all release
+checks below passed on Windows with Node.js v24.12.0, wasm-pack 0.15.0, cached Rust
+dependencies, and the installed `wasm32-unknown-unknown` target. Issues #2–#5 were
+confirmed closed with all acceptance gates checked; their frontend, forged-tree,
+decoded-layout, compatibility, and runtime suites passed again in the full runs.
+WP6–WP13 remain proposals, not part of this release.
+
+| Exact command (repository root) | Result |
+| --- | --- |
+| `cargo test --offline --test cli` | 42 passed; 6 Node cases ignored by default |
+| `cargo test --offline --bin was-compiler cli::` | 13 passed |
+| `cargo test --offline --test wp5_interactions -- --include-ignored` | Runtime and rejection cases passed in the focused run; the initial layout assertion incorrectly expected a string-validation call in an array-only body. Corrected expectation; all 3 cases passed in the full ignored run below. |
+| `wasm-pack build browser --target web --out-dir ../pkg --out-name was_compiler --mode no-install --no-opt --offline` | Passed; rebuilt current bindings before browser/full ignored validation, without enabling tooling installation or fetching dependencies |
+| `node tests/browser.cjs pkg` | 22 groups passed, including adapter diagnostics and cross-feature execution at all optimization levels |
+| `cargo test --offline` | Passed; Node/browser-dependent cases retained their default ignored policy |
+| `cargo clippy --offline --all-targets -- -D warnings` | Passed |
+| `cargo check --offline --target wasm32-unknown-unknown --lib` | Passed |
+| `cargo clippy --offline -p was-compiler-browser --target wasm32-unknown-unknown --lib -- -D warnings` | Passed |
+| `cargo test --offline -- --include-ignored` | Passed; all previously ignored Node/browser cases executed, including the rebuilt browser harness and all WP5 runtime suites; no ignored cases remain in this run |
+| `cargo run --offline -- examples/array-sum.was -o target/array-sum.wasm --export main` | Passed |
+| `node runtime/run.cjs target/array-sum.wasm` | Passed; returned `65` |
+| `git --no-pager diff --check` | Passed |
+
+A standalone `wasm-bindgen --version` probe was unavailable on `PATH`; this did
+not block wasm-pack's successful offline/no-install use of compatible cached
+tooling. No release prerequisite or runtime/browser coverage remains missing.
+Earlier red adapter tests confirmed the old unknown-type errors; the final rebuilt
+package validates the new private-range guidance. The two-axis review found
+browser export remedies still naming only Rust APIs and range host parsing
+bypassing core registration precedence. Both findings were fixed test-first:
+missing JavaScript remedies and mixed-invalid registration regressions failed
+before fixes, then the rebuilt 22-group browser suite passed. Follow-up standards
+and spec reviews reported no outstanding actionable findings. Final rebuild and
+full checks were repeated after these fixes. An initial interaction-test
+compile also caught a section-range conversion and statement-variant naming error;
+both were corrected before the successful suites. No golden fixture was regenerated.
+Local Markdown links/anchors were checked across the updated documents.
 
 For each delivered package, update `grammar.bnf`, README support/examples, the
 roadmap and limitations, relevant runtime/browser guidance and `AGENTS.md` together.

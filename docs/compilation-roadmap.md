@@ -531,7 +531,7 @@ belong to WP11, not this milestone.
 `break;` exits the nearest enclosing while and `continue;` reevaluates its
 condition, including under nested branches and loops. Transfers cannot cross
 function boundaries. WP2 introduces bare semicolon-terminated transfers; WP4
-below adds statement/value loop and value breaks. Partial WP5 adds range/array
+below adds statement/value loop and value breaks. WP5 adds range/array
 statement for; labels remain future work. Break/continue reserve previously usable source and host-language names;
 rename existing bindings/functions using them. Host module/field names remain
 unaffected.
@@ -635,7 +635,7 @@ Validator accompany bounded Node effects/alias/transfer/stack-prefix tests and
 CLI/browser parity/diagnostics. Infinite cases are compile-only; resource controls
 remain the embedding's responsibility. The implemented WP5 checkpoints follow below.
 
-## Implemented language extension: range construction/internal calls and membership (partial WP5)
+## Implemented language extension: range construction/internal calls and membership (WP5)
 
 This checkpoint adds public `Type::Range` and raw/typed range expressions with
 boxed start/end, optional boxed step, and inclusivity. Source `..` / `..=` are
@@ -679,9 +679,9 @@ cases retain the ignored-test policy; default tests alone do not prove they ran.
 Membership coverage in `tests/range_frontend.rs` and `tests/ranges.rs` includes
 reserved names, precedence/associativity, exact/Never typing, checking both children,
 and decoded integer lowering without floating remainder.
-This is **not full WP5**: range and array statement for checkpoints follow below;
-adapter/interaction release gates remain pending in the
-[extension plan](was_language_extensions_plan.md).
+Range and array statement for checkpoints follow below. WP5 implementation and
+all release gates are complete; exact commands/results are recorded in
+[extension plan §5](was_language_extensions_plan.md#5-documentation-and-validation-workflow).
 
 ### Range-only statement for checkpoint (issue #4)
 
@@ -751,10 +751,14 @@ iteration needs no range helpers.
 
 `tests/array_for_loops.rs` is the array-for suite, alongside shared frontend and
 forged-lowering coverage in `tests/for_frontend.rs` and `tests/for_lowering.rs`.
-These test locations do not establish that runtime validation or release gates
-passed. CLI/browser compilation uses the shared core for both iterable types;
-browser validation requires rebuilt bindings. Range and array iteration remain
-**partial WP5** until broader adapter/cross-feature release gates are met.
+CLI/browser compilation uses the shared core for both iterable types. Issue #6
+completes adapter/interaction support and all WP5 release gates passed, including
+rebuilt browser bindings and the full ignored-test run; see extension plan §5.
+The [WP5 checkpoint](was_language_extensions_plan.md#wp5--safe-ranges-rangearray-for-membership-spec-56)
+records the cross-feature acceptance coverage.
+The default Cargo suite still skips Node cases. WP6–WP13 remain proposals;
+external range signatures, range equality, and allocation-free range optimization
+remain out of scope.
 
 ## Remaining work
 

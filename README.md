@@ -32,7 +32,7 @@ dependency-free [browser playground](examples/browser/index.html):
 
 ```text
 rustup target add wasm32-unknown-unknown
-wasm-pack build browser --target web --out-dir ../pkg --out-name was_compiler --offline --no-opt
+wasm-pack build browser --target web --out-dir ../pkg --out-name was_compiler --mode no-install --no-opt --offline
 ```
 
 Run the command from the project root; `../pkg` is relative to the `browser/`
@@ -407,7 +407,7 @@ string/array descriptor handles use `i32`. Native strings/arrays are not marshal
 automatically. Use `createAbi` from `runtime/abi.cjs` for explicit conversion, or
 access memory directly when reference mutation is required.
 
-### Range construction, internal calls, and numeric membership (partial WP5)
+### Ranges, numeric membership, and range/array iteration (WP5)
 
 `range` values support `start..end` and `start..=end`, with an optional contextual
 `by step`; the default step is `+1`. Range operators bind below arithmetic and
@@ -510,10 +510,17 @@ update constructors and exhaustive matches. Read-only checks derive from For
 provenance, without new public mutable-binding metadata. Issue #5 changes no
 parser or raw/typed AST shape.
 
-Range and array iteration remain **partial WP5**: broader WP5 adapter/interaction
-release gates remain pending. The CLI and browser support both through the shared
-core pipeline; browser validation requires rebuilt bindings. `tests/array_for_loops.rs`
-is the array-for suite. `tests/for_frontend.rs` covers syntax, types,
+**WP5 implementation is complete and all release gates passed.** The CLI
+and browser support construction, internal range calls, membership, and both
+iterable types through the shared core pipeline. Issue #6 adds adapter and
+cross-feature coverage in `tests/cli.rs` and `tests/browser.cjs`, including export
+selection, actionable private-range host errors, effects, and optimization-level
+parity. Cross-feature compatibility coverage is detailed in the
+[WP5 checkpoint](docs/was_language_extensions_plan.md#wp5--safe-ranges-rangearray-for-membership-spec-56).
+See the
+[exact release evidence (§5)](docs/was_language_extensions_plan.md#5-documentation-and-validation-workflow),
+including the full ignored-test run; ordinary default Cargo tests still skip Node cases.
+`tests/array_for_loops.rs` is the array-for suite. `tests/for_frontend.rs` covers syntax, types,
 scopes, read-only bindings, and transfers; `tests/for_lowering.rs` covers forged
 input, scratch layout, cached fields, and decoded conversion/latch ordering.
 `tests/for_loops.rs` covers deterministic output, import snapshots/export selection,
