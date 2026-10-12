@@ -2,8 +2,8 @@ use thiserror::Error;
 
 use crate::{
     ast::{
-        BinaryOp, Block, CallArgument, Expr, Function, Param, Program, Statement, StatementKind,
-        Type, UnaryOp, ValueBlock,
+        BinaryOp, Block, CallArgument, DefaultExpression, Expr, Function, Param, Program,
+        Statement, StatementKind, Type, UnaryOp, ValueBlock,
     },
     tokens::{Span, Token, TokenKind},
 };
@@ -99,10 +99,22 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
         self.expect(TokenKind::Colon)?;
 
         let ty = self.parse_type()?;
+        let default = if self.consume(TokenKind::Equal) {
+            let start = self.current_span().start();
+            let value = self.parse_expression()?;
+
+            Some(DefaultExpression {
+                value,
+                span: self.span_since(start),
+            })
+        } else {
+            None
+        };
 
         Ok(Param {
             name,
             ty,
+            default,
             span: self.span_since(start),
         })
     }

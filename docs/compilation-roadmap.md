@@ -49,8 +49,17 @@ must wrap operands in this record. Named calls use `TypedNormalizedCall` with
 written-order owned bindings, formal mapping and a final full-arity direct call.
 Checked lowering verifies ownership, scope, mapping and signatures using the
 existing emitter, not a second validator. Planning visits bindings then the call;
-ordinary positional calls preserve their legacy path. Defaults and result inference
-remain unimplemented. See the [interface gate](named-call-interface.md).
+ordinary positional calls preserve their legacy path. Issue #12 enables trailing
+pure defaults: raw `Param.default: Option<DefaultExpression>` owns an expression
+and declaration span; existing raw constructors add `default: None`. Private
+`semantic/defaults.rs` checks declarations through the existing expression checker,
+and `semantic/call_binding.rs` instantiates earlier-formal templates into caller
+bindings. Shared numeric-literal rules live in private `number_literal.rs` without
+changing ordinary body errors. Default-origin bindings follow explicit bindings,
+and checked lowering admits only owned earlier-formal reads and whitelist nodes.
+WP6's release gate (#13) remains separate. Result inference is not enabled here;
+#11 development is isolated behind that gate. See the
+[interface gate](named-call-interface.md) and [handoff](wp6-wp7-development.md).
 
 The compiler emits bytes. The embedding application decides whether to write a
 `.wasm` file, instantiate it in a browser, or pass it to another runtime.
@@ -765,8 +774,9 @@ completes adapter/interaction support and all WP5 release gates passed, includin
 rebuilt browser bindings and the full ignored-test run; see extension plan §5.
 The [WP5 checkpoint](was_language_extensions_plan.md#wp5--safe-ranges-rangearray-for-membership-spec-56)
 records the cross-feature acceptance coverage.
-The default Cargo suite still skips Node cases. WP6–WP13 remain proposals;
-external range signatures, range equality, and allocation-free range optimization
+The default Cargo suite still skips Node cases. WP6/WP7 have incremental
+development slices described above; their release gates and WP8–WP13 remain
+future work. External range signatures, range equality, and allocation-free range optimization
 remain out of scope.
 
 ## Remaining work

@@ -577,6 +577,13 @@ positional-after-named, nontrailing defaults, forbidden calls/later-name reads, 
 normalized calls, decoded full-arity order and runtime lexical/evaluation effects.
 Test defaults per invocation, forward calls, host reentrancy and adapter raw arity.
 
+**Incremental #12 development:** trailing pure defaults and declaration-scope
+binding are implemented on `implement/wp6-defaults`. Dedicated coverage is in
+`tests/named_defaults.rs`, `tests/default_lowering.rs`, and `tests/default_runtime.rs`.
+Full development validation, including freshly rebuilt browser parity and the
+ignored suite, is recorded in [the handoff](wp6-wp7-development.md#validation).
+This does not complete WP6's separate adapter/integration release gate #13.
+
 ### WP7 — Acyclic function-result inference first (spec §9)
 
 **Entry:** WP6 and optional raw result-annotation API gate. Collect declarations,
@@ -596,6 +603,13 @@ void, mixed returns, missing return, named tails, annotated recursion and SCC er
 Cover Never-only value returns requiring annotations versus divergence without value-return syntax.
 Forge result/body mismatches; decode signatures and execute chains. Compare inferred
 versus explicit ABI/bytes at all levels and native/browser diagnostics.
+
+**Incremental #11 development:** initial results without unresolved callee
+dependencies are implemented only in `target/wp7-inference` on
+`develop/wp7-initial-inference`. The focused 34-test suite and full development
+checks passed; see [the isolated contract](result-inference-development.md).
+Unannotated dependencies remain rejected (chain scheduling is #14). WP7 integration
+and release remain blocked on #13; no isolated validation waives that gate.
 
 ### WP8 — Whitelist contracts (spec §13)
 

@@ -1,6 +1,6 @@
 # Represent normalized calls explicitly in the typed tree
 
-WP6 will use a dedicated typed normalized-call sequence rather than representing
+WP6 uses a dedicated typed normalized-call sequence rather than representing
 named/default binding as an indistinguishable ordinary value block. Existing blocks,
 lets and calls can express evaluation order, but cannot identify the formal-to-binding
 mapping and generated-binding ownership that checked lowering must verify in public,
@@ -12,6 +12,7 @@ consumer migration rather than another IR or a second validator. Default referen
 are remapped by resolved formal identity; ordinary full-positional calls retain their
 existing path where normalization is unnecessary, preserving legacy bytes.
 
-This is an accepted implementation decision, not implemented WP6 support. See the
+Issues #10/#12 implement this accepted decision incrementally for named calls and
+trailing pure defaults; WP6's separate release gate #13 remains open. See the
 [WP6/WP7 interface decisions](../was_language_extensions_plan.md#wp6wp7-shared-interface-decisions)
 and [specification §14.3](../was_language_extensions_spec.md#143-abi-and-local-callable-restrictions).

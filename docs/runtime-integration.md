@@ -195,6 +195,12 @@ retain Node's host capabilities.
 | `string`, `number[]` | `i32` descriptor handle in the current instance's memory. |
 | `void` | No Wasm result. |
 
+Source named/default calls are compiler-side conveniences only. A declaration
+such as `fn f(a: number, b: number = a + 1) -> number` still exports two `f64`
+parameters: raw Node/browser callers must supply both. No default metadata or
+host-side argument generator is emitted. Defaults retain invocation-local scalar
+captures/shared handles, and range import/selected-export restrictions are unchanged.
+
 Hosts must obey the declared signatures. Host callbacks receive descriptor handles,
 not native strings or arrays, and must return handles for memory-backed results.
 Use the instance's `memory` and `__alloc`, optionally via explicit `createAbi`
