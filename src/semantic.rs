@@ -19,9 +19,32 @@ use crate::{
 
 mod call_binding;
 mod defaults;
+mod inference;
 
 #[derive(Debug, Error, PartialEq)]
 pub enum SemanticError {
+    #[error("Recursive function '{name}' requires an explicit result annotation at {span:?}")]
+    RecursiveResultAnnotationRequired { name: String, span: Span },
+
+    #[error(
+        "Cannot infer result of '{name}': callee '{callee}' has an unresolved result at {span:?}"
+    )]
+    UnresolvedResultDependency {
+        name: String,
+        callee: String,
+        span: Span,
+    },
+
+    #[error("Function '{name}' requires an explicit result annotation at {span:?}")]
+    CannotInferFunctionResult { name: String, span: Span },
+
+    #[error("Incompatible inferred returns: expected {expected:?}, found {found:?} at {span:?}")]
+    IncompatibleInferredReturns {
+        expected: Type,
+        found: Type,
+        span: Span,
+    },
+
     #[error("Function '{name}' is already declared at {span:?}")]
     DuplicateFunction { name: String, span: Span },
 
@@ -147,7 +170,11 @@ pub enum SemanticError {
 impl SemanticError {
     pub fn span(&self) -> Option<Span> {
         match self {
-            Self::DuplicateFunction { span, .. }
+            Self::RecursiveResultAnnotationRequired { span, .. }
+            | Self::UnresolvedResultDependency { span, .. }
+            | Self::CannotInferFunctionResult { span, .. }
+            | Self::IncompatibleInferredReturns { span, .. }
+            | Self::DuplicateFunction { span, .. }
             | Self::DuplicateVariable { span, .. }
             | Self::ReadOnlyVariable { span, .. }
             | Self::UndefinedVariable { span, .. }
@@ -180,6 +207,12 @@ impl SemanticError {
             | Self::MissingReturn { span, .. } => Some(*span),
         }
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReturnContext {
+    Known(Type),
+    Infer,
 }
 
 struct FunctionSignature {
@@ -277,10 +310,10 @@ impl SemanticAnalyzer {
     }
 
     fn analyze_program(&mut self, program: &Program) -> Result<TypedProgram, SemanticError> {
-        let has_defaults = program
-            .functions
-            .iter()
-            .any(|function| function.params.iter().any(|param| param.default.is_some()));
+        let staged_declarations = program.functions.iter().any(|function| {
+            function.return_type.is_none()
+                || function.params.iter().any(|param| param.default.is_some())
+        });
 
         for (index, function) in program.functions.iter().enumerate() {
             let signature = FunctionSignature {
@@ -292,7 +325,7 @@ impl SemanticAnalyzer {
                     .map(|param| param.name.clone())
                     .collect(),
                 defaults: (0..function.params.len()).map(|_| None).collect(),
-                return_type: function.return_type,
+                return_type: function.return_type.unwrap_or(Type::Void),
             };
 
             if self
@@ -306,7 +339,7 @@ impl SemanticAnalyzer {
                 });
             }
 
-            if has_defaults {
+            if staged_declarations {
                 self.validate_defaults(function)?;
             } else {
                 for param in &function.params {
@@ -314,6 +347,8 @@ impl SemanticAnalyzer {
                 }
             }
         }
+
+        self.infer_results(program)?;
 
         let mut functions = Vec::with_capacity(program.functions.len());
 
@@ -332,13 +367,30 @@ impl SemanticAnalyzer {
         function: &Function,
         id: FunctionId,
     ) -> Result<TypedFunction, SemanticError> {
+        self.analyze_function_with_context(
+            function,
+            id,
+            ReturnContext::Known(self.functions[&function.name].return_type),
+        )
+    }
+
+    fn infer_result(&mut self, function: &Function, id: FunctionId) -> Result<Type, SemanticError> {
+        self.analyze_function_with_context(function, id, ReturnContext::Infer)
+            .map(|function| function.return_type)
+    }
+
+    fn analyze_function_with_context(
+        &mut self,
+        function: &Function,
+        id: FunctionId,
+        context: ReturnContext,
+    ) -> Result<TypedFunction, SemanticError> {
         self.next_variable_id = 0;
         self.next_loop_id = 0;
         self.loops.clear();
-
         self.scopes.push(HashMap::new());
 
-        let result = self.analyze_function_body(function, id);
+        let result = self.analyze_function_body(function, id, context);
 
         self.scopes.pop();
         self.loops.clear();
@@ -350,6 +402,7 @@ impl SemanticAnalyzer {
         &mut self,
         function: &Function,
         id: FunctionId,
+        context: ReturnContext,
     ) -> Result<TypedFunction, SemanticError> {
         let mut params = Vec::with_capacity(function.params.len());
 
@@ -369,9 +422,28 @@ impl SemanticAnalyzer {
             });
         }
 
-        let (body, flow) = self.analyze_block(&function.body, function.return_type)?;
+        let (body, flow) = self.analyze_block(&function.body, context)?;
+        let return_type = match context {
+            ReturnContext::Known(ty) => ty,
+            ReturnContext::Infer => {
+                let ty = flow.return_type().map_err(|(expected, found)| {
+                    SemanticError::IncompatibleInferredReturns {
+                        expected,
+                        found,
+                        span: function.span,
+                    }
+                })?;
+                if matches!(ty, None | Some(Type::Void)) && inference::has_value_return(function) {
+                    return Err(SemanticError::CannotInferFunctionResult {
+                        name: function.name.clone(),
+                        span: function.span,
+                    });
+                }
+                ty.unwrap_or(Type::Void)
+            }
+        };
 
-        if function.return_type != Type::Void && !flow.returns_or_diverges() {
+        if return_type != Type::Void && !flow.returns_or_diverges() {
             return Err(SemanticError::MissingReturn {
                 name: function.name.clone(),
                 span: function.span,
@@ -382,7 +454,7 @@ impl SemanticAnalyzer {
             id,
             name: function.name.clone(),
             params,
-            return_type: function.return_type,
+            return_type,
             body,
             span: function.span,
         })
@@ -391,7 +463,7 @@ impl SemanticAnalyzer {
     fn analyze_block(
         &mut self,
         block: &Block,
-        return_type: Type,
+        return_type: ReturnContext,
     ) -> Result<(TypedBlock, Flow), SemanticError> {
         let mut statements = Vec::with_capacity(block.len());
         let mut flow = Flow::FALLTHROUGH;
@@ -410,7 +482,7 @@ impl SemanticAnalyzer {
     fn analyze_scoped_block(
         &mut self,
         block: &Block,
-        return_type: Type,
+        return_type: ReturnContext,
     ) -> Result<(TypedBlock, Flow), SemanticError> {
         self.scopes.push(HashMap::new());
 
@@ -424,10 +496,10 @@ impl SemanticAnalyzer {
     fn analyze_statement(
         &mut self,
         statement: &Statement,
-        return_type: Type,
+        return_type: ReturnContext,
     ) -> Result<(TypedStatement, Flow), SemanticError> {
         let span = statement.span;
-        let mut flow = Flow::FALLTHROUGH;
+        let flow;
 
         let kind = match &statement.kind {
             StatementKind::Let { name, ty, value } => {
@@ -681,28 +753,38 @@ impl SemanticAnalyzer {
 
             StatementKind::Return(value) => {
                 let value = match value {
-                    Some(_) if return_type == Type::Void => {
+                    Some(_) if return_type == ReturnContext::Known(Type::Void) => {
                         return Err(SemanticError::UnexpectedReturnValue { span });
                     }
-
                     Some(expr) => {
                         let (expr, expr_flow) = self.analyze_expr(expr, span, return_type)?;
-
-                        self.expect_type(return_type, expr.ty, span)?;
-                        flow = expr_flow;
-
+                        let completion = match return_type {
+                            ReturnContext::Known(ty) => {
+                                self.expect_type(ty, expr.ty, span)?;
+                                Flow::RETURN
+                            }
+                            ReturnContext::Infer => match expr.ty {
+                                ExprResult::Value(ty) => Flow::return_value(ty),
+                                ExprResult::Never => Flow::NONE,
+                                ExprResult::Void => {
+                                    return Err(SemanticError::UnexpectedReturnValue { span });
+                                }
+                            },
+                        };
+                        flow = expr_flow.then(completion);
                         Some(expr)
                     }
-
                     None => {
-                        self.expect_type(return_type, Type::Void.into(), span)?;
-
+                        flow = match return_type {
+                            ReturnContext::Known(ty) => {
+                                self.expect_type(ty, Type::Void.into(), span)?;
+                                Flow::RETURN
+                            }
+                            ReturnContext::Infer => Flow::return_value(Type::Void),
+                        };
                         None
                     }
                 };
-
-                flow = flow.then(Flow::RETURN);
-
                 TypedStatementKind::Return(value)
             }
 
@@ -721,7 +803,7 @@ impl SemanticAnalyzer {
     fn analyze_loop_body(
         &mut self,
         body: &Block,
-        return_type: Type,
+        return_type: ReturnContext,
         kind: LoopKind,
     ) -> Result<(LoopId, TypedBlock, Flow), SemanticError> {
         let id = LoopId(self.next_loop_id);
@@ -742,7 +824,7 @@ impl SemanticAnalyzer {
         &mut self,
         target: &Expr,
         span: Span,
-        return_type: Type,
+        return_type: ReturnContext,
     ) -> Result<(TypedExpr, Flow), SemanticError> {
         match target {
             Expr::Identifier(name) => {
@@ -782,7 +864,7 @@ impl SemanticAnalyzer {
     fn analyze_value_block(
         &mut self,
         block: &ValueBlock,
-        return_type: Type,
+        return_type: ReturnContext,
     ) -> Result<(TypedValueBlock, ExprResult, Flow), SemanticError> {
         self.scopes.push(HashMap::new());
 
@@ -849,7 +931,7 @@ impl SemanticAnalyzer {
         &mut self,
         expr: &Expr,
         span: Span,
-        return_type: Type,
+        return_type: ReturnContext,
     ) -> Result<(TypedExpr, Flow), SemanticError> {
         let mut flow = Flow::FALLTHROUGH;
         let (kind, ty) = match expr {
@@ -1046,7 +1128,7 @@ impl SemanticAnalyzer {
         name: &str,
         args: &[CallArgument],
         span: Span,
-        return_type: Type,
+        return_type: ReturnContext,
     ) -> Result<(TypedExpr, Flow), SemanticError> {
         if self.lookup_variable(name).is_some() {
             return Err(SemanticError::NotCallable {

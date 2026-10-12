@@ -4,7 +4,7 @@
 
 <function> ::= "fn" <ws1> <identifier> <ws>
                "(" <ws> <parameter_list>? <ws> ")"
-               <ws> "->" <ws> <type>
+               ( <ws> "->" <ws> <type> )?
                <ws> <block>
 
 <parameter_list> ::= <parameter> ( <ws> "," <ws> <parameter> )*

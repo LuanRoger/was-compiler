@@ -4,16 +4,17 @@ The user approved the WP6/WP7 shared design and parser/semantic, public typed-tr
 compilation, and source-to-Wasm/runtime test seams. This document distinguishes
 the current #10/#12 named/default contract from the historical #10 named-only
 gate, when defaults and omitted result annotations were disabled.
-Issue #12's default policy and isolated #11 development are recorded as historical
-worktree-development evidence in [the follow-up handoff](wp6-wp7-development.md).
+Issue #12's default policy and the original isolated #11 development are recorded
+as historical worktree-development evidence in [the follow-up handoff](wp6-wp7-development.md).
 
 ## Current WP6 contract (issues #10/#12)
 
 WP6 user-function named/mixed-prefix calls and trailing pure defaults are
 implemented on main. [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation),
 including adapter coverage, freshly rebuilt browser bindings, and the full ignored
-suite. WP7 remains isolated in `target/wp7-inference` and is not integrated;
-result annotations are still mandatory on main. Later packages reuse the approved
+suite. Issue #11 integrates initial result inference with these interfaces;
+see [its incremental contract](result-inference-development.md). Inferred-to-
+inferred dependencies remain rejected until #14; the full WP7 gate is pending. Later packages reuse the approved
 interfaces only after their ordered integration/release gates.
 
 ### Public AST migration
@@ -23,8 +24,9 @@ interfaces only after their ordered integration/release gates.
   named operands use `name: Some(formal_name)`.
 - Raw `ast::Param` requires `default: Option<DefaultExpression>`; existing
   constructors use `None`. `DefaultExpression { value: Expr, span: Span }` keeps
-  the declaration expression's origin. Raw `Function.return_type` is still
-  `Type`, not the proposed WP7 `Option<Type>`.
+  the declaration expression's origin. Raw `Function.return_type` is now
+  `Option<Type>`: existing constructors wrap annotations in `Some(type)`;
+  `None` requests initial inference. Typed results remain concrete `Type`.
 - Typed parameters/signatures stay concrete and full-arity with no default
   metadata. Ordinary typed `Call` still takes `Vec<TypedExpr>`. Exhaustive typed
   expression consumers must handle `NormalizedCall(TypedNormalizedCall)` and

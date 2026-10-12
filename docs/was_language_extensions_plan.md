@@ -101,7 +101,8 @@ Range advancement and array index iteration are inline checked control-flow
 lowering, not new helpers. Array iteration reuses checked `ArrayAddress` and
 preserves live alias observation without changing the descriptor ABI.
 
-**Proposed new files, not existing implementation:** `src/semantic/inference.rs` in WP7 and `src/semantic/captures.rs` in WP11 if those policies
+**Private policy modules:** `src/semantic/inference.rs` implements the initial #11
+slice; `src/semantic/captures.rs` remains proposed for WP11 if those policies
 outgrow `semantic.rs`; `src/codegen/closures.rs` in WP11 for direct helpers/cells.
 These are cohesive modules, not another IR. Proposed integration suites appear below;
 create them at their step, not as empty scaffolding now. Keep specialized decoders local.
@@ -604,13 +605,13 @@ Cover Never-only value returns requiring annotations versus divergence without v
 Forge result/body mismatches; decode signatures and execute chains. Compare inferred
 versus explicit ABI/bytes at all levels and native/browser diagnostics.
 
-**Incremental #11 development:** initial results without unresolved callee
-dependencies are implemented only in `target/wp7-inference` on
-`develop/wp7-initial-inference`. The focused 34-test suite and full development
-checks passed; see [the isolated contract](result-inference-development.md).
-Unannotated dependencies remain rejected (chain scheduling is #14). WP7 integration
-and release remain separate: #13's WP6 gate passed, but the isolated WP7 tree has
-not been integrated or released; no isolated validation establishes its combined gate.
+**Incremental #11 integration:** initial results without unresolved callee
+dependencies are combined with released WP6 on `develop/wp7-initial-inference`,
+after #13's gate. The original 34-test suite, dedicated named/default interaction
+and adapter tests, and combined offline/runtime/browser checks passed; see
+[the incremental contract and evidence](result-inference-development.md).
+Unannotated dependencies remain rejected (chain scheduling is #14). This completes
+only #11's incremental scope, not the full WP7 integration/release gate.
 
 ### WP8 — Whitelist contracts (spec §13)
 
@@ -729,7 +730,8 @@ retain semantic/diagnostic equivalence and the unoptimized compatibility baselin
 On 2026-10-12, WP6's library/native CLI/rebuilt-browser acceptance and release
 checks passed on Windows with Node.js v24.12.0 and wasm-pack 0.15.0. All builds
 used cached dependencies and installed tooling, without installation or fetching.
-WP7 remains isolated in `target/wp7-inference`, not integrated or released.
+At this WP6 checkpoint, WP7 remained isolated and unreleased. Subsequent #11
+incremental integration is recorded above; it does not complete the full WP7 gate.
 
 | Exact command (repository root) | Actual result |
 | --- | --- |

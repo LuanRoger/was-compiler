@@ -39,8 +39,11 @@ impl SemanticAnalyzer {
             let default = if let Some(default) = &param.default {
                 saw_default = true;
                 self.check_default_expression(&default.value, default.span)?;
-                let (value, _) =
-                    self.analyze_expr(&default.value, default.span, function.return_type)?;
+                let (value, _) = self.analyze_expr(
+                    &default.value,
+                    default.span,
+                    ReturnContext::Known(Type::Void),
+                )?;
 
                 self.expect_type(param.ty, value.ty, default.span)?;
 

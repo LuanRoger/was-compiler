@@ -88,14 +88,26 @@ declaration is checked even when unused or explicitly supplied. Pure defaults
 perform no writes or runtime allocation but may read shared arrays or trap.
 Raw exports still require every machine argument; source defaults do not add
 host-side argument generation.
-Named host/builtin arguments and omitted function result annotations remain
-unsupported on main. WP6 named/default parameters are implemented, and
+Named host/builtin arguments remain unsupported. WP6 named/default parameters are implemented, and
 [#13 release validation passed](docs/was_language_extensions_plan.md#issue-13-wp6-release-validation).
 The [development handoff](docs/wp6-wp7-development.md) records historical worktree
 evidence; see the
 [current named/default interface and AST migration](docs/named-call-interface.md#current-wp6-contract-issues-1012).
-WP7 result inference is not integrated; contracts, match, pipelines, closures,
-and placeholders remain later packages with ordered integration/release gates.
+Issue #11 adds initial function-result inference after the WP6 gate:
+
+```text
+fn square(x: number) { return x * x; }  // inferred number
+fn main() -> number { return square(4); }
+```
+
+Reachable explicit returns must agree exactly. Procedures without value-return
+syntax infer void; Never-only value-return syntax needs an annotation. Recursive
+components require explicit results on every member. An inferred function can
+call annotated targets, but inferred-to-inferred dependencies remain rejected
+until #14, regardless of declaration order. There are no implicit function tails.
+See [the incremental inference contract](docs/result-inference-development.md).
+This does not complete the full WP7 release gate. Contracts, match, pipelines,
+closures, and placeholders remain later packages with ordered release gates.
 
 Local declarations support both `let name = initializer;` and the existing
 `let name: type = initializer;`. Without an annotation, the initializer determines
@@ -119,8 +131,9 @@ scope, `let value = value + 1;` can read an outer `value` and then shadow it; wi
 an outer binding, it is an unknown-variable error. The local's type is fixed after
 initialization, so later assignments must match it. A void-returning call cannot
 initialize a local. Every declaration still needs an initializer, and parameter
-and function result types remain mandatory. There is no function inference,
-whole-program type unification, promotion, or implicit coercion. `number` remains
+types remain mandatory. Function results follow the incremental rules above;
+there is no parameter inference, whole-program type unification, promotion, or
+implicit coercion. `number` remains
 IEEE-754 `f64`, even for `let index = 1;`; there is no source `i32` type.
 
 `//` line comments run to LF, CR, or end of file. `/* ... */` block comments can

@@ -30,8 +30,9 @@ implemented language extensions.
 
 WP6 named/mixed-prefix arguments and trailing defaults resolved against earlier
 formals are implemented. [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation),
-including adapter coverage and the full ignored suite. Result inference is not
-enabled on main; WP7 remains isolated and is not integrated. See the
+including adapter coverage and the full ignored suite. Issue #11 integrates
+initial result inference with released WP6; inferred-to-inferred dependencies
+remain rejected until #14 and the full WP7 release gate is not complete. See the
 [named/default interface](named-call-interface.md) for migration and the
 [development handoff](wp6-wp7-development.md) for historical worktree evidence.
 
@@ -78,8 +79,9 @@ array contents. No general user-function purity analysis is implemented.
 
 The raw AST uses `Vec<CallArgument>` instead of `Vec<Expr>` for calls; raw `Param`
 now also requires `default: Option<DefaultExpression>` with `value` and declaration
-`span` (use `None` in existing constructors). Raw `Function.return_type` remains
-`Type`, not `Option<Type>`; omitted result annotations belong to isolated WP7.
+`span` (use `None` in existing constructors). Raw `Function.return_type` is
+`Option<Type>`: wrap explicit annotations in `Some(type)`; `None` requests
+initial result inference. Typed signatures remain concrete `Type`.
 Typed `Call` operands remain `Vec<TypedExpr>` and `TypedParam` has no default
 metadata. Exhaustive typed-expression consumers must handle `NormalizedCall`;
 see the [current interface and migration](named-call-interface.md#current-wp6-contract-issues-1012).
@@ -187,7 +189,7 @@ browser bindings and the full ignored-test run. Default tests still skip Node ca
 
 | Restriction now | Practical effect | Current alternative | Possible future choice and tradeoff |
 | --- | --- | --- | --- |
-| Only `number`, `bool`, `string`, `number[]`, `range`, and `void` exist. Parameters and return types require annotations; every `let` requires an initializer. No function inference, whole-program type unification, promotions, implicit coercions, or source `i32` type. | Local inference does not change the `f64` numeric model or allow later assignments of another type. A boolean cannot stand in for a number, and a numeric value cannot serve as a condition; `void` is not a variable/parameter type. | Use inferred or explicitly annotated locals and explicit helper functions, branches, or registered host conversions with matching signatures. | Explicit conversions or broader inference require separate type-system and error-ordering decisions; neither is implied by local initializer inference. |
+| Only `number`, `bool`, `string`, `number[]`, `range`, and `void` exist. Parameters require annotations; omitted results infer only without unresolved callee dependencies. Recursive components require explicit results on every member; Never-only value-return syntax needs an annotation. Every `let` requires an initializer. No parameter inference, whole-program type unification, promotions, implicit coercions, or source `i32` type. | Local inference does not change the `f64` numeric model or allow later assignments of another type. A boolean cannot stand in for a number, and a numeric value cannot serve as a condition; `void` is not a variable/parameter type. | Use inferred or explicitly annotated locals and explicit helper functions, branches, or registered host conversions with matching signatures. | Explicit conversions or broader inference require separate type-system and error-ordering decisions; neither is implied by local initializer inference. |
 | No source modules/import declarations, structs, generics, first-class functions, or closures. Calls resolve named user functions, registered hosts, or the built-in `len`. | The source program is one collection of functions; host registration is an embedding/CLI responsibility. | Put related functions in one source unit and supply external capabilities through host functions. Numeric-array conventions can model simple records, but have no field/type safety. | Modules or dedicated aggregate/function types need name-resolution, type-system, and ABI decisions. Host-side modeling avoids those changes but keeps application-specific conventions outside the language. |
 | No labels or `foreach`. Transfers target the nearest active while/for/loop; only value loops allow value breaks. Range/array for is statement-only with a read-only numeric binding. Nonvoid functions must return or explicitly diverge, never fall through. | Loops cannot transfer across function boundaries. A range or array may be empty, so its body alone does not guarantee return. A no-exit syntactic loop is Never; arbitrary calls or possible traps do not prove divergence. | Use range/array for, statement/value `loop`, numeric-index while plus `len(array)`, and explicit returns. Shadow an iteration binding with a distinct inner let when a mutable local is needed. | Labels need their own target-resolution contract; implementing WP5 does not add labeled transfers. |
 | Array indexing in source starts from an identifier; there is no general postfix chaining. | `make_values()[0]` and `[1, 2][0]` are not supported source forms. | Assign the result/literal to an inferred or annotated `number[]` local, then index that local. | General postfix parsing is a grammar feature and needs explicit assignment-target rules. |

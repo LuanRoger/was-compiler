@@ -59,8 +59,13 @@ changing ordinary body errors. Default-origin bindings follow explicit bindings,
 and checked lowering admits only owned earlier-formal reads and whitelist nodes.
 WP6's release gate (#13) passed; see the
 [release evidence](was_language_extensions_plan.md#issue-13-wp6-release-validation).
-Result inference is not enabled here; #11 development remains isolated and awaits
-separate integration/release. See the
+Issue #11 integrates initial result inference with released WP6. Raw
+`Function.return_type` is `Option<Type>`; typed signatures remain concrete. Private
+`semantic/inference.rs` discovers lexical dependencies and conservative recursive
+components; the existing expression checker and private `Flow` compose reachable
+return constraints. Inferred-to-inferred calls remain rejected until #14; this
+incremental integration does not complete the full WP7 release gate. See
+[the initial inference contract](result-inference-development.md). See the
 [interface gate](named-call-interface.md) and [handoff](wp6-wp7-development.md).
 
 The compiler emits bytes. The embedding application decides whether to write a

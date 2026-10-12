@@ -1048,7 +1048,6 @@ fn malformed_default_syntax_remains_a_parse_error() {
         "fn f(a: number = 1 = 2) -> void {}",
         "fn f(a = 1) -> void {}",
         "fn f(a: number = 1, ) -> void {}",
-        "fn f(a: number = 1) {}",
     ] {
         assert!(
             matches!(Compiler::new().analyze(source), Err(CompileError::Parse(_))),

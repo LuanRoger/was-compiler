@@ -224,9 +224,8 @@ fn positional_calls_keep_legacy_tree_error_locations_and_bytes() {
 }
 
 #[test]
-fn result_inference_and_malformed_named_syntax_remain_rejected() {
+fn malformed_named_syntax_remains_rejected() {
     for source in [
-        "fn f(a: number) {}",
         "fn f(a) -> void {}",
         "fn main() -> void { f(a:); }",
         "fn main() -> void { f(a: 1,); }",

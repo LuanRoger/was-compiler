@@ -6,7 +6,7 @@ impl SemanticAnalyzer {
         name: &str,
         args: &[CallArgument],
         span: Span,
-        return_type: Type,
+        return_type: ReturnContext,
     ) -> Result<(TypedExpr, Flow), SemanticError> {
         let signature = &self.functions[name];
 
