@@ -61,6 +61,16 @@ impl Visitor for TemporaryVisitor {
             self.reserve(&[ValType::I32, ValType::F64])?;
         }
 
+        if matches!(statement.kind, TypedStatementKind::For { .. }) {
+            self.reserve(&[
+                ValType::I32,
+                ValType::I64,
+                ValType::I64,
+                ValType::I64,
+                ValType::I32,
+            ])?;
+        }
+
         ControlFlow::Continue(())
     }
 

@@ -100,6 +100,14 @@ pub(super) fn emit(
             body: block,
         } => control_flow::emit_while(*id, cond, block, emitter, span),
 
+        TypedStatementKind::For {
+            id,
+            variable,
+            iterable,
+            body,
+            ..
+        } => control_flow::emit_for(*id, *variable, iterable, body, emitter, span),
+
         TypedStatementKind::Loop { id, body } => {
             let (flow, _) = control_flow::emit_loop(*id, body, LoopKind::Statement, emitter, span)?;
 

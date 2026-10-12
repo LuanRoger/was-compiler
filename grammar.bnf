@@ -31,6 +31,7 @@
               | <compound_assignment>
               | <if_statement>
               | <while_statement>
+              | <for_statement>
               | <loop_statement>
               | <break_statement>
               | <continue_statement>
@@ -87,7 +88,7 @@
 # Statement-if branch tails are discarded, including nested statement else-if.
 # Every expression-form if requires else and exactly matching arm results, with
 # divergent Never arms compatible with the other result. Never is not a source type.
-# Function, while, and loop bodies remain strict statement blocks: ordinary tails
+# Function, while, for, and loop bodies remain strict statement blocks: ordinary tails
 # need semicolons. A loop expression gets its result only from reachable breaks.
 # Named functions never implicitly return a tail; nonvoid functions must return
 # or explicitly diverge on every path, never complete normally.
@@ -96,6 +97,19 @@
 <while_statement> ::= "while" <ws1> <expression>
                       <ws> <block>
 
+
+<for_statement> ::= "for" <ws1> <identifier> <ws1> "in" <ws1> <expression>
+                    <ws> <block>
+
+# For is statement-only, including when final in a value block, and accepts only
+# range iterables (array iteration remains proposed). Analyze/evaluate the iterable
+# once in the enclosing context before activating the for or binding its name.
+# Iterable return/divergence and transfers to enclosing loops are preserved.
+# The iteration binding is a read-only number in a scope outside the body; an
+# inner let may shadow it with a distinct mutable binding. All bodies are checked,
+# including empty iteration and unreachable writes/transfers. For may execute zero
+# times. Continue advances before retesting; bare break exits; value break is invalid.
+# for is reserved for source and host-language names, not host module/field names.
 
 <loop_statement> ::= "loop" <ws> <block> ( <ws> ";" )?
 
@@ -107,8 +121,9 @@
 <continue_statement> ::= "continue" <ws> ";"
 
 # Loop transfers are statement-only, without labels, and target the nearest
-# enclosing while/loop in the same function. Statement loops and while accept only
-# bare break; value loops require a nonvoid break value, even in unreachable code.
+# enclosing while/for/loop in the same function. Statement loops, while, and for
+# accept only bare break; value loops require a nonvoid break value, even in
+# unreachable code.
 # Reachable value breaks must have exactly matching types. No reachable exit gives
 # Never; divergent RHS expressions do not supply an actual break result.
 # loop, break, and continue are reserved keywords.

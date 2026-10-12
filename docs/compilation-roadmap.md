@@ -531,8 +531,8 @@ belong to WP11, not this milestone.
 `break;` exits the nearest enclosing while and `continue;` reevaluates its
 condition, including under nested branches and loops. Transfers cannot cross
 function boundaries. WP2 introduces bare semicolon-terminated transfers; WP4
-below adds statement/value loop and value breaks. Labels and for remain future
-work. Break/continue reserve previously usable source and host-language names;
+below adds statement/value loop and value breaks. Partial WP5 adds range-only
+statement for; labels and array iteration remain future work. Break/continue reserve previously usable source and host-language names;
 rename existing bindings/functions using them. Host module/field names remain
 unaffected.
 
@@ -679,8 +679,61 @@ cases retain the ignored-test policy; default tests alone do not prove they ran.
 Membership coverage in `tests/range_frontend.rs` and `tests/ranges.rs` includes
 reserved names, precedence/associativity, exact/Never typing, checking both children,
 and decoded integer lowering without floating remainder.
-This is **not full WP5**: `for` and progression advancement/iteration remain
-proposed in the [extension plan](was_language_extensions_plan.md).
+This is **not full WP5**: range-only statement for follows below; array iteration
+and remaining adapter/interaction coverage remain proposed in the
+[extension plan](was_language_extensions_plan.md).
+
+### Range-only statement for checkpoint (issue #4)
+
+Reserved `for name in range_expr { body }` accepts range iterables only, with
+existing Never compatibility; arrays remain proposed. Raw statements add
+`For { name, iterable, body }`; typed statements add
+`For { id, variable, name, iterable: Box<TypedExpr>, body }`. For is a void statement,
+not a value expression, and retains a strict statement-vector body. Loop and
+variable IDs use existing per-function uniqueness/scope/target checks.
+
+Evaluate the iterable once in the enclosing context before activating the new
+loop or iteration binding. Break/continue within it targets the outer nearest
+loop under its usual rules, or is invalid without one; preserve return/divergence
+without inventing fallthrough, while still checking the body. A normally completing
+range may be empty, so a returning body alone does not guarantee return.
+The numeric iteration binding is read-only for ordinary and compound updates,
+including unreachable writes; distinct inner shadowing lets remain mutable.
+Checked lowering reconstructs write restrictions from For provenance, with no
+new public mutable-binding metadata. Bare breaks are permitted and value breaks
+are rejected even when unreachable; nested value loops retain their own rules.
+
+Validate the consumed record and cache exact `i64` current/end/step and `i32`
+inclusivity scratch. Signed endpoint checks precede exact `f64` conversion/yield,
+with integer zero yielding +0. A body latch block makes continue exit to `I64Add`
+advancement before backedge/retest; break and return skip advancement. Resolve
+branch depths from label identities through nested expression regions. The walker
+visits iterable then body within body block hooks; local/memory/temporary/remainder
+policies remain separate, with no-reuse scratch slots. Range helpers and ordering
+are unchanged: for adds no helper, `Contains` remains membership-only, and
+feature-free bytes/indices retain their compatibility contract.
+
+Let `M = 2^53−1`. Every yielded current and validated nonzero step have magnitude
+≤ M, hence `|current + step| <= 2M < 2^54` fits signed i64. Next can leave the safe
+domain, but is endpoint-tested before conversion/yield and exhausts normally.
+The loop exits on the first failed signed check, so no subsequent addition uses
+that out-of-domain current. See the [full proof](memory-abi.md#private-range-record).
+
+`tests/for_frontend.rs` covers syntax/types/scopes, read-only writes, mutable
+shadowing, statement-only contexts, iterable transfers, and unreachable checks.
+`tests/for_lowering.rs` covers forged trees/annotations/IDs, planner slot types and
+preorder, Validator plus independent decoded cache/conversion/latch checks, and
+error/optimization/export-selection parity. `tests/for_loops.rs` covers deterministic
+output, helper counts/no-reuse scratch, owned import snapshots and export indices;
+its bounded Node cases compare yields to an independent BigInt progression and
+membership, exercise ±safe limits/large steps/+0/normal exhaustion, and check
+once-only effects, nested transfers, consumed-record validation, and cached fields.
+All optimization levels are covered. Node cases retain the ignored-test policy;
+default Cargo success alone does not establish runtime coverage.
+
+CLI/browser support already uses the shared range-for core pipeline. Array iteration
+and broader WP5 adapter/cross-feature acceptance remain proposed, not pending
+range-for adapter support or full WP5 completion.
 
 ## Remaining work
 

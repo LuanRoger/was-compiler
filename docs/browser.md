@@ -140,10 +140,30 @@ and `Validate` only when membership exists, preserving construction-only bytes.
 Range handles remain private, with no host range type or marshaling API. Use
 `setExports(["main"])` for programs with internal range-signature helpers; selected
 range user exports and all range host imports are rejected. Exported scalar
-membership results use raw `i32` `0`/`1`. Progression advancement, iteration, and
-`for` remain proposed, not full WP5 support. See the
-[private record contract](memory-abi.md#private-range-record). Rebuild `pkg/` to use
-current compiler source; stale generated bindings do not validate this feature.
+membership results use raw `i32` `0`/`1`.
+
+The core pipeline also supports range-only statement
+`for name in range_expr { body }`, without a new JavaScript API, host callback,
+or range helper. `for` is reserved for source/host-language names, not host
+module/field names. The iterable evaluates once in the enclosing context before
+activating the new loop/binding; iterable break/continue targets the outer nearest
+loop, and return/divergence is preserved. The body's `number` binding is read-only;
+a distinct inner shadowing let remains mutable. Bare breaks are permitted, value
+breaks are rejected even when unreachable, and continue advances before retesting.
+For is a void statement, not a value expression. Cached `i64` fields and signed
+endpoint checks precede exact `f64` conversion/yield (zero is +0); advancement
+outside the safe domain exhausts normally before conversion, without a trap.
+The browser adapter already compiles range-only for through this shared core.
+Array iteration and broader WP5 adapter/interaction acceptance remain proposed;
+that remaining work is not pending browser support for the current range-for
+feature or full WP5 completion. `tests/for_frontend.rs` and `tests/for_lowering.rs`
+cover frontend and checked-lowering contracts; `tests/for_loops.rs` covers layout,
+optimization parity and bounded Node execution, including exact yields/exhaustion,
+effects, transfers, consumed-record validation and caching. Its Node cases are
+ignored by default; default Cargo success alone does not establish runtime coverage.
+See the [private record contract](memory-abi.md#private-range-record). Rebuild `pkg/`
+after core/browser changes before adapter validation; stale bindings do not validate
+current source.
 
 Always release the compiler with `free()` in a `finally` block, including when
 compilation fails. `compile()` returns an owned copy, not a view into compiler

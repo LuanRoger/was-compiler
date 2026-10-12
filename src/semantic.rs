@@ -25,6 +25,9 @@ pub enum SemanticError {
     #[error("Variable '{name}' is already declared in this scope at {span:?}")]
     DuplicateVariable { name: String, span: Span },
 
+    #[error("Variable '{name}' is read-only at {span:?}")]
+    ReadOnlyVariable { name: String, span: Span },
+
     #[error("Undefined variable '{name}' at {span:?}")]
     UndefinedVariable { name: String, span: Span },
 
@@ -99,6 +102,7 @@ impl SemanticError {
         match self {
             Self::DuplicateFunction { span, .. }
             | Self::DuplicateVariable { span, .. }
+            | Self::ReadOnlyVariable { span, .. }
             | Self::UndefinedVariable { span, .. }
             | Self::UndefinedFunction { span, .. }
             | Self::NotCallable { span, .. }
@@ -131,6 +135,13 @@ struct FunctionSignature {
 struct VariableBinding {
     id: VariableId,
     ty: Type,
+    mutability: BindingMutability,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BindingMutability {
+    Mutable,
+    ReadOnly,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -265,7 +276,12 @@ impl SemanticAnalyzer {
         let mut params = Vec::with_capacity(function.params.len());
 
         for param in &function.params {
-            let id = self.declare_variable(&param.name, param.ty, param.span)?;
+            let id = self.declare_variable(
+                &param.name,
+                param.ty,
+                BindingMutability::Mutable,
+                param.span,
+            )?;
 
             params.push(TypedParam {
                 id,
@@ -369,7 +385,7 @@ impl SemanticAnalyzer {
                     },
                 };
 
-                let id = self.declare_variable(name, ty, span)?;
+                let id = self.declare_variable(name, ty, BindingMutability::Mutable, span)?;
 
                 TypedStatementKind::Let {
                     id,
@@ -479,6 +495,46 @@ impl SemanticAnalyzer {
                 };
 
                 TypedStatementKind::While { id, cond, body }
+            }
+
+            StatementKind::For {
+                name,
+                iterable,
+                body,
+            } => {
+                // Iterable transfers belong to the enclosing loop, and its names
+                // resolve before the iteration binding exists.
+                let (iterable, iterable_flow) = self.analyze_expr(iterable, span, return_type)?;
+
+                self.expect_type(Type::Range, iterable.ty, span)?;
+                self.scopes.push(HashMap::new());
+
+                let result = (|| {
+                    let variable = self.declare_variable(
+                        name,
+                        Type::Number,
+                        BindingMutability::ReadOnly,
+                        span,
+                    )?;
+                    let (id, body, body_flow) =
+                        self.analyze_loop_body(body, return_type, LoopKind::Statement)?;
+
+                    Ok((variable, id, body, body_flow))
+                })();
+
+                self.scopes.pop();
+
+                let (variable, id, body, body_flow) = result?;
+
+                flow = iterable_flow.then(body_flow.while_loop());
+
+                TypedStatementKind::For {
+                    id,
+                    variable,
+                    name: name.clone(),
+                    iterable: Box::new(iterable),
+                    body,
+                }
             }
 
             StatementKind::Loop { body } => {
@@ -609,7 +665,32 @@ impl SemanticAnalyzer {
         return_type: Type,
     ) -> Result<(TypedExpr, Flow), SemanticError> {
         match target {
-            Expr::Identifier(_) => self.analyze_expr(target, span, return_type),
+            Expr::Identifier(name) => {
+                let binding =
+                    self.lookup_variable(name)
+                        .ok_or_else(|| SemanticError::UndefinedVariable {
+                            name: name.clone(),
+                            span,
+                        })?;
+
+                if binding.mutability == BindingMutability::ReadOnly {
+                    return Err(SemanticError::ReadOnlyVariable {
+                        name: name.clone(),
+                        span,
+                    });
+                }
+
+                Ok((
+                    TypedExpr {
+                        kind: TypedExprKind::Identifier {
+                            id: binding.id,
+                            name: name.clone(),
+                        },
+                        ty: binding.ty.into(),
+                    },
+                    Flow::FALLTHROUGH,
+                ))
+            }
             Expr::Index { expr, .. } if matches!(**expr, Expr::Identifier(_)) => {
                 self.analyze_expr(target, span, return_type)
             }
@@ -1039,6 +1120,7 @@ impl SemanticAnalyzer {
         &mut self,
         name: &str,
         ty: Type,
+        mutability: BindingMutability,
         span: Span,
     ) -> Result<VariableId, SemanticError> {
         let scope = self
@@ -1057,7 +1139,7 @@ impl SemanticAnalyzer {
 
                 self.next_variable_id += 1;
 
-                entry.insert(VariableBinding { id, ty });
+                entry.insert(VariableBinding { id, ty, mutability });
 
                 Ok(id)
             }

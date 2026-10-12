@@ -27,7 +27,10 @@ impl<'a> Place<'a> {
     ) -> Result<Self, CodegenError> {
         match &target.kind {
             TypedExprKind::Identifier { id, .. } => {
-                Ok(Self::Local(body.resolve_expr(*id, target.ty, span)?))
+                let index = body.resolve_expr(*id, target.ty, span)?;
+                body.check_writable(*id, span)?;
+
+                Ok(Self::Local(index))
             }
 
             TypedExprKind::Index { expr: base, index } => {

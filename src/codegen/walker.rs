@@ -65,6 +65,11 @@ fn walk_statements<V: Visitor>(block: &TypedBlock, visitor: &mut V) -> ControlFl
                 walk_block(body, visitor)?;
             }
 
+            TypedStatementKind::For { iterable, body, .. } => {
+                walk_expression(iterable, visitor)?;
+                walk_block(body, visitor)?;
+            }
+
             TypedStatementKind::Loop { body, .. } => walk_block(body, visitor)?,
 
             TypedStatementKind::Break { .. } | TypedStatementKind::Continue { .. } => {}

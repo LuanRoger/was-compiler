@@ -35,9 +35,11 @@ these checks are not an isolation mechanism against a host that violates the ABI
 
 ## Private range record
 
-WP5 implements range construction, internal calls, and exact numeric membership;
-`for` and progression advancement/iteration remain proposed. `range` uses an
-`i32` handle internally, but is **not** a public string/array descriptor or host
+Partial WP5 implements range construction, internal calls, exact numeric membership,
+and range-only statement `for`; array iteration and broader WP5 adapter/interaction
+acceptance remain proposed. Current CLI/browser compilation already uses this core
+range-for support. `range` uses an `i32` handle internally, but is **not**
+a public string/array descriptor or host
 marshaling type. Every successfully completed construction allocates an immutable,
 eight-byte-aligned 32-byte record with the existing bump allocator:
 
@@ -72,13 +74,35 @@ For candidate `n`, start `a`, end `b`, and step `s`, positive steps require
 works for either step sign without modulus normalization. This allocates nothing
 and needs no floating remainder helper.
 
-**Bounds proof:** Let `M = 2^53−1`. The validated candidate and record fields
+**Membership bounds proof:** Let `M = 2^53−1`. The validated candidate and record fields
 satisfy `|n|, |a|, |b|, |s| <= M`, with `s != 0`. Exact conversion to signed `i64`
 is safe, and `|n - a| <= 2M = 2*(2^53−1) < 2^54`, well below the signed `i64`
 limit. Subtraction cannot overflow. The divisor is nonzero and neither operand
 can be `i64::MIN`, excluding division-by-zero and the `MIN / -1` corner; signed
-remainder is safe. No progression advancement or iteration follows from this proof.
+remainder is safe. Iteration has the separate advancement proof below.
 These checks do not isolate a malicious host with access to exported memory.
+
+**Range-for consumption:** Evaluate the iterable once in the enclosing context,
+then validate the consumed record before reading/caching its fields. Keep current,
+end, and step as exact signed `i64`, and inclusivity as `i32` scratch; do not reread
+record fields per iteration. For a positive step, yield only while `current < end`
+(or `<=` if inclusive); for a negative step, use `current > end` (or `>=`). A failed
+signed endpoint check exits immediately. Convert only a passing current to `f64`;
+it is exact within the safe bounds and integer zero yields canonical `+0`.
+Continue exits the body latch block, reaches `I64Add` advancement, and retests;
+break and return skip advancement. For allocates no array of elements and adds no
+range helper or public marshaling API.
+
+**Advancement bounds proof:** Let `M = 2^53−1`. Every yielded current and the
+validated nonzero step satisfy `|current|, |step| <= M`. Consequently
+`next = current + step` has `|next| <= 2M < 2^54`, safely within signed `i64`.
+Next may lie outside the safe-integer domain; it MUST be endpoint-tested before
+any `f64` conversion or yield, not rejected by an extra safe-domain trap. A positive
+step advances monotonically from a safe start; any next above M exceeds the safe
+end and fails `<`/`<=`. A negative step is symmetric below −M with `>`/`>=`.
+The loop exits on that first failed check, so no subsequent addition uses an
+out-of-domain current. Valid advancement therefore exhausts normally without
+integer overflow, rounding stalls, traps, or out-of-range yields.
 
 All range host-import signatures are rejected, including unused imports and forged
 snapshots. Only selected user range signatures are rejected for export; default
@@ -156,7 +180,9 @@ and optional remainder helper, in that order. Optional `Contains` with signature
 `(f64, i32) -> i32` follows `Validate` only when membership occurs anywhere in the
 typed AST, including unexported, unreachable, or runtime-skipped code.
 Construction-only modules acquire no `Contains` helper and retain their bytes;
-membership alone does not require the floating remainder helper. Modules without
+membership alone does not require the floating remainder helper. Range for reuses
+`Validate` and emits inline advancement; it adds no helpers and does not require
+`Contains` or floating remainder solely for iteration. Modules without
 ranges acquire no range helpers or changed bytes; existing host/user/memory/remainder
 indices remain unchanged.
 

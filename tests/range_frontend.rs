@@ -796,13 +796,8 @@ fn membership_numeric_domains_and_internal_range_calls_are_not_static_errors() {
 }
 
 #[test]
-fn ranges_do_not_enable_iteration_or_other_range_operations() {
-    for source in [
-        "fn main() -> void { for i in 0..3 {} }",
-        "fn main() -> void { let r: range[] = 0..3; }",
-    ] {
-        assert!(parse(source).is_err(), "{source}");
-    }
+fn ranges_do_not_enable_other_range_operations() {
+    assert!(parse("fn main() -> void { let r: range[] = 0..3; }").is_err());
     for body in [
         "let r = 0..3; len(r);",
         "let r = 0..3; r[0];",

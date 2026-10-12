@@ -164,8 +164,10 @@ impl Visitor for MemoryVisitor<'_> {
     type Break = CodegenError;
 
     fn enter_statement(&mut self, statement: &TypedStatement) -> ControlFlow<CodegenError> {
-        if let TypedStatementKind::Let { ty, .. } = &statement.kind {
-            *self.used |= memory_type(*ty);
+        match &statement.kind {
+            TypedStatementKind::Let { ty, .. } => *self.used |= memory_type(*ty),
+            TypedStatementKind::For { .. } => *self.used = true,
+            _ => {}
         }
 
         ControlFlow::Continue(())

@@ -1,6 +1,6 @@
 # WAS language extensions implementation plan
 
-**Status:** WP1–WP4 and WP5's construction/internal-call and numeric membership checkpoints implemented; remaining WP5 and WP6–WP12 proposed; WP13 requires separate authorization.
+**Status:** WP1–WP4 and WP5's construction/internal-call, numeric membership, and range-only statement for checkpoints implemented; array iteration, remaining adapter/interaction coverage, and WP6–WP12 proposed; WP13 requires separate authorization.
 **Baseline:** Extension specification v0.3.
 
 Follow the [agent guide](../AGENTS.md), [extension specification](was_language_extensions_spec.md),
@@ -14,12 +14,16 @@ WP1 adds numeric compound assignments; WP2 adds bare while transfers and flow/la
 tracking; WP3 adds block/if values and internal `Never`; WP4 adds statement/value
 loops with reachable break-result constraints and explicit divergence. The baseline
 implementation notes below reflect those completed packages and partial WP5:
-range construction, immutable private records, internal calls, and exact numeric membership.
+range construction, immutable private records, internal calls, exact numeric
+membership, and range-only statement for. Frontend, checked-lowering, deterministic
+layout and bounded runtime coverage are implemented in the for suites below;
+Node execution retains the ignored-test policy.
 
 Evidence: `src/lexer.rs`, `src/parser.rs`, `src/semantic.rs`, `src/codegen/numeric.rs`, `src/cli.rs`,
 `tests/comments.rs`, `tests/inference.rs`, `tests/remainder.rs`, `tests/emitter.rs`,
 `tests/compound_assignment.rs`, `tests/loop_control.rs`, `tests/block_values.rs`,
-`tests/value_loops.rs`, `tests/range_frontend.rs`, `tests/ranges.rs`, and
+`tests/value_loops.rs`, `tests/range_frontend.rs`, `tests/ranges.rs`,
+`tests/for_frontend.rs`, `tests/for_lowering.rs`, `tests/for_loops.rs`, and
 `src/codegen/range_tests.rs`.
 
 - `Type` in `src/ast.rs` is a small `Copy` enum, not an extensible callable/type tree.
@@ -40,6 +44,8 @@ Evidence: `src/lexer.rs`, `src/parser.rs`, `src/semantic.rs`, `src/codegen/numer
   initializer declarations, preserving declaration preorder. The temporary visitor plans
   ordered array `i32` slots and indexed-compound `i32` address / `f64` old-value
   slots without reuse; local compounds keep the old value on the operand stack.
+  For adds a numeric iteration-binding slot and exact `i64` current/end/step plus
+  `i32` inclusivity scratch, keeping planner policies separate.
 - `ValidatedProgram` privately borrows the public, mutable `TypedProgram`, completes
   layout, then checks/lowers all user bodies in source order and caches encoded bodies.
   Keep that boundary; semantic analysis is not proof that a public tree is valid.
@@ -54,8 +60,9 @@ Evidence: `src/lexer.rs`, `src/parser.rs`, `src/semantic.rs`, `src/codegen/numer
 - Old-source Wasm fixtures must remain unchanged unless an explicit contract decision
   justifies a difference. Never regenerate goldens to conceal incidental drift.
 
-WP1–WP4 and WP5's construction/internal-call and membership checkpoints are
-implemented; subsequent checkpoints and extensions below remain proposed. New keywords require matching host source-name
+WP1–WP4 and WP5's construction/internal-call, membership, and range-for checkpoints
+are implemented; array iteration, remaining adapter/interaction coverage, and
+subsequent extensions below remain proposed. New keywords require matching host source-name
 validation, not restrictions on arbitrary
 nonempty host module/field names. Reserve standalone `_`
 when its syntax arrives, reject its bindings, retain `_temp`, and keep `by` contextual.
@@ -90,7 +97,8 @@ These paths exist today; ownership denotes responsibility, not mandatory edits f
 
 **Implemented WP5 module:** `src/codegen/range.rs` owns range discovery,
 construction, private-record validation, and exact numeric membership helpers.
-Progression advancement and iteration remain future work.
+Range-for advancement is inline checked control-flow lowering, not a new range
+helper; array iteration remains future work.
 
 **Proposed new files, not existing implementation:** `src/semantic/inference.rs` in WP7 and `src/semantic/captures.rs` in WP11 if those policies
 outgrow `semantic.rs`; `src/codegen/closures.rs` in WP11 for direct helpers/cells.
@@ -123,6 +131,9 @@ Public-shape gates occur immediately before the package that needs the change:
    source spelling/storage/ABI type, and public equality is identity, not Never
    compatibility. Checked lowering rejects inconsistent outcomes.
 4. WP5 adds `Type::Range`, still `Copy`, with one canonical internal representation.
+   Issue #4 adds typed `For { id, variable, name, iterable: Box<TypedExpr>, body }`.
+   Derive read-only restrictions from For provenance, without public mutable-binding
+   metadata; update exhaustive public statement matches/constructors.
    WP6 changes raw argument/parameter metadata; WP7 makes only raw function result
    annotations optional. No unresolved inference variables reach `TypedProgram`.
 5. WP11 represents callable bindings in dedicated symbol/helper metadata, not in
@@ -277,13 +288,14 @@ checkpoint follows below.
 ### WP5 — Safe ranges, range/array `for`, membership (spec §§5–6)
 
 **Entry:** WP4. Range representation/export gates are approved as specified below;
-construction/internal calls and numeric membership are implemented, not the full
-package.
+construction/internal calls, numeric membership, and range-only statement for are
+implemented, not the full package.
 See [ADR-0001](adr/0001-private-range-representation.md)
 for the representation and external-boundary rationale.
 Split this package into sequential checkpoints: construction/internal calls → exact
-numeric membership → progression advancement and `for` with its latch → adapters/interactions. No partial
-checkpoint is advertised as complete range/for support.
+numeric membership → range-only statement for with exact advancement/latch → array
+iteration → adapters/interactions. The first three are implemented; no partial
+checkpoint is advertised as full WP5 support.
 
 **Implemented first checkpoint:** `Type::Range` and raw/typed range expressions
 carry start/end, optional step, and inclusivity. `..` / `..=` bind below arithmetic
@@ -297,8 +309,8 @@ Coverage lives in `tests/range_frontend.rs`, `tests/ranges.rs`, and
 `src/codegen/range_tests.rs`: frontend rejection, forged trees, Validator plus
 independent record/instruction/layout assertions, export/import gates,
 optimization parity, and ignored bounded Node validation/effect cases.
-Exact numeric membership is implemented as described below; `for` and progression
-advancement/iteration are not implemented.
+Exact numeric membership and range-only statement for are implemented as described
+below; array iteration and remaining adapter/interaction coverage are proposed.
 
 The approved MVP uses a single `i32` handle to an immutable private, eight-byte-aligned
 32-byte record. Validated signed `i64` start/end/step occupy byte offsets 0/8/16;
@@ -348,40 +360,78 @@ construction-only bytes remain unchanged, and no floating remainder helper is ne
 Frontend and decoded-lowering coverage lives in `tests/range_frontend.rs` and
 `tests/ranges.rs`.
 
-**Proposed progression advancement:** Default +1 descending ranges are empty.
-Each yielded integer converts exactly to f64. Valid advancement beyond an endpoint
-exhausts normally: compare the exact next integer before yielding, never trap or
-expose values beyond bounds. Prove advancement arithmetic separately from the
-implemented membership bounds; no advancement or iteration is implemented.
-Folding later may replace invalid constant construction with an equivalent trap
-at the original evaluation position while preserving effects.
+**Implemented range-only statement for checkpoint (issue #4):** Reserve `for` for
+source and host-language names, not host module/field names. Accept
+`for name in range_expr { body }` with exact range/Never compatibility, not arrays.
+Raw statements add `For { name, iterable, body }`; typed statements add
+`For { id, variable, name, iterable: Box<TypedExpr>, body }`, retaining strict
+statement-vector bodies and existing per-function loop/binding ID checks. For is
+a void statement, never a value expression. Bare breaks are permitted; value
+breaks targeting for are rejected even when unreachable.
 
-**Proposed `for`/latch checkpoint:** `for` evaluates its iterable once in the
-enclosing context, before activating the new loop or introducing its iteration binding. Break/continue during evaluation
-target an existing enclosing loop under its usual rules, or are invalid if none
-exists; unlike while conditions, the iterable cannot target the new loop. Preserve
-iterable return/divergence without inventing fallthrough. Range fields or array
-handle/length are cached.
-Array elements load each iteration so alias mutations of future elements are seen.
-Add binding mutability metadata: iteration binding is read-only, ordinary let is
-mutable; shadowing creates a different binding. Continue branches to a body-exit
-latch block before increment/step and loop retest, including under nested value ifs.
-Plan i64 induction/range scratch only here; preserve no-reuse slots and old output.
-Append extension helpers deterministically without reordering `Helper::ALL` or the
-existing optional remainder helper; feature-free modules acquire no new helpers.
+Evaluate the iterable once in the enclosing context, before activating the new
+loop or introducing its iteration binding. Break/continue during evaluation targets
+an existing outer nearest loop under its usual rules, or is invalid without one;
+unlike while conditions, the iterable cannot target the new loop. Preserve iterable
+return/divergence without inventing fallthrough, and check the body regardless.
+A normally completing range may be empty, so its body alone cannot guarantee return.
+The numeric iteration binding is read-only for ordinary and compound writes, even
+when unreachable; a distinct inner shadowing let remains mutable. Reconstruct
+checked-lowering restrictions from For provenance, with no new public mutable-binding
+metadata or duplicate validator.
 
-**Remaining full-package exit tests (proposed):** extend `tests/ranges.rs` and add
-`tests/for_loops.rs`; token/precedence,
-wrong iterable/types, rejected range equality, read-only writes/compound updates,
-iterable transfers to enclosing loops (and rejection without one), binding scope,
-and forged range/for metadata.
-Pin records, internal signatures, export surfaces, integer instructions and latch
-depths independently; compare bounded iteration to membership with an independent
-reference. Runtime cases include ±safe limits, large steps/exhaustion, both endpoint
-zeros (yield +0), ±zero steps, NaN/infinity/fractions, invalid empty/unused/constant
-ranges, once-only construction effects, arrays/aliasing, break/return/continue.
-CLI/browser must reject range imports/selected exports, allow internal signatures
-under explicit selection, and preserve mandatory memory exports and legacy ABI.
+Validate the consumed record, then cache exact signed `i64` current/end/step and
+`i32` inclusivity scratch. Default +1 descending ranges are empty. Test signed
+endpoints before exact `f64` conversion/yield; zero yields canonical +0. Continue
+branches to a body-exit latch block, then `I64Add` advances and the loop retests,
+including under nested value ifs/blocks; break/return skip advancement. Resolve
+label depths by identity, not fixed relative depths. The structural walker visits
+iterable then body within body block hooks. Preserve separate local/memory/
+temporary/remainder policies, no-reuse scratch slots, and old-source output.
+For adds no range helpers: reuse `Validate`, keep `Construct`/`Validate` and optional
+membership-only `Contains` order unchanged, and do not add a floating remainder need.
+
+**Advancement bounds:** With `M = 2^53−1`, every yielded current and validated
+nonzero step have magnitude ≤ M; `|next| = |current + step| <= 2M < 2^54` safely
+fits i64. Next may leave the safe domain, but the signed endpoint check happens
+before conversion/yield and exits on its first failure. An out-of-domain next is
+past the safe end in the direction of advancement, so it exhausts normally;
+no subsequent addition uses it. See the
+[full proof](memory-abi.md#private-range-record). Folding remains WP13 work and
+must preserve invalid-constant construction traps at their original effect position.
+
+**Implemented range-for coverage:**
+
+- `tests/for_frontend.rs`: syntax/reserved names, range-only typing, statement versus
+  value contexts, read-only ordinary/compound updates and mutable inner shadowing,
+  body checking after divergent iterables, iterable transfers to outer loops and
+  rejection without one, binding scope, unreachable value-break rejection.
+- `tests/for_lowering.rs`: forged nodes/types/results/IDs/targets and read-only writes,
+  exact error spans, initialization/scope restoration, planner slot types/preorder,
+  Validator plus independent decoded cache/conversion/latch ordering, and rejection
+  parity across export selections and all optimization levels without mutating input.
+- `tests/for_loops.rs`: default checks for deterministic output, owned import
+  snapshots, export indices/body preservation, helper counts and no-reuse scratch.
+  Ignored bounded Node cases use an independent BigInt progression/membership
+  reference for ±safe limits, large steps and normal exhaustion, canonical +0
+  (`Object.is`), invalid construction/effect order, once-only iterable effects,
+  nested break/return/continue, consumed-record validation even for empty ranges,
+  and cached fields before body effects. All optimization levels are covered.
+
+These suites check unexported, unreachable, and runtime-skipped children. Node
+execution retains the ignored-test policy and bounded subprocess helper; default
+Cargo success alone does not establish runtime coverage.
+
+**Remaining full-WP5 checkpoints (proposed):** Array iteration accepts `number[]`
+only after its own typing/lowering gates; cache handle/length and load each element
+on its iteration so alias mutations to future elements remain visible. Keep its
+iteration binding read-only and its continuation on an index-advancement latch.
+Array/aliasing and broader WP5 adapter/cross-feature acceptance remain proposed.
+Current CLI/browser adapters already compile range-only for through the shared core;
+remaining acceptance work does not defer current feature support or complete WP5.
+Further adapter coverage must preserve range import/selected-export rejection,
+internal signatures under explicit selection, mandatory memory exports and legacy
+ABI. Rebuild browser bindings after core/browser changes before adapter validation.
 
 ### WP6 — Named/default parameters (spec §14)
 
@@ -543,7 +593,8 @@ intentional change to these contracts requires a coordinated specification updat
 and independent regression expectations, not just an implementation adjustment.
 
 Run from repository root, offline, after actual feature edits. Start with relevant
-existing unit/test filters, then new suites once created (names above are proposals).
+unit/test filters and implemented suites, then add proposed suites at their package
+boundary.
 Use the project bounded process helper for Node tests and preserve ignored-test policy.
 
 ```sh
@@ -586,5 +637,5 @@ git --no-optional-locks status --short
 ```
 
 Documentation-only changes require local link/path and whitespace checks; code
-tests are normally unnecessary. The validation commands above are requirements for
-future implementation, not claims that they have already passed.
+tests are normally unnecessary. The commands above are repeatable validation gates
+for implementation changes, not a per-run validation log.

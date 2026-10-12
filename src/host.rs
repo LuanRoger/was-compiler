@@ -87,6 +87,7 @@ impl HostFunctions {
                 | "if"
                 | "else"
                 | "while"
+                | "for"
                 | "loop"
                 | "break"
                 | "continue"

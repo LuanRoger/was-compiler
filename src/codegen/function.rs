@@ -14,7 +14,7 @@ use super::{
     CodegenError, checked_u32, expect_result, expect_type, expression,
     indices::{FunctionIndex, LabelDepth, LocalIndex},
     layout::{CallTarget, Layout},
-    locals::LocalLayout,
+    locals::{BindingKind, LocalLayout},
     memory::Helper,
     range, statement, temporaries,
 };
@@ -290,6 +290,23 @@ impl<'a> BodyEmitter<'a> {
 
         expect_result(self.name(), local.ty.into(), result, span)?;
         self.resolve(id, local.ty, span)
+    }
+
+    pub fn check_writable(&self, id: VariableId, span: Span) -> Result<(), CodegenError> {
+        if self
+            .context
+            .locals
+            .get(id)
+            .is_some_and(|local| local.kind == BindingKind::Iteration)
+        {
+            return Err(CodegenError::ReadOnlyVariable {
+                function: self.name().into(),
+                id,
+                span,
+            });
+        }
+
+        Ok(())
     }
 
     pub fn initialize(&mut self, id: VariableId) {
@@ -655,6 +672,92 @@ mod tests {
                     .continue_label,
                 back
             );
+        }
+    }
+
+    #[test]
+    fn for_scopes_restore_after_iterable_and_body_errors_without_reusing_scratch() {
+        use crate::typed_ast::{TypedExprKind, TypedStatement};
+
+        let program = Compiler::new()
+            .analyze(
+                "fn test(param: number) -> void {
+                for i in { let r = 0..2; r } { let inside = i; if true { inside; } }
+                let after = [];
+            }",
+            )
+            .unwrap();
+        let layout = Layout::new(&program).unwrap();
+        let function = &program.functions[0];
+        let TypedStatementKind::For { id, variable, .. } = function.body[0].kind else {
+            panic!("for");
+        };
+        let span = Span::new(40, 60);
+
+        for failure in [None, Some("iterable"), Some("body")] {
+            let mut statement = function.body[0].clone();
+            let TypedStatementKind::For { iterable, body, .. } = &mut statement.kind else {
+                unreachable!();
+            };
+            let invalid = TypedStatement {
+                kind: TypedStatementKind::Continue {
+                    target: LoopId(999),
+                },
+                span,
+            };
+            match failure {
+                Some("iterable") => {
+                    let TypedExprKind::Block(block) = &mut iterable.kind else {
+                        unreachable!();
+                    };
+                    block.statements.push(invalid);
+                }
+                Some("body") => {
+                    let TypedStatementKind::If { then, .. } = &mut body[1].kind else {
+                        unreachable!();
+                    };
+                    then.push(invalid);
+                }
+                None => {}
+                _ => unreachable!(),
+            }
+
+            let mut emitter = BodyEmitter::new(function, &layout).unwrap();
+            let exit = emitter.begin_block().unwrap();
+            let back = emitter.begin_loop().unwrap();
+            emitter.enter_loop(LoopId(5000), LoopKind::Statement, exit, back);
+            let labels = emitter.labels.clone();
+            let loops = emitter.loops.clone();
+            let initialized = emitter.context.initialized.clone();
+            let first_scratch = emitter.context.next_temporary.get();
+            let result = emitter.emit_block(&vec![statement]);
+            if failure.is_some() {
+                assert_eq!(
+                    result,
+                    Err(CodegenError::InvalidLoopTarget {
+                        function: "test".into(),
+                        target: LoopId(999),
+                        span,
+                    })
+                );
+            } else {
+                assert_eq!(result, Ok(Flow::FALLTHROUGH));
+            }
+
+            assert_eq!(emitter.labels, labels);
+            assert_eq!(emitter.loops, loops);
+            assert_eq!(emitter.context.initialized, initialized);
+            assert_eq!(emitter.context.next_temporary.get(), first_scratch + 5);
+            assert!(emitter.seen_loops.contains(&id));
+            assert!(matches!(
+                emitter.resolve(variable, Type::Number, span),
+                Err(CodegenError::UninitializedVariable { .. })
+            ));
+            assert_eq!(emitter.label_depth(back).unwrap().raw(), 0);
+            assert_eq!(emitter.label_depth(exit).unwrap().raw(), 1);
+            assert_eq!(emitter.check_writable(function.params[0].id, span), Ok(()));
+            emitter.emit_block(&vec![function.body[1].clone()]).unwrap();
+            assert_eq!(emitter.context.next_temporary.get(), first_scratch + 6);
         }
     }
 

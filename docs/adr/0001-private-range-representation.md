@@ -27,5 +27,18 @@ Range helpers append `Construct`, then `Validate` after memory and optional
 remainder helpers; optional `Contains` follows only when membership exists.
 Construction-only and feature-free bytes remain unchanged; membership requires no
 floating remainder helper. See the [memory ABI](../memory-abi.md#private-range-record)
-for the arithmetic bounds proof. This is not completion of WP5: progression
-advancement, iteration, and `for` remain proposed.
+for the membership and advancement bounds proofs.
+
+Issue #4 adds range-only statement `for` without changing this representation or
+helper ordering. The iterable evaluates once in the enclosing context, before
+activating the loop/binding; consumed record validation precedes caching exact
+`i64` current/end/step and `i32` inclusivity scratch. A body latch makes continue
+reach `I64Add` advancement and signed endpoint retesting before exact `f64` yield.
+With `M = 2^53−1`, `|current + step| <= 2M < 2^54` fits i64; a next value outside
+the safe domain fails the endpoint test and exhausts normally before conversion,
+with no further addition. Yielded zero is canonical +0. No new range helpers or
+public mutable-binding metadata are introduced: checked lowering reconstructs
+read-only iteration-binding restrictions from For provenance. This is not
+completion of WP5: array iteration and broader WP5 adapter/interaction acceptance
+remain proposed. Current CLI/browser compilation already supports range-only for
+through the shared core; proposed acceptance work does not defer that support.

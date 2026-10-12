@@ -92,7 +92,7 @@ pub(super) fn needed(program: &TypedProgram) -> bool {
                 TypedStatementKind::Let {
                     ty: Type::Range,
                     ..
-                }
+                } | TypedStatementKind::For { .. }
             ) {
                 return ControlFlow::Break(());
             }

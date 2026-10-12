@@ -129,6 +129,12 @@ pub enum StatementKind {
         body: Block,
     },
 
+    For {
+        name: String,
+        iterable: Expr,
+        body: Block,
+    },
+
     Loop {
         body: Block,
     },

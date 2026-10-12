@@ -17,9 +17,16 @@ use super::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum BindingKind {
+    Mutable,
+    Iteration,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Local {
     pub index: LocalIndex,
     pub ty: Type,
+    pub kind: BindingKind,
 }
 
 #[derive(Default)]
@@ -42,7 +49,13 @@ impl LocalLayout {
 
             abi::value_type(&function.name, "parameter", param.ty)?;
 
-            layout.insert(param.id, param.ty, &function.name, param.span)?;
+            layout.insert(
+                param.id,
+                param.ty,
+                BindingKind::Mutable,
+                &function.name,
+                param.span,
+            )?;
         }
 
         let mut visitor = LocalVisitor {
@@ -65,6 +78,7 @@ impl LocalLayout {
         &mut self,
         id: VariableId,
         ty: Type,
+        kind: BindingKind,
         function: &str,
         span: Span,
     ) -> Result<(), CodegenError> {
@@ -78,7 +92,7 @@ impl LocalLayout {
             }),
 
             Entry::Vacant(entry) => {
-                entry.insert(Local { index, ty });
+                entry.insert(Local { index, ty, kind });
 
                 Ok(())
             }
@@ -95,19 +109,30 @@ impl Visitor for LocalVisitor<'_> {
     type Break = CodegenError;
 
     fn enter_statement(&mut self, statement: &TypedStatement) -> ControlFlow<CodegenError> {
-        if let TypedStatementKind::Let { id, ty, .. } = &statement.kind {
-            let value_type = match abi::value_type(self.function, "local", *ty) {
+        let (id, ty, kind) = match &statement.kind {
+            TypedStatementKind::Let { id, ty, .. } => (*id, *ty, BindingKind::Mutable),
+            TypedStatementKind::For { variable, .. } => {
+                (*variable, Type::Number, BindingKind::Iteration)
+            }
+            _ => return ControlFlow::Continue(()),
+        };
+
+        {
+            let value_type = match abi::value_type(self.function, "local", ty) {
                 Ok(value_type) => value_type,
                 Err(_) => {
                     return ControlFlow::Break(CodegenError::UnsupportedLocalType {
                         function: self.function.into(),
-                        ty: *ty,
+                        ty,
                         span: statement.span,
                     });
                 }
             };
 
-            if let Err(error) = self.layout.insert(*id, *ty, self.function, statement.span) {
+            if let Err(error) = self
+                .layout
+                .insert(id, ty, kind, self.function, statement.span)
+            {
                 return ControlFlow::Break(error);
             }
 

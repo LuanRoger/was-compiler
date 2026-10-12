@@ -127,9 +127,9 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   function inference, or whole-program type unification. `number` remains `f64`.
 - Named functions support forward, nested, self-recursive, mutual, and registered
   host calls. Statements include `let`, variable/index assignment, expression
-  statements, `return`, `if`/`else`, `while`, and `loop`. Bare `break;` exits while
-  and statement loops; `break value;` exits value loops. Continue restarts the
-  nearest loop (reevaluating a while condition).
+  statements, `return`, `if`/`else`, `while`, range-only `for`, and `loop`. Bare
+  `break;` exits while/for and statement loops; `break value;` exits value loops.
+  Continue reevaluates a while condition or advances a for before retesting.
   Statement-only `+= -= *= /= %=` accept `number` variables and numeric-array elements, not whole arrays.
 - Expressions support literals, parentheses, unary `-`/`!`, arithmetic
   `+ - * / %`, numeric comparisons, boolean equality and short-circuit `&&`/`||`,
@@ -137,14 +137,16 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   Tail-valued blocks and `if`/`else if` expressions support all concrete result
   types. Value-context if requires else and exact branch joins, allowing `Never`.
   Statement-if may omit else and discards branch tails. No `match` expressions yet.
-- WP5 implements range construction/internal calls and exact numeric membership, not iteration:
+- Partial WP5 implements range construction/internal calls, exact numeric membership,
+  and range-only statement iteration:
   `start..end` / `start..=end`, optional contextual `by step`, default `+1`.
   Precedence is below arithmetic and above comparisons, non-associative. Range
   values work with locals/assignment, internal signatures, blocks/if/value loops,
   and exact/Never joins; equality is rejected. `number in range` yields `bool` at
   comparison precedence with existing left associativity; `in` is reserved.
-  `for` and progression advancement/iteration remain proposed. Before changing
-  ranges, read extension spec §5 and the
+  Reserved `for name in range_expr { body }` introduces a read-only `number`
+  binding; an inner shadowing `let` remains mutable. Array iteration remains
+  proposed. Before changing ranges or for, read extension spec §§5–6 and the
   [private record contract](docs/memory-abi.md#private-range-record).
 - Strings are immutable raw UTF-8 values. Numeric arrays have fixed lengths and
   mutable shared storage; every evaluated array literal allocates fresh storage.
@@ -152,7 +154,7 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   between tokens anywhere whitespace can appear; delimiters inside strings remain text.
 - Statement/value `loop` supports all concrete result types through value breaks;
   no reachable exit yields Never. Explicit divergence is allowed in nonvoid
-  functions. No `for`, `foreach`, loop labels, value breaks in while, string
+  functions. No array `for`, `foreach`, loop labels, value breaks in while/for, string
   escapes, exponent literals,
   `.5`, `1.`, string concatenation/indexing/`len`, or general postfix
   chaining. Source indexing starts from an identifier.
@@ -237,7 +239,7 @@ refactors; specify and test any intentional behavior change explicitly.
   loops are expressions, including discarded values. No newline heuristics.
 - Unify only reachable value breaks targeting that loop, with exact concrete
   types. Static/backend checks reject bare breaks in value loops, value breaks
-  in statement/while loops, and Void RHSs, even when unreachable. Loop-result
+  in statement/while/for loops, and Void RHSs, even when unreachable. Loop-result
   annotations are checked against reconstructed flow, not trusted.
 - Lower value loops to MVP typed outer blocks and empty backedge loops. Save no
   artificial result local. The declared annotation chooses the region result;
@@ -279,6 +281,39 @@ refactors; specify and test any intentional behavior change explicitly.
   typed AST. Construction-only bytes and existing helper indices remain unchanged;
   membership alone does not require the floating remainder helper.
 
+### Range-only statement for loops
+
+- Raw statements add `For { name, iterable, body }`; typed statements add
+  `For { id, variable, name, iterable: Box<TypedExpr>, body }`. IDs participate in
+  existing per-function loop/binding checks. For is a void statement, never a value
+  expression; its body is a strict statement vector. Bare breaks are permitted,
+  value breaks are rejected even when unreachable.
+- Evaluate the range iterable once in the enclosing context before activating the
+  loop or binding. Iterable break/continue targets the outer nearest loop, or is
+  invalid without one; preserve return/divergence without inventing fallthrough.
+  Check the body even if the iterable cannot complete. A completing iterable can
+  describe an empty range, so body return alone does not establish definite return.
+- Iteration bindings are read-only for ordinary and compound assignment. Reconstruct
+  checked-lowering write restrictions from For provenance, not new public mutable
+  metadata. Distinct inner shadowing lets retain ordinary mutable behavior.
+- Validate the consumed record and cache `i64` current/end/step and `i32` inclusivity
+  scratch. Test signed endpoints before exact `f64` conversion/yield (zero is +0).
+  Continue exits a body latch block, then `I64Add` advances and the loop retests;
+  resolve branch depths from label identity, including nested expression regions.
+- With `M = 2^53−1`, every yielded current and nonzero step have magnitude ≤ M,
+  so `|current + step| <= 2M < 2^54` safely fits i64. The next value may leave the
+  safe domain, but the endpoint test rejects it before conversion/yield and exits
+  normally; no subsequent addition uses that out-of-domain value. See the memory ABI
+  for the full proof. For adds no range helpers or public ABI changes.
+- The structural walker visits iterable then body within body block hooks. Keep
+  local/memory/temporary/remainder policies separate, with no-reuse scratch slots
+  and checks for forged trees and all unreachable/skipped children.
+  `tests/for_frontend.rs` covers syntax/types/scopes and transfer rules;
+  `tests/for_lowering.rs` covers forged trees and decoded planner/lowering contracts;
+  `tests/for_loops.rs` covers deterministic layout, imports/exports, and bounded
+  runtime behavior at all optimization levels. Its Node execution cases are ignored
+  by default; default Cargo success alone does not establish runtime coverage.
+
 ### Evaluation, scopes, and module layout
 
 - Evaluate operands, call arguments, and array elements exactly once, left-to-right.
@@ -289,11 +324,12 @@ refactors; specify and test any intentional behavior change explicitly.
   operand stack. `%=` uses the exact existing remainder helper.
 - Logical operators short-circuit at runtime, but both operands, unreachable
   statements, and unselected function bodies still receive static/backend checks.
-- Transfers target the nearest enclosing while/loop within the function. Bare
+- Transfers target the nearest active while/for/loop within the function. Bare
   breaks require a statement loop; value breaks require a value loop. Continue
-  restarts the nearest loop. Keywords, including `loop`, are reserved for source
-  and host language names, never imposed on host module/field names. No labels.
-  Typed while/loop nodes carry per-function `LoopId`s; transfers carry resolved
+  uses the nearest loop's continuation path. Keywords, including `loop` and `for`,
+  are reserved for source and host language names, never imposed on host module/field
+  names. No labels.
+  Typed while/for/loop nodes carry per-function `LoopId`s; transfers carry resolved
   targets. Sparse IDs are allowed; duplicate, inactive, unknown,
   outer-instead-of-inner, and cross-function targets are rejected.
 - `Flow` separates fallthrough, return, break, continue, and explicit divergence.
@@ -314,9 +350,9 @@ refactors; specify and test any intentional behavior change explicitly.
   identity and nesting, never fixed loop depths. Restore labels/loop contexts and
   initialized bindings on errors without rewinding scratch slots or identity counters.
 - Variable IDs are per-function and may be sparse. Local slots place parameters
-  first, then declarations, then typed temporaries (array handles and indexed
-  compound addresses/old values). Preserve shadowing, scoped
-  initialization restoration, and the current no-reuse temporary policy.
+  first, then declarations/iteration bindings, then typed temporaries (array handles,
+  indexed compound addresses/old values, and for induction/bounds scratch). Preserve
+  shadowing, scoped initialization restoration, and the current no-reuse temporary policy.
 - Internal signature mapping does not establish host/export eligibility. Share the
   private external-type policy with host registration; layout checks every host
   snapshot and only selected user signatures for external eligibility. Map every

@@ -128,7 +128,28 @@ Range handles remain private: reject all range host imports and selected range
 user exports. Use `--export main` when helpers have internal range signatures;
 default export-all rejects those signatures. A scalar membership function may
 be exported normally; its bool result uses raw `i32` `0`/`1`. There is no public
-range marshaling, progression advancement, iteration, or `for` implementation.
+range marshaling API.
+
+Range-only statement `for name in range_expr { body }` uses the same private
+records and needs no new host callback or range helper. `for` is reserved for
+source/host-language names, not host module/field names. Its iterable evaluates
+once in the enclosing context before the loop/binding is active; iterable
+break/continue targets the outer nearest loop, and return/divergence is preserved.
+The body has a read-only `number` binding (a distinct inner shadowing let remains
+mutable), permits bare breaks, and rejects value breaks even when unreachable.
+Continue reaches advancement before retesting. Cached `i64` fields and signed
+endpoint checks before exact `f64` yield avoid rounding stalls; yielded zero is
+`+0`, and a valid advance past bounds exhausts normally even outside the safe domain.
+For is a void statement, not a value expression, and adds no public range ABI.
+CLI and browser compilation already support range-only for through the shared
+core. Array iteration and broader WP5 adapter/cross-feature acceptance remain
+proposed, not pending adapter support for the current feature or full WP5 completion.
+`tests/for_frontend.rs` covers frontend contracts, `tests/for_lowering.rs` covers
+forged input and decoded lowering, and `tests/for_loops.rs` covers deterministic
+layout/imports/exports and bounded Node execution at all optimization levels.
+The runtime cases check exact yields/exhaustion, effects, transfers, record validation
+and caching. They are ignored by default; default Cargo success alone does not
+establish runtime coverage.
 See the [private record contract](memory-abi.md#private-range-record).
 
 ## Host callbacks

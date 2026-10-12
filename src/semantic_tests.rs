@@ -1637,7 +1637,12 @@ fn nested_loop_errors_restore_the_enclosing_loop_and_scope() {
 
     analyzer.scopes.push(HashMap::new());
     analyzer
-        .declare_variable("outer", Type::Bool, Span::new(0, 0))
+        .declare_variable(
+            "outer",
+            Type::Bool,
+            BindingMutability::Mutable,
+            Span::new(0, 0),
+        )
         .unwrap();
     analyzer.loops.push(statement_loop(41));
     analyzer.next_loop_id = 42;

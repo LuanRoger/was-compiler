@@ -153,6 +153,7 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
             Some(TokenKind::Let) => self.parse_let()?,
             Some(TokenKind::If) => self.parse_if()?,
             Some(TokenKind::While) => self.parse_while()?,
+            Some(TokenKind::For) => self.parse_for()?,
             Some(TokenKind::Loop) => {
                 let body = self.parse_loop_body()?;
 
@@ -340,6 +341,7 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
                 Some(
                     TokenKind::Let
                         | TokenKind::While
+                        | TokenKind::For
                         | TokenKind::Break
                         | TokenKind::Continue
                         | TokenKind::Return
@@ -434,6 +436,23 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
         let body = self.parse_block()?;
 
         Ok(StatementKind::While { cond, body })
+    }
+
+    fn parse_for(&mut self) -> Result<StatementKind, ParseError> {
+        self.expect(TokenKind::For)?;
+
+        let name = self.parse_identifier()?;
+
+        self.expect(TokenKind::In)?;
+
+        let iterable = self.parse_expression()?;
+        let body = self.parse_block()?;
+
+        Ok(StatementKind::For {
+            name,
+            iterable,
+            body,
+        })
     }
 
     fn parse_return(&mut self) -> Result<StatementKind, ParseError> {
@@ -785,6 +804,7 @@ fn token_name(kind: &TokenKind<'_>) -> &'static str {
         TokenKind::If => "if",
         TokenKind::Else => "else",
         TokenKind::While => "while",
+        TokenKind::For => "for",
         TokenKind::Loop => "loop",
         TokenKind::Break => "break",
         TokenKind::Continue => "continue",

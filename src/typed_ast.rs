@@ -170,6 +170,14 @@ pub enum TypedStatementKind {
         body: TypedBlock,
     },
 
+    For {
+        id: LoopId,
+        variable: VariableId,
+        name: String,
+        iterable: Box<TypedExpr>,
+        body: TypedBlock,
+    },
+
     Loop {
         id: LoopId,
         body: TypedBlock,

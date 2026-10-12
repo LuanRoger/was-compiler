@@ -216,6 +216,13 @@ pub enum CodegenError {
         span: Span,
     },
 
+    #[error("iteration variable ID {id:?} is read-only in function `{function}` at {span:?}")]
+    ReadOnlyVariable {
+        function: String,
+        id: VariableId,
+        span: Span,
+    },
+
     #[error("unsupported local type {ty:?} in function `{function}` at {span:?}")]
     UnsupportedLocalType {
         function: String,
@@ -260,6 +267,7 @@ impl CodegenError {
             | Self::InvalidBreakValue { span, .. }
             | Self::UnknownVariable { span, .. }
             | Self::UninitializedVariable { span, .. }
+            | Self::ReadOnlyVariable { span, .. }
             | Self::UnsupportedLocalType { span, .. }
             | Self::InvalidAssignmentTarget { span, .. }
             | Self::UnexpectedReturnValue { span, .. } => Some(*span),
