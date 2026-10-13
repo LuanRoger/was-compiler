@@ -473,6 +473,238 @@ async function main() {
         }
     });
 
+    test('inferred acyclic named/default diamonds retain concrete ABI, effects, and private ranges', compiler => {
+        const source = `
+            fn main() /*number*/ { return left(c: mark(9), a: mark(2)) + right(mark(3)); }
+            fn left(a: number, b: number = a + 1, c: number = b * 2) /*number*/ { return leaf(c: c, a: a); }
+            fn right(a: number, b: number = a + 1, c: number = b * 2) /*number*/ { return leaf(a, b, c); }
+            fn leaf(a: number, b: number = a + 1, c: number = b * 2) /*number*/ { return a * 100 + b * 10 + c; }
+            fn flag(b: bool = true) /*bool*/ { return flag_leaf(b); }
+            fn flag_leaf(b: bool) /*bool*/ { return host_flag(b); }
+            fn text(s: string = "é🦀") /*string*/ { return text_leaf(s); }
+            fn text_leaf(s: string) /*string*/ { return s; }
+            fn array(xs: number[], copy: number[] = xs) /*number[]*/ { return array_leaf(copy); }
+            fn array_leaf(xs: number[]) /*number[]*/ { return xs; }
+            fn defaults() /*bool*/ { return flag() && text() == "é🦀"; }
+            fn alias() /*number*/ { let xs = [1, 2]; let ys = array(xs); ys[0] = 7; return xs[0]; }
+            fn bounds() /*range*/ { return range_leaf(); }
+            fn range_leaf() /*range*/ { return 1..=5 by 2; }
+            fn range_copy(r: range, copy: range = r) /*range*/ { return copy; }
+            fn range_sum() /*number*/ { let n = 0; for i in range_copy(bounds()) { n += i; } return n; }
+            fn empty() /*void*/ { empty_leaf(); return; }
+            fn empty_leaf() /*void*/ {}
+        `;
+        const explicit = source.replace(/\/\*(number\[\]|number|bool|string|range|void)\*\//g, '-> $1');
+        const selected = ['main', 'leaf', 'flag', 'text', 'array', 'defaults', 'alias', 'range_sum', 'empty'];
+        compiler.registerHostFunction('idle', 'app', 'unused', [], 'void');
+        compiler.registerHostFunction('mark', 'env', 'mark', ['number'], 'number');
+        compiler.registerHostFunction('host_flag', 'env', 'flag', ['bool'], 'bool');
+        compiler.setExports(selected);
+        const expected = compile(compiler, explicit).bytes;
+        const wat = compiler.compileWat(explicit);
+        for (const level of [0, 1, 2, 3]) {
+            compiler.setOptimizationLevel(level);
+            for (const [name, params, result] of [
+                ['bad_parameter', ['range'], 'number'],
+                ['bad_result', [], 'range'],
+            ]) {
+                fails(() => compiler.registerHostFunction(name, 'env', name, params, result), /range values are private and cannot cross host imports/);
+            }
+            compiler.setExports(selected);
+            const { bytes, module } = compile(compiler, source);
+            assert.deepEqual(bytes, expected);
+            assert.deepEqual(compile(compiler, explicit).bytes, expected);
+            assert.equal(compiler.compileWat(source), wat);
+            assert.deepEqual(userExports(module), selected);
+            assert.deepEqual(WebAssembly.Module.imports(module), [
+                { module: 'app', name: 'unused', kind: 'function' },
+                { module: 'env', name: 'mark', kind: 'function' },
+                { module: 'env', name: 'flag', kind: 'function' },
+            ]);
+            const events = [];
+            const flags = [];
+            const instance = new WebAssembly.Instance(module, {
+                app: { unused() { assert.fail('unused import executed'); } },
+                env: {
+                    mark(n) { events.push(n); return n; },
+                    flag(b) { flags.push(b); return b ? -7 : 0; },
+                },
+            });
+            const e = instance.exports;
+            assert.equal(e.main(), 587);
+            assert.deepEqual(events, [9, 2, 3]);
+            assert.equal(e.leaf.length, 3);
+            assert.equal(e.leaf(3, 4, 9), 349);
+            assert.equal(e.leaf(1.25, 2.5, 0.75), 150.75);
+            assert.ok(Number.isNaN(e.leaf(3)), 'raw exports must not synthesize source defaults');
+            for (const name of ['flag', 'text']) assert.equal(e[name].length, 1);
+            assert.equal(e.array.length, 2);
+            assert.equal(e.flag(0), 0);
+            assert.equal(e.flag(42), 1);
+            assert.equal(e.flag(-3), 1);
+            assert.equal(e.defaults(), 1);
+            assert.deepEqual(flags, [0, 1, 1, 1]);
+            const text = writeDescriptor(instance, 'string', 'λ\u0000🦀');
+            const array = writeDescriptor(instance, 'number[]', [NaN, Infinity, -0, 4]);
+            assert.equal(e.text(text), text);
+            assert.equal(readDescriptor(instance, 'string', e.text(text)), 'λ\u0000🦀');
+            assert.equal(e.array(array, array), array);
+            assert.deepEqual(readDescriptor(instance, 'number[]', e.array(array, array)), [NaN, Infinity, -0, 4]);
+            assert.equal(e.alias(), 7);
+            assert.equal(e.range_sum(), 9);
+            assert.equal(e.empty.length, 0);
+            assert.equal(e.empty(), undefined);
+            for (const handle of [text, array]) {
+                assert.equal(handle % 8, 0);
+                const view = new DataView(e.memory.buffer);
+                assert.equal(view.getUint32(handle, true), handle + 8);
+                assert.equal(view.getUint32(handle + 4, true), handle === text ? encoder.encode('λ\u0000🦀').length : 4);
+            }
+            // Hosts may place the payload separately from the descriptor and grow memory.
+            const separate = e.__alloc(8) >>> 0;
+            const payload = e.__alloc(8) >>> 0;
+            e.__alloc(65536);
+            const view = new DataView(e.memory.buffer);
+            view.setUint32(separate, payload, true);
+            view.setUint32(separate + 4, 1, true);
+            view.setFloat64(payload, -0, true);
+            assert.equal(e.array(separate, separate), separate);
+            assert.ok(Object.is(readDescriptor(instance, 'number[]', separate)[0], -0));
+            for (const call of [() => e.text(0), () => e.text(), () => e.array(0, array), () => e.array(array)]) {
+                assert.throws(call, WebAssembly.RuntimeError);
+            }
+            view.setUint32(separate + 4, 0xffffffff, true);
+            assert.throws(() => e.array(array, separate), WebAssembly.RuntimeError);
+            for (const selection of ['all', 'bounds', 'range_copy']) {
+                if (selection === 'all') compiler.exportAll();
+                else compiler.setExports([selection]);
+                for (const method of ['compile', 'compileWat']) {
+                    fails(() => compiler[method](source), /private range signature[\s\S]*setExports\(\["main"\]\)[\s\S]*exportNone\(\)/);
+                }
+            }
+            compiler.exportNone();
+            const none = compile(compiler, source);
+            assert.deepEqual(userExports(none.module), []);
+            assert.deepEqual(WebAssembly.Module.imports(none.module), WebAssembly.Module.imports(module));
+            assert.deepEqual(none.bytes, compile(compiler, explicit).bytes);
+            assert.deepEqual(WebAssembly.Module.exports(none.module), [
+                { name: 'memory', kind: 'memory' },
+                { name: '__alloc', kind: 'function' },
+            ]);
+            compiler.setExports(selected);
+            assert.deepEqual(compile(compiler, source).bytes, expected);
+        }
+    });
+
+    test('inferred result rejection matrix preserves independent native diagnostic origins and recovery', compiler => {
+        const cases = [];
+        for (const body of [
+            'return recur();',
+            'if true { return 0; } return recur();',
+            'return 0; recur();',
+            'false && recur() == 0; return 0;',
+        ]) {
+            const origin = `fn recur() { ${body} }`;
+            cases.push([origin, origin, "Recursive function 'recur' requires an explicit result annotation"]);
+        }
+        cases.push(
+            ['fn first() { return second(); } fn second() { return first(); }',
+                'fn first() { return second(); }', "Recursive function 'first' requires an explicit result annotation"],
+            ['fn a() -> number { return b(); } fn b() { return c(); } fn c() -> number { return a(); }',
+                'fn b() { return c(); }', "Recursive function 'b' requires an explicit result annotation"],
+            ['fn main() -> number { return 1; } fn hidden() { return hidden(); }',
+                'fn hidden() { return hidden(); }', "Recursive function 'hidden' requires an explicit result annotation"],
+        );
+        for (const [body, expected, found] of [
+            ['if flag { return 1; } return true;', 'Number', 'Bool'],
+            ['if flag { return true; } return 1;', 'Bool', 'Number'],
+            ['if flag { return; } return 1;', 'Void', 'Number'],
+            ['if flag { return 1; } return;', 'Number', 'Void'],
+            ['if flag { return "x"; } return [];', 'String', 'NumberArray'],
+            ['if flag { return 0..2; } return 1;', 'Range', 'Number'],
+        ]) {
+            const origin = `fn mixed(flag: bool) { ${body} }`;
+            cases.push([origin, origin, `Incompatible inferred returns: expected ${expected}, found ${found}`]);
+        }
+        for (const body of [
+            'if flag { return 1; }',
+            'while true { return 1; }',
+            'for i in 0..1 { return i; }',
+            'for i in [1] { return i; }',
+            'loop { if flag { return 1; } break; }',
+        ]) {
+            const origin = `fn incomplete(flag: bool) { ${body} }`;
+            cases.push([origin, origin, "Function 'incomplete' does not return a value on every path"]);
+        }
+        for (const body of [
+            'return loop {};',
+            'loop {} return 1;',
+            'loop {} let x: number = { return 1; 0 };',
+            'loop {} (loop { break { return 1; 0 }; });',
+            'return; return 1;',
+        ]) {
+            const origin = `fn spin() { ${body} }`;
+            cases.push([origin, origin, "Function 'spin' requires an explicit result annotation"]);
+        }
+        cases.push(
+            ['fn f(f: number) { return f(); }', 'return f();', "Variable 'f' cannot be called as a function"],
+            ['fn f() { let f = 1; return f(); }', 'return f();', "Variable 'f' cannot be called as a function"],
+            ['fn f() { for f in [] { f(); } return 1; }', 'f();', "Variable 'f' cannot be called as a function"],
+            ['fn main() { return missing_body; }\r\n\t/* é🦀 */ fn hidden(n: number = missing_default) {}',
+                'missing_default', "Undefined variable 'missing_default'"],
+            ['fn hidden(n: number = true) {}', 'true', 'Type mismatch: expected Number, found Bool'],
+            ['fn target(n: number = 1) -> number { return n; } fn main() { return target(n: missing_call); }',
+                'n: missing_call', "Undefined variable 'missing_call'"],
+            ['fn bad() { return 1; return true; }', 'return true;', 'Type mismatch: expected Number, found Bool'],
+        );
+        for (const supplied of ['', 'fn supplied() { return hidden(n: 4); }']) {
+            cases.push([
+                `fn leaf(x: number) { return x; } fn hidden(n: number = leaf(1)) { return n; } ${supplied}`,
+                'leaf(1)', 'Invalid default expression: only positional builtin len calls are allowed',
+            ]);
+        }
+        const valid = 'fn main() { return middle(); } fn middle() { return leaf(); } fn leaf() { return 42; }';
+        const expected = compile(compiler, valid).bytes;
+        for (const level of [0, 1, 2, 3]) {
+            compiler.setOptimizationLevel(level);
+            for (const [body, origin, message] of cases) {
+                const source = `// é🦀\r\n\t/* λ */ ${body}\r\n`;
+                const start = source.indexOf(origin);
+                assert.ok(start >= 0);
+                const end = start + origin.length;
+                const lineStart = source.lastIndexOf('\n', start - 1) + 1;
+                const lineEnd = source.indexOf('\n', start);
+                const line = source.slice(0, start).split('\n').length;
+                const prefix = source.slice(lineStart, start);
+                const excerpt = source.slice(lineStart, lineEnd).replace(/\r$/, '').replaceAll('\t', '    ');
+                const span = `Span { start: ${Buffer.byteLength(source.slice(0, start))}, end: ${Buffer.byteLength(source.slice(0, end))} }`;
+                const diagnostic = `<browser>:${line}:${Array.from(prefix).length + 1}: semantic error: ${message} at ${span}\n  |\n${line} | ${excerpt}\n  | ${' '.repeat(Array.from(prefix.replaceAll('\t', '    ')).length)}${'^'.repeat(Array.from(origin).length)}`;
+                for (const method of ['compile', 'compileWat']) {
+                    assert.throws(() => compiler[method](source), error => {
+                        assert.ok(error instanceof Error);
+                        assert.equal(error.name, 'Error');
+                        assert.equal(error.message, diagnostic);
+                        return true;
+                    });
+                    assert.deepEqual(compile(compiler, valid).bytes, expected);
+                    assert.equal(instantiate(compiler, valid).exports.main(), 42);
+                }
+            }
+            for (const source of ['fn tail() { 1 }', 'fn tail() { (if true { 1 } else { 2 }) }']) {
+                for (const method of ['compile', 'compileWat']) fails(() => compiler[method](source), /parse error:/);
+                assert.deepEqual(compile(compiler, valid).bytes, expected);
+            }
+            const discarded = 'fn tail() { if true { 1 } else { 2 } }';
+            assert.equal(instantiate(compiler, discarded).exports.tail(), undefined);
+            assert.deepEqual(compile(compiler, discarded).bytes,
+                compile(compiler, discarded.replace('fn tail()', 'fn tail() -> void')).bytes);
+            for (const method of ['compile', 'compileWat']) {
+                fails(() => compiler[method](discarded.replace('fn tail()', 'fn tail() -> number')),
+                    /semantic error: Function 'tail' does not return a value on every path/);
+            }
+        }
+    });
+
     test('inferred reassignment and void diagnostics retain locations and recover', compiler => {
         const valid = 'fn main() -> number { let n = 10; n = n / 4; return n; }';
         const cases = [

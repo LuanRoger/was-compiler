@@ -1,9 +1,11 @@
 # Function-result inference development
 
-Current support includes #14 acyclic chains/diamonds; see
-[the current contract and coverage](#issue-14-acyclic-chains-and-diamonds).
-The #11 integration contract and validation below are historical evidence, not
-#14 combined-feature acceptance or full WP7 release evidence.
+WP7 acyclic chains/diamonds and named/default integration are implemented;
+[#16 release validation passed](was_language_extensions_plan.md#issue-16-wp7-release-validation).
+Every recursive component member still requires an annotation in the initial release.
+See [the current inference contract](#issue-14-acyclic-chains-and-diamonds) and
+[release acceptance coverage](#issue-16-nativebrowser-release-acceptance).
+The earlier #11/#14/#15 sections retain historical evidence for their own checkpoints.
 
 ## Historical issue #11 integration
 
@@ -241,3 +243,43 @@ enums and co-locating context construction/navigation resolved both; the focused
 11-test suite and Clippy passed afterward. Follow-up Standards review reported
 zero outstanding findings. Spec review reported zero missing, incorrect or
 out-of-scope requirements. Production and golden fixtures remain unchanged.
+
+## Issue #16: native/browser release acceptance
+
+The WP7 release accepts acyclic inference through every existing compiler adapter,
+including named/default chains and diamonds. The conservative recursion limitation
+remains: every recursive component member needs an explicit result, even across
+annotated barriers or calls in skipped/unreachable syntax. WP8–WP12 remain proposed;
+WP13 optimization requires separate authorization.
+
+`tests/result_inference_release.rs` adds seven public core/CLI acceptance tests
+(one bounded Node case stays ignored by default). It checks cross-adapter rejection
+variants, original Unicode/CRLF/tab origins, unchanged artifacts after failure,
+default/recursion/dependency/final-body diagnostic staging, ordinary body-literal
+lowering errors even in hidden source, source-order full-arity signatures/imports,
+owned snapshots, selected-export range restrictions, and CLI-produced Wasm execution
+with normalized host bool boundaries and string/array descriptors at all levels.
+
+Two additional groups in `tests/browser.cjs` use the rebuilt browser public API to
+check inferred/explicit bytes and WAT, bounded diamonds and written effect order,
+full raw arity, bool normalization, descriptor identity/aliasing/memory growth/traps,
+internal ranges, atomic host rejection/import order and export remedies. Their
+rejection matrix independently pins rendered inference/binding/default diagnostics
+through both compile methods, including conservative recursion, lexical shadowing,
+incompatible returns, incomplete paths, Never-only syntax, implicit tails and invalid
+unused/explicitly supplied defaults. `tests/browser.rs` requires the new 24-group
+completion summary.
+
+The existing inference/default/combined suites retain forged result/normalization,
+decoded layout/instruction, effect/trap/transfer and legacy fixture coverage. No
+production code, optimizer, dependency, public AST shape or golden fixture changed.
+New acceptance tests passed against existing implementation; initial void/statement-if
+and arithmetic test expectations were corrected to the established language contract,
+not by changing compiler behavior. The full ignored run caught the stale browser
+completion count before its update; the focused wrapper and full suite then passed.
+
+`examples/inferred-defaults.was` is a runnable forward named/default diamond;
+independent arithmetic is `236 + 348 = 584`. Current support, raw-AST migration,
+initial recursion restrictions and raw runtime/browser ABI guidance are synchronized.
+See [exact commands and results](was_language_extensions_plan.md#issue-16-wp7-release-validation)
+for current-source release evidence, rather than the historical worktree runs above.

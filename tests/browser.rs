@@ -38,7 +38,7 @@ fn node_browser_compiler() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        String::from_utf8_lossy(&output.stdout).contains("browser compiler: 22 tests passed"),
+        String::from_utf8_lossy(&output.stdout).contains("browser compiler: 24 tests passed"),
         "missing browser test completion summary: {}",
         String::from_utf8_lossy(&output.stdout)
     );

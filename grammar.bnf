@@ -7,6 +7,11 @@
                ( <ws> "->" <ws> <type> )?
                <ws> <block>
 
+# Omitted results infer concrete types from reachable explicit returns, or void
+# without value-return syntax. Never-only value-return syntax needs an annotation.
+# Every recursive component member needs an explicit result, including calls in
+# unreachable/skipped syntax. Parameter types remain mandatory; no implicit tails.
+
 <parameter_list> ::= <parameter> ( <ws> "," <ws> <parameter> )*
 
 <parameter> ::= <identifier> <ws> ":" <ws> <type>

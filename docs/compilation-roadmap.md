@@ -69,8 +69,11 @@ separate: annotated scheduling barriers cannot hide recursive omitted results.
 Owned typed signatures remain concrete; IDs, typed functions and Wasm layout stay
 source-ordered. Staging is declaration/default checks in source order, recursive
 annotation errors in source order, inference in stable dependency order, then
-final body checks in source order. Combined-feature acceptance (#15) and the full
-WP7 release gate remain pending. See
+final body checks in source order. Combined-feature acceptance (#15) and WP7's
+native/browser release gate (#16) passed; see
+[the release evidence](was_language_extensions_plan.md#issue-16-wp7-release-validation).
+Every recursive component member still needs an annotation in this initial release.
+WP8–WP12 remain proposed; WP13 requires separate authorization. See
 [the #14 inference contract](result-inference-development.md#issue-14-acyclic-chains-and-diamonds). See the
 [interface gate](named-call-interface.md) and [handoff](wp6-wp7-development.md).
 
@@ -788,9 +791,9 @@ completes adapter/interaction support and all WP5 release gates passed, includin
 rebuilt browser bindings and the full ignored-test run; see extension plan §5.
 The [WP5 checkpoint](was_language_extensions_plan.md#wp5--safe-ranges-rangearray-for-membership-spec-56)
 records the cross-feature acceptance coverage.
-The default Cargo suite still skips Node cases. WP6/WP7 have incremental
-development slices described above; their release gates and WP8–WP13 remain
-future work. External range signatures, range equality, and allocation-free range optimization
+The default Cargo suite still skips Node cases. WP6/WP7 and their release gates
+are complete; WP8–WP12 remain proposed and WP13 requires separate authorization.
+External range signatures, range equality, and allocation-free range optimization
 remain out of scope.
 
 ## Remaining work

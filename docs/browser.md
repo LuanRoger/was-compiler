@@ -230,9 +230,41 @@ WP6 named/default parameters are implemented, and
 including current-source rebuilt bindings, the browser harness, and the full
 ignored suite. Rebuild `pkg/` after core/browser changes before validating browser
 behavior; the [handoff](wp6-wp7-development.md#validation) records earlier historical
-worktree-development evidence. Result annotations remain mandatory: WP7 stays
-isolated and is not integrated. Contracts, match, pipelines, closures, and
-placeholders remain later packages with ordered integration/release gates.
+worktree-development evidence.
+
+## Function-result inference (WP7)
+
+`compile` and `compileWat` infer omitted results through forward acyclic chains
+and diamonds, including named/default calls, using the same core as the native CLI:
+
+```text
+fn main() { return total(base: 3); }
+fn total(base: number, extra: number = base + 1) { return base + extra; }
+```
+
+The generated `main()` returns `7`. The raw `total` export still takes two `f64`
+arguments and returns `f64`; `total(3, 9)` returns `12`. Source omission runs
+`extra`'s default, but raw JavaScript omission does not. Inferred bool results use
+`i32` with normalized host boundaries, and inferred string/array results remain
+instance-local descriptor handles in the generated program's memory. No metadata,
+marshaling wrappers or execution engine are added. Inferred range signatures remain
+internal: use `setExports(["main"])` or `exportNone()` rather than exporting them.
+
+Parameters still require annotations. Reachable explicit returns must agree
+exactly; nonvoid functions cannot fall through. There are no implicit named-function
+tails. Without value-return syntax, a procedure infers void; a void procedure calls
+another procedure with `noop(); return;`, not `return noop();`. Never-only
+value-return syntax requires an annotation. Every member of a recursive component
+requires an explicit result, even with an anchored return or an annotated barrier;
+unreachable and short-circuit-skipped calls still count. All such source is checked.
+
+Inference, binding and default failures use the shared `<browser>` diagnostics,
+retaining UTF-8 byte spans and declaration/call origins. Fully annotated source
+keeps existing literal stages and first-error ordering. See the
+[public raw-AST migration](named-call-interface.md#public-ast-migration) and
+[#16 release evidence](was_language_extensions_plan.md#issue-16-wp7-release-validation).
+Contracts, match, pipelines, closures, and placeholders remain proposed later
+packages; optimization requires separate authorization.
 
 ## Host function example
 

@@ -18,8 +18,10 @@ ties among ready functions; see [its contract](result-inference-development.md#i
 Owned concrete signatures and source-order output remain unchanged.
 [#15 combined-feature acceptance](result-inference-development.md#issue-15-combined-nameddefault-and-inference-acceptance)
 covers named/default normalization with inferred chains/diamonds, diagnostic staging,
-and forged nested sequences. The final WP7 release gate remains pending. Later
-packages reuse the approved interfaces only after their ordered integration/release gates.
+and forged nested sequences. [#16 WP7 release validation passed](was_language_extensions_plan.md#issue-16-wp7-release-validation),
+including native and current-source browser ABI/diagnostic acceptance. Every recursive
+component member still needs an explicit result. Later packages remain proposed and
+reuse the approved interfaces only after their ordered integration/release gates.
 
 ### Public AST migration
 
@@ -30,7 +32,9 @@ packages reuse the approved interfaces only after their ordered integration/rele
   constructors use `None`. `DefaultExpression { value: Expr, span: Span }` keeps
   the declaration expression's origin. Raw `Function.return_type` is now
   `Option<Type>`: existing constructors wrap annotations in `Some(type)`;
-  `None` requests initial inference. Typed results remain concrete `Type`.
+  `None` requests inference, including acyclic chains/diamonds. Typed results remain
+    concrete `Type`; consumers need no unresolved-type representation. No callable or
+    default metadata is added to raw exports, and full arity/result ABI is unchanged.
 - Typed parameters/signatures stay concrete and full-arity with no default
   metadata. Ordinary typed `Call` still takes `Vec<TypedExpr>`. Exhaustive typed
   expression consumers must handle `NormalizedCall(TypedNormalizedCall)` and

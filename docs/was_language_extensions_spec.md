@@ -1,11 +1,11 @@
 # WAS Language Extensions — Unified Design and Implementation Specification
 
-**Status:** Design baseline with the 13 approved decisions and implementation clarifications (WP1–WP5 implementation complete: compound assignments, while transfers, block/if values, internal Never, statement/value loops, and range construction/internal calls, numeric membership, and range/array statement for; issue #6 adapter/interaction support implemented, all WP5 release gates passed (exact evidence in plan §5), WP6 named/default parameters are implemented and #13 release validation passed; WP7 remains isolated, not integrated and WP8–WP13 remain proposals)
+**Status:** Design baseline with the 13 approved decisions and implementation clarifications (WP1–WP5 implementation complete: compound assignments, while transfers, block/if values, internal Never, statement/value loops, and range construction/internal calls, numeric membership, and range/array statement for; issue #6 adapter/interaction support implemented, all WP5 release gates passed (exact evidence in plan §5), WP6 named/default parameters are implemented and #13 release validation passed; WP7 acyclic result inference and named/default integration are implemented and #16 release validation passed; WP8–WP12 remain proposed and WP13 requires separate authorization)
 **Version:** 0.3 — 9 October 2026 (implementation clarification update)  
 **Target:** Core WebAssembly, initially the MVP-compatible instruction set already used by `was-compiler`, with optional optimizations gated by Wasm features.  
 **Repository:** https://github.com/LuanRoger/was-compiler
 
-> **Normative language.** **MUST**, **SHOULD**, and **MAY** describe requirements, strong recommendations, and optional implementation choices. This document establishes a coherent *proposed* semantic model. Decisions tagged **Open decision** need confirmation before being frozen as language guarantees. Compound assignments (§4/WP1), bare `while` transfers (§7/WP2), block/if values with internal Never (§§3.2, 8.1/WP3), and statement/value loops (§7/WP4) are implemented. Range construction, internal calls, exact numeric membership (§5/WP5), and range/array statement `for` (§6/issues #4–#5) are also implemented, with adapter/interaction support under issue #6; all WP5 release gates passed (exact evidence in plan §5). WP6 user-function named/mixed-prefix calls and trailing pure defaults (§14/issues #10/#12) are implemented, and [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation). WP7 result inference remains isolated, not integrated; other extension examples remain proposed `.was` syntax, not claims about the present compiler.
+> **Normative language.** **MUST**, **SHOULD**, and **MAY** describe requirements, strong recommendations, and optional implementation choices. This document establishes a coherent *proposed* semantic model. Decisions tagged **Open decision** need confirmation before being frozen as language guarantees. Compound assignments (§4/WP1), bare `while` transfers (§7/WP2), block/if values with internal Never (§§3.2, 8.1/WP3), and statement/value loops (§7/WP4) are implemented. Range construction, internal calls, exact numeric membership (§5/WP5), and range/array statement `for` (§6/issues #4–#5) are also implemented, with adapter/interaction support under issue #6; all WP5 release gates passed (exact evidence in plan §5). WP6 user-function named/mixed-prefix calls and trailing pure defaults (§14/issues #10/#12) are implemented, and [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation). WP7 acyclic result inference (§9) and its named/default integration are implemented, and [#16 release validation passed](was_language_extensions_plan.md#issue-16-wp7-release-validation). Every recursive component member requires an explicit result in this initial release. Other extension examples remain proposed `.was` syntax, not claims about the present compiler.
 
 The [concrete implementation plan](was_language_extensions_plan.md) maps this
 specification to ordered work packages, repository files, acceptance tests, and
@@ -16,7 +16,7 @@ and bare `while` transfers (§7/WP2), followed by block/if values and internal N
 (§§3.2, 8.1/WP3) and statement/value loops (§7/WP4), are implemented;
 WP5's construction/internal-call, numeric membership, range-for, and array-for checkpoints are implemented;
 issue #6 completes adapter/interaction implementation and all release gates passed.
-Exact evidence is recorded in [plan §5](was_language_extensions_plan.md#5-documentation-and-validation-workflow). WP6 named/default parameters are implemented on main, and [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation). WP7 remains isolated and is not integrated; WP8–WP12 remain later packages and WP13 requires separate authorization.
+Exact evidence is recorded in [plan §5](was_language_extensions_plan.md#5-documentation-and-validation-workflow). WP6 named/default parameters are implemented on main, and [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation). WP7 acyclic result inference and combined-feature integration are implemented, with [#16 release validation](was_language_extensions_plan.md#issue-16-wp7-release-validation). WP8–WP12 remain proposed later packages and WP13 requires separate authorization.
 
 ## 1. Goals and non-goals
 
@@ -42,7 +42,8 @@ Exact evidence is recorded in [plan §5](was_language_extensions_plan.md#5-docum
 
 ## 2. Existing language assumptions and compatibility
 
-The current compiler supports `fn` with required parameter/return annotations,
+The current compiler supports `fn` with required parameter annotations and optional
+result annotations inferred through acyclic calls,
 annotated `let name: type = value;` and inferred `let name = value;` declarations,
 reassignment, numeric compound assignments, `if`, `while`, bare `break;` /
 `continue;`, range/array statement `for`, `return`, statement/value `loop`, value breaks in loop expressions,
@@ -753,6 +754,15 @@ v1 patterns: wildcard `_`, exact constant literals, relational patterns (`<`, `<
 
 ## 9. Feature specification: inferred function return types
 
+**Implemented scope:** WP7 infers concrete results through acyclic forward chains
+and diamonds, including named/default calls, before checked lowering and ABI layout.
+[#16 release validation passed](was_language_extensions_plan.md#issue-16-wp7-release-validation).
+The initial release conservatively requires explicit results on **every** recursive
+component member, even anchored recursion and across annotated barriers. No recursive
+constraint solver is implemented. [Public raw-AST migration](named-call-interface.md#public-ast-migration)
+uses `Function.return_type: Option<Type>`; typed signatures remain concrete/full-arity.
+Later anonymous-function syntax and optimization examples remain proposals.
+
 ### 9.1 Syntax
 
 ```
@@ -818,7 +828,10 @@ fn b(n: number) {
 }
 ```
 
-This recursive component has an anchor (`return 0`) but still requires a proper constraint solver; implementation MAY conservatively demand explicit annotations for all recursive or mutually recursive functions in the first release. That is a staged limitation, not a language-level rule forever.
+This recursive component has an anchor (`return 0`) but the initial release requires
+explicit annotations on both `a` and `b`. Anchors do not replace a recursive constraint
+solver; the implemented conservative policy requires all recursive members annotated.
+This is a staged limitation, not a language-level rule forever.
 
 ### 9.3 Wasm ABI and optimization
 
@@ -1003,9 +1016,11 @@ Initially: at function entry, emit `if (!condition) unreachable`. Later: a local
 **Implementation status:** User-function named/mixed-prefix calls and trailing
 pure defaults are implemented on main under #10/#12, and
 [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation).
-Earlier worktree-development evidence in the handoff is historical. WP7 remains
-isolated, not integrated. Contracts, pipeline
-injection, and local closure calls mentioned below belong to later packages, not
+Earlier worktree-development evidence in the handoff is historical. WP7 acyclic
+result inference and named/default integration are implemented, with
+[#16 release validation passed](was_language_extensions_plan.md#issue-16-wp7-release-validation).
+Contracts, pipeline injection, and local closure calls mentioned below belong to
+proposed later packages, not
 the current compiler. See the [current public AST/interface migration](named-call-interface.md#current-wp6-contract-issues-1012).
 
 ### 14.1 Syntax

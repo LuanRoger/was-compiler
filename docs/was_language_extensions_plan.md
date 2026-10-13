@@ -1,6 +1,6 @@
 # WAS language extensions implementation plan
 
-**Status:** WP1–WP5 implementation complete, including issue #6 adapter/interaction support; all WP5 release gates passed (exact evidence in §5). WP6–WP12 remain proposed; WP13 requires separate authorization.
+**Status:** WP1–WP7 implemented; WP5, WP6 (#13), and WP7 (#16) release gates passed (exact evidence in §5). WP8–WP12 remain proposed; WP13 requires separate authorization.
 **Baseline:** Extension specification v0.3.
 
 Follow the [agent guide](../AGENTS.md), [extension specification](was_language_extensions_spec.md),
@@ -28,7 +28,9 @@ Evidence: `src/lexer.rs`, `src/parser.rs`, `src/semantic.rs`, `src/codegen/numer
 
 - `Type` in `src/ast.rs` is a small `Copy` enum, not an extensible callable/type tree.
   `Block` and `TypedBlock` are currently `Vec<Statement>` / `Vec<TypedStatement>`.
-  Function results are concrete and explicitly annotated; calls resolve names/IDs.
+  Raw function results are optional `Option<Type>` annotations; typed results are
+  concrete after acyclic inference. Every recursive component member requires an
+  explicit result in the initial release. Calls resolve lexical names/IDs.
 - Expressions carry `ExprResult::{Value(Type), Void, Never}`; bindings/signatures
   retain concrete `Type`. Raw/typed value-block wrappers add optional boxed tails
   without replacing statement-vector block aliases. Individual expressions still
@@ -61,8 +63,9 @@ Evidence: `src/lexer.rs`, `src/parser.rs`, `src/semantic.rs`, `src/codegen/numer
   justifies a difference. Never regenerate goldens to conceal incidental drift.
 
 WP1–WP5 are implemented, including array iteration and issue #6 adapter/interaction
-support; all WP5 release gates passed as recorded in §5. WP6–WP12 remain proposed, and
-WP13 requires separate authorization. New keywords require matching host source-name
+support; all WP5 release gates passed as recorded in §5. WP6 named/default parameters
+and WP7 acyclic result inference are implemented with release gates passed (#13/#16).
+WP8–WP12 remain proposed, and WP13 requires separate authorization. New keywords require matching host source-name
 validation, not restrictions on arbitrary
 nonempty host module/field names. Reserve standalone `_`
 when its syntax arrives, reject its bindings, retain `_temp`, and keep `by` contextual.
@@ -585,7 +588,7 @@ Dedicated coverage is in `tests/named_defaults.rs`, `tests/default_lowering.rs`,
 See [the release evidence](#issue-13-wp6-release-validation). Earlier independent
 worktree development checks remain historical in [the handoff](wp6-wp7-development.md#validation).
 
-### WP7 — Acyclic function-result inference first (spec §9)
+### WP7 — Acyclic function-result inference first (spec §9): implemented
 
 **Entry:** WP6 and optional raw result-annotation API gate. Collect declarations,
 build dependencies with standard collections, resolve acyclic functions in stable
@@ -628,8 +631,14 @@ forward chains/diamonds have dedicated source, checked-input, decoded ABI, and
 bounded effect/alias/trap/transfer coverage. Extended CLI/rebuilt-browser cases
 use the same inferred named/default diamond. See [the interaction contract and
 validation evidence](result-inference-development.md#issue-15-combined-nameddefault-and-inference-acceptance).
-The final WP7 release ticket remains responsible for full adapter/release acceptance;
-#11's historical commands are not #14 or #15 validation evidence.
+**Issue #16 release acceptance complete:** native CLI and current-source browser
+coverage pins concrete/full-arity ABI, bool normalization, string/array descriptors,
+private range export/host restrictions and import snapshots/order. Cross-adapter
+rejections cover conservative recursion, skipped/unreachable calls, lexical shadowing,
+incompatible returns, incomplete paths, implicit tails, Never-only value returns and
+invalid unused defaults. Existing forged-result/normalization, decoded instruction,
+legacy fixture and combined effect suites pass. See [exact release evidence](#issue-16-wp7-release-validation).
+#11's historical commands remain evidence only for that incremental checkpoint.
 
 ### WP8 — Whitelist contracts (spec §13)
 
@@ -790,6 +799,52 @@ Scoped `rustfmt --edition 2024 --config skip_children=true tests/cli.rs` and
 completed successfully. `git --no-pager diff --check`, diff/stat and final status
 review passed. At that validation checkpoint, nothing was staged or committed;
 parent #9 and the isolated WP7 worktree remained unchanged.
+
+### Issue #16 WP7 release validation
+
+On 2026-10-13, WP7's core/native CLI/current-source browser acceptance and release
+checks passed on Windows with Rust 1.98.0, Node.js v24.12.0, wasm-pack 0.15.0,
+cached Cargo dependencies and the installed `wasm32-unknown-unknown` target.
+The standalone `wasm-bindgen` command was absent from `PATH`, but the prescribed
+`--mode no-install --offline` wasm-pack build succeeded with cached compatible
+tooling. No missing prerequisite prevented coverage. WP6 had already passed #13.
+
+Acceptance adds `tests/result_inference_release.rs` (seven tests, one normally
+ignored Node case), two browser harness groups and a runnable inferred named/default
+diamond. Existing inference/default/combined, forged-tree, independent decoded ABI
+and legacy fixture suites were preserved. See [the coverage inventory](result-inference-development.md#issue-16-nativebrowser-release-acceptance).
+Production, optimization, dependencies and golden fixtures are unchanged.
+
+| Exact command (repository root) | Actual result |
+| --- | --- |
+| `cargo check --offline --all-targets` | Passed during integration and after the browser-wrapper update. |
+| `cargo test --offline --test result_inference_release` | Passed: six active tests; one Node case ignored by default. |
+| `wasm-pack build browser --target web --out-dir ../pkg --out-name was_compiler --mode no-install --no-opt --offline` | Passed; rebuilt current-source bindings before browser/full ignored execution. |
+| `node tests/browser.cjs pkg` | Passed: 24 groups, including two new WP7 groups at levels 0–3. An initial explicit-void fixture was corrected to the existing statement-call contract. |
+| `cargo test --offline --test result_inference --test result_inference_defaults --test result_inference_chains --test result_inference_combined --test result_inference_combined_checks --test result_inference_adapters --test result_inference_release -- --include-ignored` | Passed: all seven suites, including current-source browser cases and bounded Node runtime. |
+| `cargo test --offline` | Passed; Node/browser cases retained their normal ignored policy. |
+| `cargo test --offline --test browser -- --include-ignored` | Passed after updating the wrapper's required completion summary from 22 to 24 groups. |
+| `cargo test --offline -- --include-ignored` | Passed: complete suite including all normally ignored runtime/browser tests. The initial run caught the stale wrapper summary; the full rerun passed after its update. |
+| `cargo clippy --offline --all-targets -- -D warnings` | Passed, including after the wrapper update. |
+| `cargo check --offline --target wasm32-unknown-unknown --lib` | Passed. |
+| `cargo clippy --offline -p was-compiler-browser --target wasm32-unknown-unknown --lib -- -D warnings` | Passed. |
+| `cargo run --offline -- examples/inferred-defaults.was -o target/inferred-defaults.wasm --export main` | Passed. |
+| `node runtime/run.cjs target/inferred-defaults.wasm` | Passed; returned `584` (`236 + 348`). |
+| `rustfmt --edition 2024 --config skip_children=true tests/browser.rs tests/result_inference_release.rs` | Passed; only edited Rust files formatted. |
+| `node --check tests/browser.cjs` | Passed. |
+| Read-only inline Python local Markdown path/anchor check | Passed: 11 changed Markdown files, 179 local link occurrences (86 anchors), zero errors. |
+| `git --no-pager diff --check` and final diff/status/index review | Passed; only assigned tests/docs/grammar/example changes, no staged files. |
+
+Independent Standards review found zero documented violations and one optional
+low-priority test-local artifact-assertion duplication; it was retained to avoid
+incidental helper churn. Spec review found a stale WP7-isolated sentence in §14;
+that was corrected to integrated support and linked release evidence. Follow-up
+Spec review found zero outstanding findings. No goldens were regenerated.
+
+WP7 is implemented and its release gate is complete; every recursive component
+member still needs an explicit result in the initial release. WP8–WP12 remain
+proposed, and WP13 requires separate authorization. Parent #9 and issue tracker
+state remain untouched; no changes are staged or committed.
 
 ### Historical WP5 release validation
 

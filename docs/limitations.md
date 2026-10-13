@@ -33,10 +33,31 @@ formals are implemented. [#13 release validation passed](was_language_extensions
 including adapter coverage and the full ignored suite. Issues #11/#14 implement
 result inference with acyclic chains/diamonds and source-order ties among ready
 functions. [#15 combined-feature acceptance](result-inference-development.md#issue-15-combined-nameddefault-and-inference-acceptance)
-covers named/default calls through these inferred dependencies; the final WP7
-release gate remains pending. See [the #14 contract](result-inference-development.md#issue-14-acyclic-chains-and-diamonds) and the
+covers named/default calls through these inferred dependencies. WP7's native/browser
+release gates passed; see [#16 evidence](was_language_extensions_plan.md#issue-16-wp7-release-validation).
+WP8–WP12 remain proposed; WP13 optimization needs separate authorization.
+See [the #14 contract](result-inference-development.md#issue-14-acyclic-chains-and-diamonds) and the
 [named/default interface](named-call-interface.md) for migration and the
 [development handoff](wp6-wp7-development.md) for historical worktree evidence.
+
+### Initial result-inference restrictions
+
+Only function results infer; parameter types remain mandatory. Reachable explicit
+returns must match exactly, and a nonvoid function must return or explicitly diverge
+on every path. Named-function tails never implicitly return. Without value-return
+syntax, a procedure infers void; Never-only value-return syntax requires an annotation.
+A void procedure invokes another with a statement call, not `return noop();`.
+
+Every member of a recursive component needs an explicit result annotation—even
+self recursion with a concrete base return, or recursion crossing annotated functions.
+The full lexical user-call graph includes unreachable and short-circuit-skipped calls;
+shadowed variables are not function edges. Acyclic chains/diamonds infer in stable
+dependency order, but no recursive constraint solver or whole-program unification is
+implemented. An annotation does not skip checking any child or function body.
+
+Inferred/explicit results have identical raw ABI and full arity; no host defaults,
+marshaling metadata, coercions or runtime polymorphism are added. Inferred ranges
+remain internal. See [the current inference contract](result-inference-development.md#issue-14-acyclic-chains-and-diamonds).
 
 ## Source language and frontend
 
@@ -83,7 +104,7 @@ The raw AST uses `Vec<CallArgument>` instead of `Vec<Expr>` for calls; raw `Para
 now also requires `default: Option<DefaultExpression>` with `value` and declaration
 `span` (use `None` in existing constructors). Raw `Function.return_type` is
 `Option<Type>`: wrap explicit annotations in `Some(type)`; `None` requests
-initial result inference. Typed signatures remain concrete `Type`.
+result inference. Typed signatures remain concrete `Type`.
 Typed `Call` operands remain `Vec<TypedExpr>` and `TypedParam` has no default
 metadata. Exhaustive typed-expression consumers must handle `NormalizedCall`;
 see the [current interface and migration](named-call-interface.md#current-wp6-contract-issues-1012).

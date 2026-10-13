@@ -1,0 +1,16 @@
+// Forward inferred results and a named/default diamond. main returns 584.
+fn main() {
+    return left(base: 2) + right(3);
+}
+
+fn left(base: number, extra: number = base + 1) {
+    return total(extra: extra, base: base);
+}
+
+fn right(base: number, extra: number = base + 1) {
+    return total(base, extra);
+}
+
+fn total(base: number, extra: number = base + 1, scale: number = extra * 2) {
+    return base * 100 + extra * 10 + scale;
+}

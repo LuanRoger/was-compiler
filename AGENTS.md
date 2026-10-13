@@ -124,10 +124,11 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
 
 - WP6 implements user-function named/mixed-prefix calls and trailing pure defaults;
   #13's release gates passed with [recorded evidence](docs/was_language_extensions_plan.md#issue-13-wp6-release-validation).
-  Issue #11 integrates initial result inference with released WP6 on
-  `develop/wp7-initial-inference`; #14 completes acyclic chain/diamond inference.
-  [#15 combined-feature acceptance](docs/result-inference-development.md#issue-15-combined-nameddefault-and-inference-acceptance)
-  covers their interactions; the final WP7 release gate remains pending.
+  WP7 implements acyclic chain/diamond result inference and its named/default
+  interactions (#11/#14/#15); [#16 release gates passed](docs/was_language_extensions_plan.md#issue-16-wp7-release-validation),
+  including current-source native/browser ABI and diagnostic coverage. Every recursive
+  component member still needs an explicit result in the initial release. WP8–WP12
+  remain proposed; WP13 optimization requires separate authorization.
   Preserve `target/wp7-inference` when cleaning generated output. Before changing defaults, call binding, or
   normalized lowering, read [the handoff](docs/wp6-wp7-development.md) and
   [named-call interface](docs/named-call-interface.md) for origins, ownership,

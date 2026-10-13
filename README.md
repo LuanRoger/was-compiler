@@ -111,9 +111,23 @@ There are no implicit function tails.
 See [the #14 inference contract](docs/result-inference-development.md#issue-14-acyclic-chains-and-diamonds).
 [#15 combined-feature acceptance](docs/result-inference-development.md#issue-15-combined-nameddefault-and-inference-acceptance)
 covers named/default calls through inferred chains and diamonds, including effects,
-transfers, and checked typed input. The final WP7 release gate remains pending.
-Contracts, match, pipelines, closures, and placeholders remain later packages
-with ordered release gates.
+transfers, and checked typed input. WP7's native/browser release gates passed;
+see [#16 release evidence](docs/was_language_extensions_plan.md#issue-16-wp7-release-validation).
+The same inference rules apply through the CLI and freshly rebuilt browser adapter.
+[The runnable named/default diamond](examples/inferred-defaults.was) returns `584`:
+
+```text
+cargo run --offline -- examples/inferred-defaults.was -o target/inferred-defaults.wasm --export main
+node runtime/run.cjs target/inferred-defaults.wasm
+```
+
+Inferred results retain the explicit ABI: numbers are `f64`, bools are `i32` with
+normalized host boundaries, and strings/arrays use existing descriptor handles.
+Raw exports retain full arity; private range signatures cannot be host imports or
+selected exports. Raw Rust AST consumers wrap explicit `Function.return_type`
+annotations in `Some(type)`; `None` requests inference. Typed results remain concrete.
+Contracts, match, pipelines, closures, and placeholders (WP8–WP12) remain proposed
+later packages; WP13 optimization requires separate authorization.
 
 Local declarations support both `let name = initializer;` and the existing
 `let name: type = initializer;`. Without an annotation, the initializer determines

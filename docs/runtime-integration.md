@@ -85,6 +85,37 @@ canonical path is refused. This preserves existing artifacts on compilation erro
 and avoids publishing a partially written file. It does not promise directory-sync
 crash durability or race-proof source-file identity checks.
 
+## Function-result inference and raw calls
+
+Native CLI and browser compilation accept omitted function results through acyclic
+chains and diamonds, including named/default calls:
+
+```text
+cargo run --offline -- examples/inferred-defaults.was -o target/inferred-defaults.wasm --export main
+node runtime/run.cjs target/inferred-defaults.wasm
+```
+
+This prints `584`. Parameters still require types and named functions require
+explicit returns. Reachable returns must agree exactly; incomplete nonvoid paths
+are errors. No value-return syntax infers void, while Never-only value-return syntax
+requires an annotation. Every member of a recursive component needs an explicit
+result, including calls in unreachable/skipped source and across annotated barriers.
+These are initial inference limitations, not a new runtime or polymorphic ABI.
+
+The concrete result ABI is identical to an explicit annotation: `number` is `f64`,
+`bool` is `i32` with normalized host boundaries, strings/arrays are instance-local
+`i32` descriptor handles, and void has no result. Range signatures remain private.
+Source defaults do not reduce raw export arity. For the example, exporting `total`
+requires all three machine arguments; use a source wrapper to apply defaults.
+String/array marshaling remains an explicit host operation using the generated
+instance's memory, not compiler memory or automatic JSON conversion.
+
+Inference/binding/default errors use the existing diagnostic renderer and original
+byte spans. Annotated-source bytes, ordinary body-literal error stages and existing
+first-error ordering remain unchanged. See the
+[raw-AST migration](named-call-interface.md#public-ast-migration) and
+[release validation](was_language_extensions_plan.md#issue-16-wp7-release-validation).
+
 ## Export selection in Rust
 
 ```rust
@@ -219,7 +250,8 @@ or default contract, and builtin `len` remains positional. See the
 WP6 named/default parameters are implemented, and
 [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation),
 including CLI execution and freshly rebuilt browser/runtime coverage. WP7 result
-inference remains isolated and is not integrated.
+inference is also available through the CLI/library/browser adapters; see
+[#16 release evidence](was_language_extensions_plan.md#issue-16-wp7-release-validation).
 
 Hosts must obey the declared signatures. Host callbacks receive descriptor handles,
 not native strings or arrays, and must return handles for memory-backed results.

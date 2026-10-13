@@ -3,8 +3,9 @@
 This is the historical independent-development record. WP6 is now integrated on
 `main` and #13's release validation passed; see
 [the release evidence](was_language_extensions_plan.md#issue-13-wp6-release-validation).
-Issue #11 now combines initial WP7 inference with released WP6 on
-`develop/wp7-initial-inference`; the full WP7 release gate remains pending.
+Issues #11/#14 subsequently integrated WP7 inference on main, #15 accepted its
+named/default interactions, and [#16 release validation passed](was_language_extensions_plan.md#issue-16-wp7-release-validation).
+Every recursive component member still needs an annotation in the initial release.
 References below to uncommitted branches and pending #13 describe
 the earlier development checkpoint, not current release status.
 
