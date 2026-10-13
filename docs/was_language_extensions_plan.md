@@ -841,6 +841,45 @@ No check elimination, rich runtime metadata, ABI change, or WP9+ feature is incl
 Historical fixtures were not regenerated. Issue tracker state was not changed, and
 no changes were staged or committed.
 
+### Issue #23 WP8 integrated release verification
+
+On 2026-10-13, the integrated scalar (#20), named/default/inference (#21), and
+collection (#22) slices passed the release gates again on Windows. The starting
+commit was `54539b1251824df8396bc1cf29851341fed89cdb`. Available tooling included
+Rust 1.98.0, Node.js v24.12.0, and wasm-pack 0.15.0; all Cargo/build commands used
+cached dependencies offline. Browser bindings were rebuilt before browser and
+include-ignored execution, using `--mode no-install` and `--no-opt`. No new
+prerequisites, dependencies, compiler behavior, or generated-fixture updates were
+required.
+
+| Exact command (repository root) | Actual result |
+| --- | --- |
+| `wasm-pack build browser --target web --out-dir ../pkg --out-name was_compiler --mode no-install --no-opt --offline` | Passed; rebuilt current source before browser execution |
+| `cargo test --offline --test contracts_frontend --test contracts_lowering --test contracts_runtime --test contracts_adapters -- --include-ignored` | Passed: 27 frontend, 14 lowering, 8 runtime, and 4 adapter tests |
+| `cargo check --offline --all-targets` | Passed |
+| `cargo test --offline` | Passed; default Node/browser ignored policy retained |
+| `cargo clippy --offline --all-targets -- -D warnings` | Passed |
+| `cargo check --offline --target wasm32-unknown-unknown --lib` | Passed |
+| `cargo clippy --offline -p was-compiler-browser --target wasm32-unknown-unknown --lib -- -D warnings` | Passed |
+| `node tests/browser.cjs pkg` | Passed: 24 cases against rebuilt bindings |
+| `cargo test --offline -- --include-ignored` | Passed; full suite including ignored Node/browser cases |
+
+Adapter diagnostic fixtures now distinguish UTF-8 byte spans from character
+columns and caret widths using same-line Unicode, tabs, and CRLF. They also cover
+a contract-bearing function whose ordinary body literal fails checked lowering,
+retaining the backend variant, statement origin, CLI destination preservation,
+and native/browser byte/WAT recovery. This body diagnostic does not introduce
+expression-level body spans or expose forged typed input through browser APIs.
+The [constructor migration guide](named-call-interface.md#wp8-contract-constructor-migration)
+now explicitly lists both contract collections and invocation order.
+
+Runtime subprocesses retain the bounded harness and ignored policy. Deadlines are
+not guest fuel or process-tree cancellation. Raw exports remain full-arity;
+preconditions use ordinary traps without rich metadata or check elimination.
+WP9–WP12 remain proposed and WP13 still requires separate authorization. Earlier
+release evidence above is historical and unchanged; this record does not assert
+that the current work was committed or merged, or close parent issue #19.
+
 ### Issue #13 WP6 release validation
 
 On 2026-10-12, WP6's library/native CLI/rebuilt-browser acceptance and release

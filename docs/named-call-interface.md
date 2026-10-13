@@ -20,7 +20,9 @@ Owned concrete signatures and source-order output remain unchanged.
 covers named/default normalization with inferred chains/diamonds, diagnostic staging,
 and forged nested sequences. [#16 WP7 release validation passed](was_language_extensions_plan.md#issue-16-wp7-release-validation),
 including native and current-source browser ABI/diagnostic acceptance. Every recursive
-component member still needs an explicit result. Later packages remain proposed and
+component member still needs an explicit result. WP8 whitelist preconditions are
+implemented with [release gates passed](was_language_extensions_plan.md#wp8-release-validation).
+WP9–WP12 remain proposed, and WP13 requires separate authorization; later packages
 reuse the approved interfaces only after their ordered integration/release gates.
 
 ### Public AST migration
@@ -39,6 +41,20 @@ reuse the approved interfaces only after their ordered integration/release gates
   metadata. Ordinary typed `Call` still takes `Vec<TypedExpr>`. Exhaustive typed
   expression consumers must handle `NormalizedCall(TypedNormalizedCall)` and
   visit its ordered binding values, then its final call.
+
+### WP8 contract constructor migration
+
+Raw `ast::Function` also requires `contracts: Vec<ast::ContractExpression>`;
+typed `TypedFunction` requires `contracts: Vec<TypedContract>`. Existing constructors
+supply `vec![]`. Each ordered record owns `value` and an expression-only UTF-8 byte
+`span`, including parentheses but excluding `requires` and surrounding trivia.
+Typed contract reads retain callee formal identities, not invocation-local binding IDs.
+
+Contracts run at callee entry after explicit arguments in written order, omitted
+defaults in formal order, and validation of every callee parameter. False clauses
+trap using ordinary Wasm `unreachable` before later clauses and body effects; they
+provide no inference refinement or rich runtime metadata. Raw exports remain
+full-arity and do not synthesize defaults. See [spec §13.1](was_language_extensions_spec.md#131-syntax).
 
 ### Binding, scope, and checked lowering
 

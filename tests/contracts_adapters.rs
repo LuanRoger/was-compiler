@@ -32,36 +32,62 @@ fn recursive(n: number) -> number requires n >= 0 {
 }
 "#;
 const SELECTED: &[&str] = &["main", "target", "reject", "count", "recursive"];
-const ERRORS: [(&str, &str, &str); 6] = [
+#[derive(Clone, Copy)]
+enum DiagnosticKind {
+    TypeMismatch,
+    UndefinedVariable,
+    InvalidContract,
+    NumberLiteralOutOfRange,
+}
+
+const ERRORS: [(&str, &str, &str, DiagnosticKind); 8] = [
     (
         "// é🦀\r\n\tfn f(x: number) requires x + 1 {}\r\n",
         "x + 1",
         "Type mismatch",
+        DiagnosticKind::TypeMismatch,
     ),
     (
         "// é🦀\r\n\tfn f(x: number) requires missing > x {}\r\n",
         "missing > x",
         "Undefined variable 'missing'",
+        DiagnosticKind::UndefinedVariable,
     ),
     (
         "// é🦀\r\n\tfn f() requires false && other() {}\r\nfn other() -> bool { return true; }",
         "false && other()",
         "only positional builtin len calls are allowed",
+        DiagnosticKind::InvalidContract,
     ),
     (
         "// é🦀\r\n\tfn f(xs: number[]) requires true || xs[0] > 0 {}\r\n",
         "true || xs[0] > 0",
         "indexing is not allowed",
+        DiagnosticKind::InvalidContract,
     ),
     (
         "// é🦀\r\n\tfn f(xs: number[]) requires len(xs: xs) > 0 {}\r\n",
         "len(xs: xs) > 0",
         "only positional builtin len calls are allowed",
+        DiagnosticKind::InvalidContract,
     ),
     (
         "// é🦀\r\n\tfn f(x: number = missing_default) requires missing_contract {}\r\n",
         "missing_default",
         "Undefined variable 'missing_default'",
+        DiagnosticKind::UndefinedVariable,
+    ),
+    (
+        "\tfn f() /* é🦀 */ requires \"é🦀\" {}\r\n",
+        "\"é🦀\"",
+        "Type mismatch",
+        DiagnosticKind::TypeMismatch,
+    ),
+    (
+        "\tfn f() -> number /* é🦀 */ requires true { return 99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999; }\r\n",
+        "return 99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999;",
+        "outside the finite f64 range",
+        DiagnosticKind::NumberLiteralOutOfRange,
     ),
 ];
 
@@ -123,9 +149,35 @@ impl Drop for Scratch {
     }
 }
 
-fn expected_diagnostic(path: &str, source: &str, origin: &str, message: &str) -> String {
+fn expected_diagnostic(
+    path: &str,
+    source: &str,
+    origin: &str,
+    message: &str,
+    kind: DiagnosticKind,
+) -> String {
     let error = Compiler::new().compile_source(source).unwrap_err();
-    assert!(matches!(error, CompileError::Semantic(_)));
+    use was_compiler::semantic::SemanticError;
+
+    let stage = match (kind, &error) {
+        (
+            DiagnosticKind::TypeMismatch,
+            CompileError::Semantic(SemanticError::TypeMismatch { .. }),
+        )
+        | (
+            DiagnosticKind::UndefinedVariable,
+            CompileError::Semantic(SemanticError::UndefinedVariable { .. }),
+        )
+        | (
+            DiagnosticKind::InvalidContract,
+            CompileError::Semantic(SemanticError::InvalidContractExpression { .. }),
+        ) => "semantic",
+        (
+            DiagnosticKind::NumberLiteralOutOfRange,
+            CompileError::Codegen(was_compiler::CodegenError::NumberLiteralOutOfRange { .. }),
+        ) => "code generation",
+        _ => panic!("unexpected diagnostic variant: {error}"),
+    };
     assert!(error.to_string().contains(message), "{error}");
     let start = source.find(origin).unwrap();
     assert_eq!(error.span(), Some(Span::new(start, start + origin.len())));
@@ -147,7 +199,7 @@ fn expected_diagnostic(path: &str, source: &str, origin: &str, message: &str) ->
         .trim_end_matches('\r')
         .replace('\t', "    ");
     let expected = format!(
-        "{path}:{line}:{column}: semantic error: {error}\n  |\n{line} | {excerpt}\n  | {}{}",
+        "{path}:{line}:{column}: {stage} error: {error}\n  |\n{line} | {excerpt}\n  | {}{}",
         " ".repeat(padding),
         "^".repeat(origin.chars().count())
     );
@@ -218,9 +270,9 @@ fn cli_contract_bytes_and_wat_match_native_at_every_level_and_export_selection()
 #[test]
 fn cli_contract_diagnostics_keep_utf8_crlf_origins_destinations_and_recover() {
     let scratch = Scratch::new();
-    for (source, origin, message) in ERRORS {
+    for (source, origin, message, kind) in ERRORS {
         fs::write(scratch.0.join("program.was"), source).unwrap();
-        let expected = expected_diagnostic("program.was", source, origin, message);
+        let expected = expected_diagnostic("program.was", source, origin, message, kind);
         for (flag, level) in LEVELS {
             let mut native = Compiler::new();
             native.set_optimization_level(level);
@@ -331,6 +383,10 @@ fn rebuilt_browser_contract_bytes_diagnostics_raw_calls_and_recovery_match_nativ
     }
     let mut input = Vec::new();
     field(&mut input, SOURCE.as_bytes());
+    field(
+        &mut input,
+        &u32::try_from(ERRORS.len()).unwrap().to_le_bytes(),
+    );
     let mut native = compiler();
     for (_, level) in LEVELS {
         native.set_optimization_level(level);
@@ -342,11 +398,11 @@ fn rebuilt_browser_contract_bytes_diagnostics_raw_calls_and_recovery_match_nativ
             wasmprinter::print_bytes(&bytes).unwrap().as_bytes(),
         );
     }
-    for (source, origin, message) in ERRORS {
+    for (source, origin, message, kind) in ERRORS {
         field(&mut input, source.as_bytes());
         field(
             &mut input,
-            expected_diagnostic("<browser>", source, origin, message).as_bytes(),
+            expected_diagnostic("<browser>", source, origin, message, kind).as_bytes(),
         );
     }
     let registration_error = native
@@ -378,8 +434,9 @@ fn rebuilt_browser_contract_bytes_diagnostics_raw_calls_and_recovery_match_nativ
                 return bytes;
             }
             const source = field().toString('utf8');
+            const diagnosticCount = field().readUInt32LE(0);
             const native = Array.from({length: 4}, () => ({bytes: field(), wat: field().toString('utf8')}));
-            const diagnostics = Array.from({length: 6}, () => ({source: field().toString('utf8'), message: field().toString('utf8')}));
+            const diagnostics = Array.from({length: diagnosticCount}, () => ({source: field().toString('utf8'), message: field().toString('utf8')}));
             const registration = field().toString('utf8');
             const mainOnly = field(), none = field();
             assert.equal(offset, input.length);
@@ -404,10 +461,12 @@ fn rebuilt_browser_contract_bytes_diagnostics_raw_calls_and_recovery_match_nativ
                     same(native[level]);
                     for (const diagnostic of diagnostics) {
                         for (const method of ['compile', 'compileWat']) {
+                            compiler.exportAll();
                             assert.throws(() => compiler[method](diagnostic.source), error => {
                                 assert.ok(error instanceof Error); assert.equal(error.name, 'Error');
                                 assert.equal(error.message, diagnostic.message); return true;
                             });
+                            compiler.setExports(selected);
                             same(native[level]);
                         }
                     }
