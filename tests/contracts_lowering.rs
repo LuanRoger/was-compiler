@@ -607,6 +607,116 @@ fn range_formal_reads_are_admitted_but_do_not_broaden_operator_rules() {
 }
 
 #[test]
+fn inferred_and_explicit_contract_calls_preserve_analyzed_and_source_bytes() {
+    let inferred = "fn main() requires true { return target(c: 9, a: 3); }
+        fn mixed() requires true { return target(3, c: 9); }
+        fn target(a: number, b: number = a + 1, c: number = b * 2)
+            requires a > 0 requires b == a + 1 requires c > b {
+            return a * 100 + b * 10 + c;
+        }";
+    let annotated = "fn main() -> number requires true { return target(c: 9, a: 3); }
+        fn mixed() -> number requires true { return target(3, c: 9); }
+        fn target(a: number, b: number = a + 1, c: number = b * 2) -> number
+            requires a > 0 requires b == a + 1 requires c > b {
+            return a * 100 + b * 10 + c;
+        }";
+    let mut compiler = Compiler::new();
+    let analyzed = compiler.analyze(inferred).unwrap();
+    assert!(
+        analyzed
+            .functions
+            .iter()
+            .all(|f| f.return_type == Type::Number)
+    );
+
+    let baseline = compiler.compile_source(annotated).unwrap();
+    Validator::new().validate_all(&baseline).unwrap();
+    for level in LEVELS {
+        compiler.set_optimization_level(level);
+        assert_eq!(compiler.compile_source(inferred).unwrap(), baseline);
+        assert_eq!(compiler.compile_source(annotated).unwrap(), baseline);
+        assert_eq!(compiler.compile(&analyzed).unwrap(), baseline);
+    }
+}
+
+#[test]
+fn divergent_argument_cannot_reach_contract_entry_but_later_defaults_are_checked() {
+    let source = "fn target(a: number, b: number = a + 1) -> number
+        requires false { return b; }
+        fn main() -> number { return target(a: loop {}); }";
+    let mut compiler = Compiler::new();
+    let mut program = compiler.analyze(source).unwrap();
+    let TypedStatementKind::Return(Some(value)) = &program.functions[1].body[0].kind else {
+        panic!("return")
+    };
+    assert_eq!(value.ty, ExprResult::Never);
+    let TypedExprKind::NormalizedCall(sequence) = &value.kind else {
+        panic!("normalized call")
+    };
+    assert_eq!(sequence.call.ty, ExprResult::Value(Type::Number));
+
+    let baseline = compiler.compile(&program).unwrap();
+    let entry = operators(&baseline, 0);
+    assert!(matches!(
+        &entry[..5],
+        [
+            Operator::I32Const { value: 0 },
+            Operator::I32Eqz,
+            Operator::If {
+                blockty: BlockType::Empty
+            },
+            Operator::Unreachable,
+            Operator::End,
+        ]
+    ));
+    let caller = operators(&baseline, 1);
+    // The empty argument loop branches to itself; the canonical call remains
+    // structurally present and checked, but cannot execute after this backedge.
+    let backedge = caller
+        .windows(2)
+        .position(|ops| {
+            matches!(
+                ops,
+                [
+                    Operator::Loop {
+                        blockty: BlockType::Empty
+                    },
+                    Operator::Br { relative_depth: 0 },
+                ]
+            )
+        })
+        .unwrap();
+    let invocation = caller
+        .iter()
+        .position(|op| matches!(op, Operator::Call { function_index: 0 }))
+        .unwrap();
+    assert!(backedge < invocation);
+    assert_eq!(calls(&caller), [0]);
+    for level in LEVELS {
+        compiler.set_optimization_level(level);
+        assert_eq!(compiler.compile(&program).unwrap(), baseline);
+    }
+
+    let TypedStatementKind::Return(Some(value)) = &mut program.functions[1].body[0].kind else {
+        panic!("return")
+    };
+    let TypedExprKind::NormalizedCall(sequence) = &mut value.kind else {
+        panic!("normalized call")
+    };
+    let default = &mut sequence.bindings[1];
+    let span = default.span;
+    default.value = number("invalid");
+    assert_eq!(
+        compiler.compile(&program),
+        Err(CodegenError::InvalidNumberLiteral {
+            function: "main".into(),
+            literal: "invalid".into(),
+            span,
+        })
+    );
+}
+
+#[test]
 fn empty_contracts_preserve_bytes_and_true_checks_are_not_eliminated() {
     let mut program = fixture();
     assert!(program.functions[0].contracts.is_empty());
