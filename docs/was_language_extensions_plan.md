@@ -623,8 +623,13 @@ IDs, typed-function order and Wasm layout remain unchanged. Diagnostics stage
 source-order declarations/defaults, source-order recursive annotation errors,
 stable dependency-order inference, then source-order final body checks. See
 [the #14 contract and test coverage](result-inference-development.md#issue-14-acyclic-chains-and-diamonds).
-Combined-feature acceptance (#15) and full WP7 release validation remain pending;
-#11's historical commands are not #14 validation evidence.
+**Issue #15 combined acceptance complete:** named/default calls through inferred
+forward chains/diamonds have dedicated source, checked-input, decoded ABI, and
+bounded effect/alias/trap/transfer coverage. Extended CLI/rebuilt-browser cases
+use the same inferred named/default diamond. See [the interaction contract and
+validation evidence](result-inference-development.md#issue-15-combined-nameddefault-and-inference-acceptance).
+The final WP7 release ticket remains responsible for full adapter/release acceptance;
+#11's historical commands are not #14 or #15 validation evidence.
 
 ### WP8 — Whitelist contracts (spec §13)
 

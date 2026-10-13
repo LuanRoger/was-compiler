@@ -23,23 +23,35 @@ const LEVELS: [(&str, OptimizationLevel); 4] = [
 const SOURCE: &str = r#"
 fn main() {
     let xs = [1, 2];
-    return target(c: mark(9), a: mark(3)) + target(2) + target(1, b: 5) + count(xs);
+    return left() + right() + target(1, b: 5) + count(xs);
 }
-fn target(a: number, b: number = a + 1, c: number = b * 2) -> number {
+fn target(a: number, b: number = a + 1, c: number = b * 2) {
     return a * 100 + b * 10 + c;
 }
-fn count(xs: number[], n: number = len(xs)) -> number { return n; }
+fn count(xs: number[], n: number = len(xs)) { return n; }
 fn inferred(n: number = 7) { return n; }
 fn flag(b: bool = true) { return b; }
 fn text(s: string = "é🦀") { return s; }
 fn ranges(r: range, copy: range = r) { return copy; }
 fn make() { return 0..=4 by 2; }
+fn left() { return target(c: mark(9), a: mark(3)); }
+fn right() { return target(2); }
 "#;
 const SELECTED: &[&str] = &["main", "target", "count", "inferred", "flag", "text"];
 
 fn explicit_source() -> String {
     SOURCE
         .replace("fn main() {", "fn main() -> number {")
+        .replace(
+            "fn target(a: number, b: number = a + 1, c: number = b * 2) {",
+            "fn target(a: number, b: number = a + 1, c: number = b * 2) -> number {",
+        )
+        .replace(
+            "fn count(xs: number[], n: number = len(xs)) {",
+            "fn count(xs: number[], n: number = len(xs)) -> number {",
+        )
+        .replace("fn left() {", "fn left() -> number {")
+        .replace("fn right() {", "fn right() -> number {")
         .replace(
             "fn inferred(n: number = 7) {",
             "fn inferred(n: number = 7) -> number {",
@@ -185,6 +197,8 @@ fn cli_inferred_defaults_match_explicit_library_bytes_and_full_arity_at_every_le
         (5, vec![ValType::I32], ValType::I32),
         (6, vec![ValType::I32; 2], ValType::I32),
         (7, vec![], ValType::I32),
+        (8, vec![], ValType::F64),
+        (9, vec![], ValType::F64),
     ] {
         let signature = &signatures[usize::try_from(function_types[index]).unwrap()];
         assert_eq!(signature.params(), params);
@@ -535,6 +549,16 @@ fn node_rebuilt_browser_inference_defaults_bytes_diagnostics_recovery_and_range_
                     compiler.setOptimizationLevel(level);
                     compiler.setExports(selected);
                     same(inferred, native[level]); same(explicit, native[level]);
+                    const events = [];
+                    const e = new WebAssembly.Instance(new WebAssembly.Module(compiler.compile(inferred)), {
+                        app: { unused() { throw new Error('unused import executed'); } },
+                        env: { mark(n) { events.push(n); return n; } },
+                    }).exports;
+                    assert.equal(e.main(), 747);
+                    assert.deepEqual(events, [9, 3]);
+                    assert.equal(e.target.length, 3);
+                    assert.equal(e.target(3, 4, 9), 349);
+                    assert.ok(Number.isNaN(e.target(3)));
                     for (const diagnostic of diagnostics) {
                         fails(diagnostic.source, diagnostic.message);
                         same(inferred, native[level]); same(explicit, native[level]);

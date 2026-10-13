@@ -109,8 +109,11 @@ stable dependency order, choosing source order among currently ready functions.
 Owned typed signatures stay concrete and function/layout order stays source-ordered.
 There are no implicit function tails.
 See [the #14 inference contract](docs/result-inference-development.md#issue-14-acyclic-chains-and-diamonds).
-Combined-feature acceptance (#15) and the full WP7 release gate remain pending. Contracts, match, pipelines,
-closures, and placeholders remain later packages with ordered release gates.
+[#15 combined-feature acceptance](docs/result-inference-development.md#issue-15-combined-nameddefault-and-inference-acceptance)
+covers named/default calls through inferred chains and diamonds, including effects,
+transfers, and checked typed input. The final WP7 release gate remains pending.
+Contracts, match, pipelines, closures, and placeholders remain later packages
+with ordered release gates.
 
 Local declarations support both `let name = initializer;` and the existing
 `let name: type = initializer;`. Without an annotation, the initializer determines

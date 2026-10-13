@@ -15,9 +15,11 @@ including adapter coverage, freshly rebuilt browser bindings, and the full ignor
 suite. Issue #11 integrates initial result inference with these interfaces;
 Issue #14 completes acyclic inferred-to-inferred chains/diamonds with source-order
 ties among ready functions; see [its contract](result-inference-development.md#issue-14-acyclic-chains-and-diamonds).
-Owned concrete signatures and source-order output remain unchanged. Combined-feature
-acceptance (#15) and the full WP7 gate are pending. Later packages reuse the approved
-interfaces only after their ordered integration/release gates.
+Owned concrete signatures and source-order output remain unchanged.
+[#15 combined-feature acceptance](result-inference-development.md#issue-15-combined-nameddefault-and-inference-acceptance)
+covers named/default normalization with inferred chains/diamonds, diagnostic staging,
+and forged nested sequences. The final WP7 release gate remains pending. Later
+packages reuse the approved interfaces only after their ordered integration/release gates.
 
 ### Public AST migration
 

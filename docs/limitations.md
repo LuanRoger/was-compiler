@@ -32,8 +32,9 @@ WP6 named/mixed-prefix arguments and trailing defaults resolved against earlier
 formals are implemented. [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation),
 including adapter coverage and the full ignored suite. Issues #11/#14 implement
 result inference with acyclic chains/diamonds and source-order ties among ready
-functions. Combined-feature acceptance (#15) and the full WP7 release gate remain
-pending; see [the #14 contract](result-inference-development.md#issue-14-acyclic-chains-and-diamonds). See the
+functions. [#15 combined-feature acceptance](result-inference-development.md#issue-15-combined-nameddefault-and-inference-acceptance)
+covers named/default calls through these inferred dependencies; the final WP7
+release gate remains pending. See [the #14 contract](result-inference-development.md#issue-14-acyclic-chains-and-diamonds) and the
 [named/default interface](named-call-interface.md) for migration and the
 [development handoff](wp6-wp7-development.md) for historical worktree evidence.
 

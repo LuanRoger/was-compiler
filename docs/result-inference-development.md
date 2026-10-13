@@ -151,9 +151,9 @@ those runtime tests retain the normal ignored policy.
 Migrations in `tests/result_inference.rs`, `tests/result_inference_defaults.rs`,
 and `tests/result_inference_adapters.rs` replace obsolete dependency-rejection
 expectations with the resolved-chain contract and retained diagnostics.
-Combined-feature acceptance (#15) and the full WP7 integration/release gate remain
-pending. The historical #11 validation and coordination handoff remain evidence
-only for their recorded checkpoint.
+At the #14 checkpoint, combined-feature acceptance (#15) and the full WP7
+integration/release gate remained pending. The historical #11 validation and
+coordination handoff remain evidence only for their recorded checkpoint.
 
 ### Issue #14 validation (2026-10-13)
 
@@ -177,3 +177,67 @@ Two-axis review found no documented-standard breaches or confirmed spec defects.
 Two low-priority test-maintainability observations were addressed with explicit
 case expectations and clearer test names. No golden fixtures were regenerated.
 These results validate this change, not the separate #15/full WP7 acceptance gate.
+
+## Issue #15: combined named/default and inference acceptance
+
+Issue #15 establishes the combined contract after #13's completed WP6 release
+and #14's acyclic scheduling. No production change was needed: the integrated
+implementation passes the new acceptance cases. No AST, public seam, IR, ABI,
+default whitelist, inference policy, or optimization behavior changes here.
+The final WP7 release ticket still owns full adapter/release acceptance; these
+results do not mark that ticket or the parent #9 complete.
+
+Named/default calls can depend on forward inferred chains and diamonds, including
+ordinary full-positional calls to the same resolved callees. Default templates
+retain their declaration origins and earlier-formal identities through scheduling;
+normalization retains written explicit order, then omitted-default formal order.
+All results are concrete and machine signatures remain canonical and full-arity.
+Source-order identities, layout, import snapshots and export policy are unchanged.
+
+### Acceptance coverage
+
+| Boundary | Evidence |
+| --- | --- |
+| Combined source, owned typed output and independently decoded Wasm | `tests/result_inference_combined.rs` exercises forward diamonds, named/default/direct calls, source-order IDs/imports/exports, direct instruction sequencing, full arity, required memory, determinism and inferred/explicit byte parity at all levels. |
+| Dependent defaults and bounded execution | The same suite executes number/bool/string/array/internal-range chains, captures earlier scalars, observes shared alias mutation, evaluates defaults afresh per invocation, and checks independent effect markers and trap order. |
+| Caller completion | Nested value blocks, ifs and value loops in explicit arguments preserve caller returns and nearest-loop breaks/continues. Transfers bypass later explicit effects and trapping defaults; skipped/unreachable children remain checked. |
+| Staged diagnostics | `tests/result_inference_combined_checks.rs` progressively removes errors from multiply-invalid programs to pin declarations/defaults before recursion, dependency-order inference and source-order final checks, with written call/default origins and ready-function ties. Unused and explicitly supplied defaults remain checked; ordinary body literal errors stay at lowering. |
+| Forged public typed input | Nested normalized target/result, formal mapping, binding ownership/default scope and escaped-binding mutations are rejected, as are body/signature mismatches in skipped, unreachable and unexported code. |
+| Existing native/browser seams | `tests/result_inference_adapters.rs` now uses an omitted-result forward named/default diamond in its CLI/library/explicit-byte, host snapshot, raw arity and rebuilt-browser checks. Browser-compiled output is also instantiated to check values/effect order. |
+
+The new suites add 19 tests, including three normally ignored bounded Node cases.
+The five existing adapter tests now cover the combined diamond; their two runtime
+cases retain the ignored policy. Existing default, inference-chain, named-call,
+legacy ABI/emitter/diagnostic fixtures and runtime suites remain unchanged.
+Independent literal expectations supplement `wasmparser::Validator`; passing
+module validation alone is not the acceptance claim. No unbounded guest runs.
+
+### Issue #15 validation (2026-10-13)
+
+All commands below ran from the repository root using offline Cargo builds and
+installed tooling. `pkg` was rebuilt before browser and full ignored execution.
+New cases passed against the existing implementation, so no production regression
+red/green cycle or golden-fixture regeneration was necessary.
+
+| Exact command | Actual result |
+| --- | --- |
+| `cargo check --offline --all-targets` | Passed after adding the suites and extending adapter sources. |
+| `cargo test --offline --test result_inference_combined --test result_inference_combined_checks --test result_inference_adapters` | Passed: 19 active tests, five normally ignored runtime cases. |
+| `wasm-pack build browser --target web --out-dir ../pkg --out-name was_compiler --mode no-install --no-opt --offline` | Passed; rebuilt current bindings. |
+| `cargo test --offline --test result_inference_combined --test result_inference_combined_checks --test result_inference_adapters -- --include-ignored` | Passed: all 24 tests, including Node execution and rebuilt-browser parity/execution. |
+| `node tests/browser.cjs pkg` | Passed: 22 groups. |
+| `cargo clippy --offline --all-targets -- -D warnings` | Passed. |
+| `cargo check --offline --target wasm32-unknown-unknown --lib` | Passed. |
+| `cargo clippy --offline -p was-compiler-browser --target wasm32-unknown-unknown --lib -- -D warnings` | Passed. |
+| `cargo test --offline -- --include-ignored` | Passed: complete suite, including normally ignored runtime/browser cases and legacy fixtures. |
+| `cargo test --offline` | Passed: complete default suite; normal ignored policy retained. |
+| Scoped `rustfmt --edition 2024 --config skip_children=true` on the three edited Rust test files | Passed. |
+| Local Markdown link/path/anchor check | Passed: 109 references across the six edited Markdown files. |
+| `git --no-pager diff --check` | Passed. |
+
+Independent Standards review identified string-valued test modes and a related
+repeated-dispatch maintainability issue. Replacing these with exhaustive local
+enums and co-locating context construction/navigation resolved both; the focused
+11-test suite and Clippy passed afterward. Follow-up Standards review reported
+zero outstanding findings. Spec review reported zero missing, incorrect or
+out-of-scope requirements. Production and golden fixtures remain unchanged.

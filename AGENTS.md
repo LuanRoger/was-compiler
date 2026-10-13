@@ -126,8 +126,9 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   #13's release gates passed with [recorded evidence](docs/was_language_extensions_plan.md#issue-13-wp6-release-validation).
   Issue #11 integrates initial result inference with released WP6 on
   `develop/wp7-initial-inference`; #14 completes acyclic chain/diamond inference.
-  Combined-feature acceptance (#15) and the full WP7 release gate remain pending. Preserve `target/wp7-inference` when cleaning generated
-  output. Before changing defaults, call binding, or
+  [#15 combined-feature acceptance](docs/result-inference-development.md#issue-15-combined-nameddefault-and-inference-acceptance)
+  covers their interactions; the final WP7 release gate remains pending.
+  Preserve `target/wp7-inference` when cleaning generated output. Before changing defaults, call binding, or
   normalized lowering, read [the handoff](docs/wp6-wp7-development.md) and
   [named-call interface](docs/named-call-interface.md) for origins, ownership,
   diagnostic staging, whitelist, and earlier-formal read rules.
