@@ -22,12 +22,16 @@ mod locals;
 mod memory;
 mod numeric;
 mod place;
+mod pure;
 mod range;
 mod statement;
 mod temporaries;
 mod validation;
 mod values;
 mod walker;
+
+#[cfg(test)]
+mod contracts_tests;
 
 #[cfg(test)]
 mod export_tests;
@@ -164,6 +168,9 @@ pub enum CodegenError {
     #[error("invalid normalized call: {reason} at {span:?}")]
     InvalidNormalizedCall { reason: &'static str, span: Span },
 
+    #[error("invalid contract expression: {reason} at {span:?}")]
+    InvalidContractExpression { reason: &'static str, span: Span },
+
     #[error("unsupported built-in {builtin:?} in function `{function}` at {span:?}")]
     UnsupportedBuiltin {
         function: String,
@@ -262,6 +269,7 @@ impl CodegenError {
             | Self::UnknownFunctionReference { span, .. }
             | Self::ArgumentCountMismatch { span, .. }
             | Self::InvalidNormalizedCall { span, .. }
+            | Self::InvalidContractExpression { span, .. }
             | Self::UnsupportedBuiltin { span, .. }
             | Self::DuplicateVariableId { span, .. }
             | Self::DuplicateLoopId { span, .. }

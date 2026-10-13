@@ -35,7 +35,10 @@ result inference with acyclic chains/diamonds and source-order ties among ready
 functions. [#15 combined-feature acceptance](result-inference-development.md#issue-15-combined-nameddefault-and-inference-acceptance)
 covers named/default calls through these inferred dependencies. WP7's native/browser
 release gates passed; see [#16 evidence](was_language_extensions_plan.md#issue-16-wp7-release-validation).
-WP8–WP12 remain proposed; WP13 optimization needs separate authorization.
+WP8 whitelist contracts are implemented;
+[release gates passed](was_language_extensions_plan.md#wp8-release-validation),
+including rebuilt-browser and full ignored runtime coverage.
+WP9–WP12 remain proposed; WP13 optimization needs separate authorization.
 See [the #14 contract](result-inference-development.md#issue-14-acyclic-chains-and-diamonds) and the
 [named/default interface](named-call-interface.md) for migration and the
 [development handoff](wp6-wp7-development.md) for historical worktree evidence.
@@ -100,11 +103,31 @@ construction, membership, blocks/if/loops, writes, and user/host calls are rejec
 including skipped operands. Pure does not mean nontrapping or snapshotting shared
 array contents. No general user-function purity analysis is implemented.
 
+Contracts require exact `bool` results and share the default whitelist above,
+with all formal parameters readable, but no body/caller locals. Semantic declaration
+checks run in source order, checking each function's parameter types/defaults then
+contracts before result inference or body analysis. Invalid/overflowing contract
+literals are semantic errors at the clause's expression origin, using the same
+literal syntax and finite-representability rules as defaults; underflow is allowed.
+A constant false contract does not excuse missing returns, unchecked body code, or
+change inferred results. At invocation, explicit arguments and omitted defaults run
+first; all callee parameters receive existing validation before any contract,
+including handles unused by conditions. Contracts then execute sequentially before
+the body on every internal, recursive, and full-arity raw export call. False means
+a standard `unreachable` trap, with no custom metadata or rollback. Pure expressions
+can still trap or read mutable shared array contents. No checks are eliminated at
+any optimization level. See [spec §13](was_language_extensions_spec.md#13-feature-specification-function-preconditionscontracts)
+and [the actual WP8 suites/status](was_language_extensions_plan.md#wp8--whitelist-contracts-spec-13).
+
 The raw AST uses `Vec<CallArgument>` instead of `Vec<Expr>` for calls; raw `Param`
 now also requires `default: Option<DefaultExpression>` with `value` and declaration
 `span` (use `None` in existing constructors). Raw `Function.return_type` is
 `Option<Type>`: wrap explicit annotations in `Some(type)`; `None` requests
-result inference. Typed signatures remain concrete `Type`.
+result inference. Raw `Function.contracts` is `Vec<ContractExpression>` and typed
+`TypedFunction.contracts` is `Vec<TypedContract>`; use `vec![]` in existing
+constructors. Both wrappers contain `value` (`Expr` / `TypedExpr`) and an
+expression-only UTF-8 byte `span`, excluding `requires` and surrounding trivia.
+Typed signatures remain concrete `Type`.
 Typed `Call` operands remain `Vec<TypedExpr>` and `TypedParam` has no default
 metadata. Exhaustive typed-expression consumers must handle `NormalizedCall`;
 see the [current interface and migration](named-call-interface.md#current-wp6-contract-issues-1012).
@@ -122,7 +145,7 @@ updates check the target once and save its address and old value before RHS
 effects; failure traps before RHS evaluation. `%=` shares exact floating remainder
 behavior with `%`. Captured-binding updates remain future closure work.
 
-`break`, `continue`, `loop`, `in`, and `for` are reserved source keywords and
+`break`, `continue`, `loop`, `in`, `for`, and `requires` are reserved source keywords and
 host-language names; rename existing bindings/functions using them. Host module/field names
 are unaffected. Transfers outside a loop are semantic errors, including after a
 return or in an unselected function. Value breaks work only in loop expressions;

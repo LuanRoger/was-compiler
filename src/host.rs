@@ -92,6 +92,7 @@ impl HostFunctions {
                 | "break"
                 | "continue"
                 | "return"
+                | "requires"
                 | "true"
                 | "false"
                 | "number"

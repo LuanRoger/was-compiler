@@ -64,7 +64,7 @@ impl LocalLayout {
             function: &function.name,
         };
 
-        if let ControlFlow::Break(error) = walker::walk_block(&function.body, &mut visitor) {
+        if let ControlFlow::Break(error) = walker::walk_function(function, &mut visitor) {
             return Err(error);
         }
 

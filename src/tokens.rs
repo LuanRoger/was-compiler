@@ -38,6 +38,7 @@ pub enum TokenKind<'a> {
     Break,
     Continue,
     Return,
+    Requires,
     In,
 
     True,

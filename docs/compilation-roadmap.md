@@ -73,7 +73,8 @@ final body checks in source order. Combined-feature acceptance (#15) and WP7's
 native/browser release gate (#16) passed; see
 [the release evidence](was_language_extensions_plan.md#issue-16-wp7-release-validation).
 Every recursive component member still needs an annotation in this initial release.
-WP8–WP12 remain proposed; WP13 requires separate authorization. See
+WP8 whitelist contracts are implemented, with
+[release gates passed](was_language_extensions_plan.md#wp8-release-validation). WP9–WP12 remain proposed; WP13 requires separate authorization. See
 [the #14 inference contract](result-inference-development.md#issue-14-acyclic-chains-and-diamonds). See the
 [interface gate](named-call-interface.md) and [handoff](wp6-wp7-development.md).
 
@@ -792,9 +793,44 @@ rebuilt browser bindings and the full ignored-test run; see extension plan §5.
 The [WP5 checkpoint](was_language_extensions_plan.md#wp5--safe-ranges-rangearray-for-membership-spec-56)
 records the cross-feature acceptance coverage.
 The default Cargo suite still skips Node cases. WP6/WP7 and their release gates
-are complete; WP8–WP12 remain proposed and WP13 requires separate authorization.
+are complete; WP8 contracts and their runtime/browser release gates are also complete.
+WP9–WP12 remain proposed and WP13 requires separate authorization.
 External range signatures, range equality, and allocation-free range optimization
 remain out of scope.
+
+## Implemented language extension: function preconditions (WP8)
+
+Named functions accept ordered `requires` clauses after the optional result
+annotation, before the body. Exact `bool` conditions share defaults' narrow pure
+whitelist, with all formal parameters readable. Source-order semantic declaration
+checks process each function's parameter types/defaults then contracts before result
+inference/body analysis. All declarations and skipped children remain checked.
+Malformed/overflowing contract number literals are declaration-site semantic errors
+under the shared literal syntax/finite-representability rules; underflow is allowed.
+False contracts do not change inference or excuse missing returns.
+
+Raw `Function.contracts` is `Vec<ContractExpression>`; typed
+`TypedFunction.contracts` is `Vec<TypedContract>`. Both wrappers hold `value`
+(`Expr` / `TypedExpr`) and expression-only UTF-8 byte `span`; migrate constructors
+with `vec![]`. The walker visits contracts before the body, retaining separate
+local/temporary/memory/range/remainder policies. Checked lowering rejects forged
+whitelist/read/result metadata and checks all functions regardless of export selection.
+
+Explicit arguments and omitted defaults run before entry. The callee validates all
+parameters, then checks contracts sequentially before the body on internal, recursive
+and full-arity raw export paths. Failed conditions emit standard `unreachable` traps,
+not custom metadata or trusted flow facts. No optimization level eliminates checks;
+legacy feature-free bytes and deterministic layout remain compatible. `requires` is
+reserved for source/host-language names only, not host module/field names.
+
+Actual coverage: `tests/contracts_frontend.rs`, `tests/contracts_lowering.rs`,
+`src/codegen/contracts_tests.rs`, `tests/contracts_runtime.rs`, and
+`tests/contracts_adapters.rs`. [WP8 release gates passed](was_language_extensions_plan.md#wp8-release-validation),
+including current-source rebuilt-browser and full ignored runtime coverage. See
+[WP8's frozen contracts and suite responsibilities](was_language_extensions_plan.md#wp8--whitelist-contracts-spec-13)
+and [spec §13](was_language_extensions_spec.md#13-feature-specification-function-preconditionscontracts).
+Match, pipelines, closures and placeholders remain proposed WP9–WP12; optional
+refinement/check elimination belongs to separately authorized future optimization.
 
 ## Remaining work
 

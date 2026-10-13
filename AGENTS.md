@@ -75,7 +75,7 @@ bypasses the compiler's optimization/options orchestration.
 | `src/tokens.rs`, `src/lexer.rs` | Tokens and UTF-8 byte-offset spans |
 | `src/parser.rs`, `src/ast.rs` | Recursive-descent parsing and untyped syntax |
 | `src/semantic.rs`, `src/typed_ast.rs` | Types, scopes, loop targets, return analysis, resolved semantic IDs |
-| `src/semantic/defaults.rs`, `src/semantic/call_binding.rs` | Declaration-checked pure defaults and hygienic named/default binding |
+| `src/semantic/defaults.rs`, `src/semantic/pure_expression.rs`, `src/semantic/call_binding.rs` | Declaration-checked defaults/contracts, shared whitelist, and hygienic named/default binding |
 | `src/number_literal.rs` | Shared literal syntax/finite-representability rules with stage-specific errors |
 | `src/flow.rs` | Private completion sets shared by semantic/backend flow summaries |
 | `src/host.rs`, `src/exports.rs` | Ordered host declarations, private external-type eligibility, and owned export selection |
@@ -127,8 +127,9 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   WP7 implements acyclic chain/diamond result inference and its named/default
   interactions (#11/#14/#15); [#16 release gates passed](docs/was_language_extensions_plan.md#issue-16-wp7-release-validation),
   including current-source native/browser ABI and diagnostic coverage. Every recursive
-  component member still needs an explicit result in the initial release. WP8–WP12
-  remain proposed; WP13 optimization requires separate authorization.
+  component member still needs an explicit result in the initial release. WP8 implements
+  whitelist `requires` contracts; [release gates passed](docs/was_language_extensions_plan.md#wp8-release-validation).
+  WP9–WP12 remain proposed; WP13 optimization requires separate authorization.
   Preserve `target/wp7-inference` when cleaning generated output. Before changing defaults, call binding, or
   normalized lowering, read [the handoff](docs/wp6-wp7-development.md) and
   [named-call interface](docs/named-call-interface.md) for origins, ownership,
@@ -194,6 +195,26 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
 
 These are deliberate semantics, not implementation accidents. Preserve them in
 refactors; specify and test any intentional behavior change explicitly.
+
+### Function preconditions (WP8)
+
+- Before changing contracts or their shared whitelist, read extension spec §13 and
+  [WP8's frozen contracts](docs/was_language_extensions_plan.md#wp8--whitelist-contracts-spec-13).
+- Raw/typed functions carry ordered `contracts` records with `value` and expression-only
+  byte `span`; existing constructors supply an empty vector. `requires` is reserved
+  for source/host-language names, while host module/field names remain unrestricted.
+- Declaration checking handles each function's parameter types/defaults then contracts
+  before inference/body checks. Contracts require bool, read all formals, and preserve
+  the shared whitelist and skipped-child checks. They never alter result inference or
+  definite return, even when constant false.
+- All callee parameters are validated after caller defaults and before ordered contracts;
+  false traps before later clauses/body. This entry path covers exports, internal calls,
+  and recursion. Raw exports stay full-arity. Keep checks at every optimization level.
+- The structural walker visits contracts before bodies. Preserve separate planners and
+  checked lowering's parameter-only read/type checks for mutable public typed trees.
+  `tests/contracts_frontend.rs`, `tests/contracts_lowering.rs`,
+  `tests/contracts_runtime.rs`, and `tests/contracts_adapters.rs` cover these boundaries;
+  runtime/browser cases retain the default ignored policy.
 
 ### Lexical trivia and source spans
 

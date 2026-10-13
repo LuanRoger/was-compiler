@@ -740,7 +740,7 @@ fn value_children_preserve_independent_memory_temporary_and_remainder_planning()
     let function = &program.functions[0];
     use wasm_encoder::ValType as ScratchType;
     assert_eq!(
-        super::super::temporaries::plan(&function.body).unwrap(),
+        super::super::temporaries::plan(function).unwrap(),
         [
             ScratchType::I32,
             ScratchType::I32,

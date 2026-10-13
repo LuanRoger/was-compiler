@@ -2,8 +2,8 @@ use thiserror::Error;
 
 use crate::{
     ast::{
-        BinaryOp, Block, CallArgument, DefaultExpression, Expr, Function, Param, Program,
-        Statement, StatementKind, Type, UnaryOp, ValueBlock,
+        BinaryOp, Block, CallArgument, ContractExpression, DefaultExpression, Expr, Function,
+        Param, Program, Statement, StatementKind, Type, UnaryOp, ValueBlock,
     },
     tokens::{Span, Token, TokenKind},
 };
@@ -83,12 +83,25 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
         } else {
             None
         };
+        let mut contracts = Vec::new();
+
+        while self.consume(TokenKind::Requires) {
+            let start = self.current_span().start();
+            let value = self.parse_expression()?;
+
+            contracts.push(ContractExpression {
+                value,
+                span: self.span_since(start),
+            });
+        }
+
         let body = self.parse_block()?;
 
         Ok(Function {
             name,
             params,
             return_type,
+            contracts,
             body,
             span: self.span_since(start),
         })
@@ -861,6 +874,7 @@ fn token_name(kind: &TokenKind<'_>) -> &'static str {
         TokenKind::Break => "break",
         TokenKind::Continue => "continue",
         TokenKind::Return => "return",
+        TokenKind::Requires => "requires",
         TokenKind::In => "in",
 
         TokenKind::True => "true",

@@ -1,8 +1,8 @@
 use std::ops::ControlFlow;
 
 use crate::typed_ast::{
-    TypedBlock, TypedCallBinding, TypedExpr, TypedExprKind, TypedStatement, TypedStatementKind,
-    TypedValueBlock,
+    TypedBlock, TypedCallBinding, TypedExpr, TypedExprKind, TypedFunction, TypedStatement,
+    TypedStatementKind, TypedValueBlock,
 };
 
 pub(super) trait Visitor {
@@ -31,6 +31,16 @@ pub(super) trait Visitor {
     fn visit_expressions(&self) -> bool {
         true
     }
+}
+
+pub(super) fn walk_function<V: Visitor>(
+    function: &TypedFunction,
+    visitor: &mut V,
+) -> ControlFlow<V::Break> {
+    for contract in &function.contracts {
+        walk_expression(&contract.value, visitor)?;
+    }
+    walk_block(&function.body, visitor)
 }
 
 pub(super) fn walk_block<V: Visitor>(block: &TypedBlock, visitor: &mut V) -> ControlFlow<V::Break> {

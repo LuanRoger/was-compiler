@@ -12,7 +12,7 @@ pub(super) fn needs_remainder(program: &TypedProgram) -> bool {
     program
         .functions
         .iter()
-        .any(|function| walker::walk_block(&function.body, &mut RemainderVisitor).is_break())
+        .any(|function| walker::walk_function(function, &mut RemainderVisitor).is_break())
 }
 
 struct RemainderVisitor;
@@ -191,6 +191,7 @@ mod tests {
                 name: "test".to_owned(),
                 params: vec![],
                 return_type: Type::Void,
+                contracts: vec![],
                 body,
                 span: Span::new(0, 0),
             }],
@@ -372,6 +373,7 @@ mod tests {
             name: "uncalled".to_owned(),
             params: vec![],
             return_type: Type::Number,
+            contracts: vec![],
             body: vec![statement(TypedStatementKind::Return(Some(remainder())))],
             span: Span::new(0, 0),
         });

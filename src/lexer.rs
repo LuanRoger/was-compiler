@@ -283,6 +283,7 @@ impl<'a> Lexer<'a> {
         match value.as_ref() {
             "fn" => self.make_token(TokenKind::Fn),
             "return" => self.make_token(TokenKind::Return),
+            "requires" => self.make_token(TokenKind::Requires),
             "let" => self.make_token(TokenKind::Let),
             "if" => self.make_token(TokenKind::If),
             "else" => self.make_token(TokenKind::Else),

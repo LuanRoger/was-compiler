@@ -126,8 +126,32 @@ normalized host boundaries, and strings/arrays use existing descriptor handles.
 Raw exports retain full arity; private range signatures cannot be host imports or
 selected exports. Raw Rust AST consumers wrap explicit `Function.return_type`
 annotations in `Some(type)`; `None` requests inference. Typed results remain concrete.
-Contracts, match, pipelines, closures, and placeholders (WP8–WP12) remain proposed
-later packages; WP13 optimization requires separate authorization.
+WP8 function preconditions are implemented:
+
+```text
+fn divide(a: number, b: number = 1) -> number
+    requires b != 0
+{
+    return a / b;
+}
+fn main() { return divide(a: 12, b: 3); }
+```
+
+Each `requires` expression must be `bool` and uses the same narrow pure-expression
+whitelist as defaults, but may read all formal parameters. Every declaration and
+skipped logical operand is checked. After explicit arguments and omitted defaults
+run, the callee validates all parameters, then checks contracts in declaration
+order before its body, including internal, recursive, and full-arity raw export
+calls. A false contract causes a standard Wasm `unreachable` trap; there is no
+custom failure metadata, check elimination, or effect on result inference/missing
+return checks. `requires` is reserved for source and host-language names, not host
+module/field names. See [the contract specification](docs/was_language_extensions_spec.md#13-feature-specification-function-preconditionscontracts)
+and [WP8 status and suites](docs/was_language_extensions_plan.md#wp8--whitelist-contracts-spec-13).
+[WP8 release gates passed](docs/was_language_extensions_plan.md#wp8-release-validation),
+including freshly rebuilt browser bindings and the full ignored runtime suite.
+Match, pipelines, closures, and
+placeholders (WP9–WP12) remain proposed; WP13 optimization requires separate
+authorization.
 
 Local declarations support both `let name = initializer;` and the existing
 `let name: type = initializer;`. Without an annotation, the initializer determines

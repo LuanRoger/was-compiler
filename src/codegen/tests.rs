@@ -209,6 +209,7 @@ fn user(id: usize, name: &str, params: &[Type], return_type: Type) -> TypedFunct
             })
             .collect(),
         return_type,
+        contracts: Vec::new(),
         body: Vec::new(),
         span: Span::new(0, 0),
     }

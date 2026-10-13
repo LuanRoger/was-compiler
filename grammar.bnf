@@ -5,6 +5,7 @@
 <function> ::= "fn" <ws1> <identifier> <ws>
                "(" <ws> <parameter_list>? <ws> ")"
                ( <ws> "->" <ws> <type> )?
+               ( <ws> "requires" <ws1> <expression> )*
                <ws> <block>
 
 # Omitted results infer concrete types from reachable explicit returns, or void
@@ -16,6 +17,11 @@
 
 <parameter> ::= <identifier> <ws> ":" <ws> <type>
                  ( <ws> "=" <ws> <expression> )?
+
+# Ordered requires clauses are exact bool expressions checked after parameter
+# types/defaults and before inference/bodies, including unused functions. They
+# share the default whitelist but can read all formals. requires is reserved.
+# Contracts do not alter result inference or excuse invalid bodies.
 
 # Defaults are trailing-only and declaration-checked against the pure-expression
 # whitelist. They read only earlier formals and retain mandatory parameter types.

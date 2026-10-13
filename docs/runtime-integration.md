@@ -116,6 +116,32 @@ first-error ordering remain unchanged. See the
 [raw-AST migration](named-call-interface.md#public-ast-migration) and
 [release validation](was_language_extensions_plan.md#issue-16-wp7-release-validation).
 
+## Function preconditions (WP8)
+
+Source functions may declare ordered `requires` clauses after the optional result
+annotation and before the body; see [syntax and the shared pure whitelist](was_language_extensions_spec.md#13-feature-specification-function-preconditionscontracts).
+Source invocation order is written explicit arguments, omitted defaults in formal
+order, all callee parameter validation, ordered contracts, then body. Validation of
+string/array/range parameters precedes even a constant false contract or one that
+never reads those parameters. Internal and recursive calls enforce the same checks
+as selected raw exports. Raw exports retain full arity: the host supplies every
+machine argument; neither source defaults nor contracts add host wrappers.
+
+A false condition executes standard Wasm `unreachable`; JavaScript observes a
+`WebAssembly.RuntimeError`, without portable custom messages, contract metadata,
+or rollback of prior argument/default effects. Declaration errors use expression-only
+UTF-8 spans through the existing renderer. Contracts must be `bool`, read only
+formals, and use the narrow default whitelist; all declarations and skipped operands
+are checked before inference/body analysis. False contracts do not relax return rules
+or change inference. No optimization level removes checks. `requires` is reserved
+as a source/host-language name, while arbitrary nonempty host module/field names
+remain valid.
+
+WP8 is implemented and [release gates passed](was_language_extensions_plan.md#wp8-release-validation),
+including rebuilt-browser and full ignored runtime coverage. See
+[WP8 suites and frozen contracts](was_language_extensions_plan.md#wp8--whitelist-contracts-spec-13).
+WP9–WP12 match/pipelines/closures/placeholders remain proposed.
+
 ## Export selection in Rust
 
 ```rust

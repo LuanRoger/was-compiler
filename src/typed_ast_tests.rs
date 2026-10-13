@@ -1238,6 +1238,7 @@ fn typed_program_owns_names_literals_and_bodies_after_inputs_are_dropped() {
                     span: fragment_span("value: string"),
                 }],
                 return_type: Type::String,
+                contracts: vec![],
                 body: vec![
                     TypedStatement {
                         kind: StmtKind::Let {

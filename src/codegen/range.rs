@@ -72,7 +72,7 @@ pub(super) fn helpers(program: &TypedProgram) -> &'static [Helper] {
     if program
         .functions
         .iter()
-        .any(|function| walker::walk_block(&function.body, &mut Membership).is_break())
+        .any(|function| walker::walk_function(function, &mut Membership).is_break())
     {
         &Helper::ALL
     } else if needed(program) {
@@ -119,7 +119,7 @@ pub(super) fn needed(program: &TypedProgram) -> bool {
     program.functions.iter().any(|function| {
         function.return_type == Type::Range
             || function.params.iter().any(|param| param.ty == Type::Range)
-            || walker::walk_block(&function.body, &mut Ranges).is_break()
+            || walker::walk_function(function, &mut Ranges).is_break()
     })
 }
 

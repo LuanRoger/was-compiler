@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    ast::{BinaryOp, Type},
+    ast::Type,
     flow::Flow,
     tokens::Span,
     typed_ast::{
@@ -219,47 +219,16 @@ fn check_default(
     earlier: &[crate::typed_ast::VariableId],
     span: Span,
 ) -> Result<(), CodegenError> {
-    let invalid = |reason| CodegenError::InvalidNormalizedCall { reason, span };
-    match &value.kind {
-        TypedExprKind::Number(_) | TypedExprKind::String(_) | TypedExprKind::Bool(_) => {}
-        TypedExprKind::Identifier { id, .. } => {
-            if !earlier.contains(id) {
-                return Err(invalid(
-                    "defaults may only read owned earlier-formal bindings",
-                ));
+    super::pure::check(value, earlier).map_err(|violation| {
+        let reason = match violation {
+            super::pure::Violation::Read => "defaults may only read owned earlier-formal bindings",
+            super::pure::Violation::Membership => "range membership is not allowed in defaults",
+            super::pure::Violation::Expression => {
+                "default initializer is outside the pure-expression whitelist"
             }
-        }
-        TypedExprKind::Unary { expr, .. } => check_default(expr, earlier, span)?,
-        TypedExprKind::Binary { left, op, right } => {
-            if *op == BinaryOp::In {
-                return Err(invalid("range membership is not allowed in defaults"));
-            }
-            check_default(left, earlier, span)?;
-            check_default(right, earlier, span)?;
-        }
-        TypedExprKind::Call {
-            func: FunctionRef::Builtin(BuiltinFunction::Len),
-            args,
-            ..
-        } => {
-            for arg in args {
-                check_default(arg, earlier, span)?;
-            }
-        }
-        TypedExprKind::Call { .. }
-        | TypedExprKind::NormalizedCall(_)
-        | TypedExprKind::Range { .. }
-        | TypedExprKind::Loop { .. }
-        | TypedExprKind::Block(_)
-        | TypedExprKind::If { .. }
-        | TypedExprKind::Array(_)
-        | TypedExprKind::Index { .. } => {
-            return Err(invalid(
-                "default initializer is outside the pure-expression whitelist",
-            ));
-        }
-    }
-    Ok(())
+        };
+        CodegenError::InvalidNormalizedCall { reason, span }
+    })
 }
 
 fn predicted_result(ty: Type, args: &[TypedExpr]) -> ExprResult {

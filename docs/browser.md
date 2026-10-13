@@ -263,8 +263,39 @@ retaining UTF-8 byte spans and declaration/call origins. Fully annotated source
 keeps existing literal stages and first-error ordering. See the
 [public raw-AST migration](named-call-interface.md#public-ast-migration) and
 [#16 release evidence](was_language_extensions_plan.md#issue-16-wp7-release-validation).
-Contracts, match, pipelines, closures, and placeholders remain proposed later
-packages; optimization requires separate authorization.
+Match, pipelines, closures, and placeholders (WP9–WP12) remain proposed;
+optimization requires separate authorization.
+
+## Function preconditions (WP8)
+
+`compile` and `compileWat` accept named-function `requires` clauses through the
+shared core, with the same declaration checks and expression-only UTF-8 spans as
+the native adapter:
+
+```text
+fn divide(a: number, b: number = 1) requires b != 0 { return a / b; }
+fn main() { return divide(a: 12, b: 3); }
+```
+
+After compilation/instantiation, `main()` returns `4`; the full-arity raw export
+`divide(12, 3)` also returns `4`, and `divide(12, 0)` throws a standard
+`WebAssembly.RuntimeError`. Raw JavaScript calls do not apply source defaults.
+Source calls evaluate explicit arguments, then omitted defaults; the callee validates
+all parameters before checking contracts in declaration order, then runs its body.
+Internal and recursive calls enforce the same checks. No custom contract metadata,
+portable error message, check elimination, or rollback is added.
+
+Conditions require exact `bool` and share the [narrow default whitelist](was_language_extensions_spec.md#142-default-expression-restrictions-and-scope),
+with all formals readable. All declarations and skipped operands are checked before
+inference/body analysis; false conditions do not excuse missing returns or change
+inference. `requires` is reserved for source/host-language names, not host module/field
+names. Existing bool normalization, descriptor marshaling and private range ABI
+restrictions are unchanged.
+
+WP8 is implemented and [release gates passed](was_language_extensions_plan.md#wp8-release-validation),
+including freshly rebuilt bindings, browser parity and the full ignored runtime suite.
+See [actual suites and frozen contracts](was_language_extensions_plan.md#wp8--whitelist-contracts-spec-13).
+Rebuild bindings after any further core change before browser validation.
 
 ## Host function example
 

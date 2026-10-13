@@ -254,6 +254,7 @@ fn return_program(value: TypedExpr, span: Span) -> TypedProgram {
             name: "bad".into(),
             params: vec![],
             return_type: value.ty.value_type().unwrap(),
+            contracts: vec![],
             body: vec![TypedStatement {
                 kind: TypedStatementKind::Return(Some(value)),
                 span,

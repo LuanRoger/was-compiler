@@ -1,11 +1,11 @@
 # WAS Language Extensions — Unified Design and Implementation Specification
 
-**Status:** Design baseline with the 13 approved decisions and implementation clarifications (WP1–WP5 implementation complete: compound assignments, while transfers, block/if values, internal Never, statement/value loops, and range construction/internal calls, numeric membership, and range/array statement for; issue #6 adapter/interaction support implemented, all WP5 release gates passed (exact evidence in plan §5), WP6 named/default parameters are implemented and #13 release validation passed; WP7 acyclic result inference and named/default integration are implemented and #16 release validation passed; WP8–WP12 remain proposed and WP13 requires separate authorization)
+**Status:** Design baseline with the 13 approved decisions and implementation clarifications (WP1–WP5 implementation complete: compound assignments, while transfers, block/if values, internal Never, statement/value loops, and range construction/internal calls, numeric membership, and range/array statement for; issue #6 adapter/interaction support implemented, all WP5 release gates passed (exact evidence in plan §5), WP6 named/default parameters are implemented and #13 release validation passed; WP7 acyclic result inference and named/default integration are implemented and #16 release validation passed; WP8 whitelist contracts are implemented and release gates passed (exact evidence in plan §5); WP9–WP12 remain proposed and WP13 requires separate authorization)
 **Version:** 0.3 — 9 October 2026 (implementation clarification update)  
 **Target:** Core WebAssembly, initially the MVP-compatible instruction set already used by `was-compiler`, with optional optimizations gated by Wasm features.  
 **Repository:** https://github.com/LuanRoger/was-compiler
 
-> **Normative language.** **MUST**, **SHOULD**, and **MAY** describe requirements, strong recommendations, and optional implementation choices. This document establishes a coherent *proposed* semantic model. Decisions tagged **Open decision** need confirmation before being frozen as language guarantees. Compound assignments (§4/WP1), bare `while` transfers (§7/WP2), block/if values with internal Never (§§3.2, 8.1/WP3), and statement/value loops (§7/WP4) are implemented. Range construction, internal calls, exact numeric membership (§5/WP5), and range/array statement `for` (§6/issues #4–#5) are also implemented, with adapter/interaction support under issue #6; all WP5 release gates passed (exact evidence in plan §5). WP6 user-function named/mixed-prefix calls and trailing pure defaults (§14/issues #10/#12) are implemented, and [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation). WP7 acyclic result inference (§9) and its named/default integration are implemented, and [#16 release validation passed](was_language_extensions_plan.md#issue-16-wp7-release-validation). Every recursive component member requires an explicit result in this initial release. Other extension examples remain proposed `.was` syntax, not claims about the present compiler.
+> **Normative language.** **MUST**, **SHOULD**, and **MAY** describe requirements, strong recommendations, and optional implementation choices. This document establishes a coherent *proposed* semantic model. Decisions tagged **Open decision** need confirmation before being frozen as language guarantees. Compound assignments (§4/WP1), bare `while` transfers (§7/WP2), block/if values with internal Never (§§3.2, 8.1/WP3), and statement/value loops (§7/WP4) are implemented. Range construction, internal calls, exact numeric membership (§5/WP5), and range/array statement `for` (§6/issues #4–#5) are also implemented, with adapter/interaction support under issue #6; all WP5 release gates passed (exact evidence in plan §5). WP6 user-function named/mixed-prefix calls and trailing pure defaults (§14/issues #10/#12) are implemented, and [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation). WP7 acyclic result inference (§9) and its named/default integration are implemented, and [#16 release validation passed](was_language_extensions_plan.md#issue-16-wp7-release-validation). Every recursive component member requires an explicit result in this initial release. WP8 whitelist contracts (§13) are implemented and [release gates passed](was_language_extensions_plan.md#wp8-release-validation), including rebuilt-browser and full ignored runtime coverage. WP9–WP12 match/pipelines/closures/placeholders and their integrated examples remain proposed `.was` syntax, not claims about the present compiler.
 
 The [concrete implementation plan](was_language_extensions_plan.md) maps this
 specification to ordered work packages, repository files, acceptance tests, and
@@ -16,7 +16,7 @@ and bare `while` transfers (§7/WP2), followed by block/if values and internal N
 (§§3.2, 8.1/WP3) and statement/value loops (§7/WP4), are implemented;
 WP5's construction/internal-call, numeric membership, range-for, and array-for checkpoints are implemented;
 issue #6 completes adapter/interaction implementation and all release gates passed.
-Exact evidence is recorded in [plan §5](was_language_extensions_plan.md#5-documentation-and-validation-workflow). WP6 named/default parameters are implemented on main, and [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation). WP7 acyclic result inference and combined-feature integration are implemented, with [#16 release validation](was_language_extensions_plan.md#issue-16-wp7-release-validation). WP8–WP12 remain proposed later packages and WP13 requires separate authorization.
+Exact evidence is recorded in [plan §5](was_language_extensions_plan.md#5-documentation-and-validation-workflow). WP6 named/default parameters are implemented on main, and [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation). WP7 acyclic result inference and combined-feature integration are implemented, with [#16 release validation](was_language_extensions_plan.md#issue-16-wp7-release-validation). WP8 whitelist contracts are implemented, with [release gates passed](was_language_extensions_plan.md#wp8-release-validation). WP9–WP12 remain proposed later packages and WP13 requires separate authorization.
 
 ## 1. Goals and non-goals
 
@@ -48,7 +48,7 @@ annotated `let name: type = value;` and inferred `let name = value;` declaration
 reassignment, numeric compound assignments, `if`, `while`, bare `break;` /
 `continue;`, range/array statement `for`, `return`, statement/value `loop`, value breaks in loop expressions,
 tail-valued blocks, value-context `if` / `else if`, named/mixed-prefix calls,
-trailing pure parameter defaults, and `number`,
+trailing pure parameter defaults, ordered `requires` preconditions, and `number`,
 `bool`, `string`, `number[]`, `range`, and
 `void`. Every local requires an initializer and retains a fixed type. `//` line comments and non-nesting `/* ... */` block comments are implemented.
 Use the local implementation and tests, alongside README and grammar, as evidence
@@ -69,7 +69,7 @@ output and diagnostics; the extensions below do not imply optimization passes.
 
 **Compatibility requirements:**
 
-- Existing valid programs MUST remain valid wherever possible, except new keywords intentionally reserve previously usable names. `break`, `continue`, `loop`, `in`, and `for` are now reserved source/host-language names; existing bindings/functions using them must be renamed. Standalone `_` bindings are intentionally reserved when their extension arrives. Host import module/field names remain unaffected.
+- Existing valid programs MUST remain valid wherever possible, except new keywords intentionally reserve previously usable names. `break`, `continue`, `loop`, `in`, `for`, and `requires` are now reserved source/host-language names; existing bindings/functions using them must be renamed. Standalone `_` bindings are intentionally reserved when their extension arrives. Host import module/field names remain unaffected.
 - `let` MUST remain assignable under this extension set (no implicit switch to Rust-like immutable `let`).
 - Any optimization MUST preserve observable `f64` numerical semantics unless a separately documented opt-in mode is introduced.
 - Host imports/exports MUST retain their current raw ABI. Functions with `range` parameters/results cannot be raw-exported or imported until a host ABI is defined; callable types in function signatures are not supported in v1.
@@ -977,6 +977,13 @@ Resolve the stage to a known declaration or local closure binding. Lower to a di
 
 ## 13. Feature specification: function preconditions/contracts
 
+**Implementation status:** WP8 is implemented and
+[release gates passed](was_language_extensions_plan.md#wp8-release-validation),
+including freshly rebuilt browser bindings and the full ignored runtime suite.
+See [the frozen interfaces and actual suites](was_language_extensions_plan.md#wp8--whitelist-contracts-spec-13).
+The rules below describe current behavior; optional optimizations are explicitly
+future work.
+
 ### 13.1 Syntax
 
 ```
@@ -994,22 +1001,67 @@ fn normalize(x: number) -> number
 }
 ```
 
-`requires` attaches to a named function declaration after its optional return type, before `{`. Contract expressions are typed `bool`. Each condition is checked in declaration order.
+`requires` attaches to a named function declaration after its optional return type,
+before `{`. Repeated clauses need no newline or semicolon. Contract expressions must
+have exact type `bool`; each condition is checked in declaration order. `requires`
+is reserved for source bindings/functions and host-language registration names, not
+host import module/field names.
+
+Raw `Function.contracts: Vec<ContractExpression>` and typed
+`TypedFunction.contracts: Vec<TypedContract>` are ordered vectors. Each wrapper
+contains `value: Expr` / `TypedExpr` and `span: Span` covering only the expression's
+original UTF-8 bytes (including parentheses), excluding the keyword and surrounding
+trivia. Existing constructors supply `vec![]`. This migration adds no independent
+span field to ordinary expressions.
 
 ### 13.2 Semantics
 
-- Preconditions are evaluated **after argument binding and default-argument evaluation**, but before execution of the function body.
-- Every normal call path to the function must enforce its preconditions unless the compiler proves they hold.
-- False conditions produce a **contract failure trap**. The initial Core Wasm backend may use `unreachable` and emit optional debug metadata containing the contract's source span and textual condition; a plain Wasm trap cannot portably deliver a rich error message by itself.
-- Contract expressions use the initial pure-expression whitelist in §14.2, with all formal parameters readable. Reject **all user-function calls and host-function calls** in contracts in v1, even when they appear harmless. Reject assignments. User-function purity analysis is a future feature.
-- Contracts do not automatically prove the function's return value or eliminate all runtime safety checks.
-- Named functions exported through the host retain runtime precondition checks; closures are not exported or passed as values in v1.
+- Source invocations evaluate explicit arguments once in written order, then omitted
+  defaults in formal order. The callee performs **all parameter validation before
+  any contract**, including string/array/range parameters not read by conditions.
+  It then evaluates contracts sequentially before executing the body. A trap stops
+  later clauses and the body; logical operands retain runtime short-circuiting.
+- Every invocation path enforces the same callee-entry checks: ordinary positional,
+  named/default, internal, recursive and selected raw exports. Raw exports keep
+  their canonical full-arity signature; hosts supply every machine argument and
+  receive no default-generation wrapper.
+- False conditions execute standard Wasm `unreachable`. No custom failure metadata
+  or portable rich exception message is emitted. Prior argument/default effects
+  are not rolled back.
+- Conditions use the narrow shared pure-expression whitelist in §14.2 with all
+  formal parameters readable, but no body/caller locals. Require exact `bool` and
+  existing operator/builtin types. Reject all user/host calls, writes, indexing,
+  array/range construction, membership, blocks/if/loops and normalized calls,
+  including in runtime-skipped children. Pure permits shared-array reads and traps,
+  not writes or runtime allocation. User-function purity analysis is future work.
+- Semantic declaration checks run in source order: each function's parameter
+  types/defaults, then ordered contracts, before result inference or body analysis.
+  Unused/unexported declarations and skipped operands are checked. Invalid or
+  overflowing contract number literals are semantic errors at the expression's
+  declaration origin under the same syntax/finite-representability rules as
+  defaults; underflow is allowed. Ordinary body-literal stages remain unchanged.
+- Contracts are assertions, not flow/inference facts. Even literal false does not
+  excuse missing returns, suppress body checks or change inferred results. There
+  is no check elimination or constant folding; all optimization levels retain
+  identical output and diagnostics.
 
 **Security/correctness:** never remove a trap solely because the user wrote a `requires` clause. The clause is an assertion to verify, not a trusted assumption that excuses unsound codegen.
 
 ### 13.3 Static reasoning and lowering
 
-Initially: at function entry, emit `if (!condition) unreachable`. Later: a local refinement/range-analysis pass can propagate facts known after a successful check; eliminate redundant checks only if the proof includes all side-effectful intervening operations and mutation/aliasing rules. Constant true contracts can disappear; constant false contracts can produce a compile-time warning or an unconditional trap, while preserving defined call behavior.
+**Implemented:** after all parameter validation, emit `if (!condition) unreachable`
+for each clause, then lower/check the body normally. The structural walker visits
+contracts in declaration order before the body. Local, temporary, memory, range and
+remainder planning remain independent policies. The private checked boundary
+validates public mutable contract expressions, formal reads and result annotations,
+including unexported functions; semantic analysis alone is not a validity guarantee.
+
+**Future only, not implemented:** a separately authorized refinement/range-analysis
+pass could propagate facts after successful checks. Proof-based elimination or
+constant-check simplification must preserve intervening effects, mutation/aliasing,
+validation and trap order. Optional debug metadata and constant-false warnings need
+separate contracts. WP8 emits all checks, including literal true/false clauses;
+these possibilities do not authorize an optimization change.
 
 ## 14. Feature specification: named and default parameters
 
@@ -1019,9 +1071,9 @@ pure defaults are implemented on main under #10/#12, and
 Earlier worktree-development evidence in the handoff is historical. WP7 acyclic
 result inference and named/default integration are implemented, with
 [#16 release validation passed](was_language_extensions_plan.md#issue-16-wp7-release-validation).
-Contracts, pipeline injection, and local closure calls mentioned below belong to
-proposed later packages, not
-the current compiler. See the [current public AST/interface migration](named-call-interface.md#current-wp6-contract-issues-1012).
+WP8 contracts are implemented with [release gates passed](was_language_extensions_plan.md#wp8-release-validation).
+Pipeline injection and local closure calls mentioned below remain proposed later
+packages, not current compiler features. See the [current public AST/interface migration](named-call-interface.md#current-wp6-contract-issues-1012).
 
 ### 14.1 Syntax
 
@@ -1074,7 +1126,7 @@ Defaults are evaluated **for each invocation**, not once at declaration time. Ex
 
 ### 14.3 ABI and local callable restrictions
 
-The compiler MUST preserve one canonical full-arity machine signature per named function. Bind written positional/named arguments to formal parameters before emitting a call. Evaluate explicit arguments once in source order, then omitted defaults in formal declaration order, then enter the callee and execute its body (contracts are a later WP8 entry check).
+The compiler MUST preserve one canonical full-arity machine signature per named function. Bind written positional/named arguments to formal parameters before emitting a call. Evaluate explicit arguments once in source order, then omitted defaults in formal declaration order, then enter the callee, validate all parameters, check WP8 contracts in declaration order, and execute its body.
 
 ```
 clamp(120, max: 200)
@@ -1220,6 +1272,14 @@ Keep ordinary named-function calls using their existing callee representation if
 
 ### 16.2 Semantic passes (recommended)
 
+**Current WP6–WP8 staging:** source-order declarations check each function's
+parameter types/defaults then ordered contracts, before recursive annotation
+checks, stable dependency-order result inference and source-order final body
+checks. Contracts use concrete parameter types and cannot call inferred functions;
+no contract participates in result inference. The broader sequence below is a
+future architectural sketch for WP9–WP12, not implemented pass order or permission
+to move contract checking after inference.
+
 1. **Lex/parse:** recognize the surface syntax and retain precise spans.
 2. **Declaration collection:** register all named functions and parameters/defaults;
    allocate unresolved return type variables. Analyze valid internal signatures
@@ -1301,6 +1361,14 @@ Capture-cell elimination/inlining remains optional and must preserve shared
 mutations, side effects, and any observable allocation/trap behavior.
 
 ### 17.5 Optimizations enabled by the features
+
+This table mixes existing baseline lowering techniques (for example named/default
+normalization and stack-valued branches) with **future opportunities**, not an
+implemented optimizer. All current levels are no-ops with exact output/diagnostic
+parity. In particular contract elimination/refinement, closure optimization,
+pipeline fusion and external `wasm-opt` integration are not implemented; WP13
+requires separate authorization and measured, independently validated changes.
+WP9–WP12 syntax remains proposed.
 
 | Optimization | Feature(s) | Preconditions / warning |
 |---|---|---|

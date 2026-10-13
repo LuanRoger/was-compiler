@@ -3,7 +3,7 @@ use std::ops::ControlFlow;
 use crate::{
     ast::Type,
     typed_ast::{
-        ExprResult, TypedBlock, TypedExpr, TypedExprKind, TypedStatement, TypedStatementKind,
+        ExprResult, TypedExpr, TypedExprKind, TypedFunction, TypedStatement, TypedStatementKind,
     },
 };
 use wasm_encoder::ValType;
@@ -13,7 +13,21 @@ use super::{
     walker::{self, Visitor},
 };
 
-pub(super) fn plan(block: &TypedBlock) -> Result<Vec<ValType>, CodegenError> {
+pub(super) fn plan(function: &TypedFunction) -> Result<Vec<ValType>, CodegenError> {
+    let mut visitor = TemporaryVisitor {
+        count: 0,
+        types: Vec::new(),
+    };
+
+    if let ControlFlow::Break(error) = walker::walk_function(function, &mut visitor) {
+        return Err(error);
+    }
+
+    Ok(visitor.types)
+}
+
+#[cfg(test)]
+fn count(block: &crate::typed_ast::TypedBlock) -> Result<u32, CodegenError> {
     let mut visitor = TemporaryVisitor {
         count: 0,
         types: Vec::new(),
@@ -23,12 +37,7 @@ pub(super) fn plan(block: &TypedBlock) -> Result<Vec<ValType>, CodegenError> {
         return Err(error);
     }
 
-    Ok(visitor.types)
-}
-
-#[cfg(test)]
-fn count(block: &TypedBlock) -> Result<u32, CodegenError> {
-    super::checked_u32(plan(block)?.len(), "temporary local count")
+    Ok(visitor.count)
 }
 
 struct TemporaryVisitor {
@@ -235,7 +244,7 @@ mod tests {
         let original = program.clone();
 
         assert_eq!(
-            plan(&program.functions[0].body).unwrap(),
+            plan(&program.functions[0]).unwrap(),
             [
                 ValType::I32, // first array
                 ValType::I32, // local compound RHS array, no local-place scratch

@@ -227,7 +227,14 @@ pub struct TypedFunction {
     pub name: String,
     pub params: Vec<TypedParam>,
     pub return_type: Type,
+    pub contracts: Vec<TypedContract>,
     pub body: TypedBlock,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypedContract {
+    pub value: TypedExpr,
     pub span: Span,
 }
 

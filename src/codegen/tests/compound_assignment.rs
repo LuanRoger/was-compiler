@@ -247,7 +247,7 @@ fn legacy_array_temporary_groups_and_preorder_slots_remain_byte_identical() {
         )
         .unwrap();
     assert_eq!(
-        super::super::temporaries::plan(&program.functions[0].body).unwrap(),
+        super::super::temporaries::plan(&program.functions[0]).unwrap(),
         [wasm_encoder::ValType::I32; 4]
     );
     let bytes = compile(&program).unwrap();

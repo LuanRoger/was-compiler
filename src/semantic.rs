@@ -12,14 +12,16 @@ use crate::{
     tokens::Span,
     typed_ast::{
         BuiltinFunction, CallBindingOrigin, ExprResult, FunctionId, FunctionRef, LoopId,
-        TypedBlock, TypedCallBinding, TypedExpr, TypedExprKind, TypedFunction, TypedNormalizedCall,
-        TypedParam, TypedProgram, TypedStatement, TypedStatementKind, TypedValueBlock, VariableId,
+        TypedBlock, TypedCallBinding, TypedContract, TypedExpr, TypedExprKind, TypedFunction,
+        TypedNormalizedCall, TypedParam, TypedProgram, TypedStatement, TypedStatementKind,
+        TypedValueBlock, VariableId,
     },
 };
 
 mod call_binding;
 mod defaults;
 mod inference;
+mod pure_expression;
 
 #[derive(Debug, Error, PartialEq)]
 pub enum SemanticError {
@@ -131,6 +133,17 @@ pub enum SemanticError {
     )]
     DefaultNumberLiteralOutOfRange { literal: String, span: Span },
 
+    #[error("Invalid contract expression: {reason} at {span:?}")]
+    InvalidContractExpression { reason: &'static str, span: Span },
+
+    #[error("Invalid number literal '{literal}' in contract expression at {span:?}")]
+    InvalidContractNumberLiteral { literal: String, span: Span },
+
+    #[error(
+        "Number literal '{literal}' in contract expression is outside the finite f64 range at {span:?}"
+    )]
+    ContractNumberLiteralOutOfRange { literal: String, span: Span },
+
     #[error("Operator '{operator}' cannot be applied to {left:?} and {right:?} at {span:?}")]
     InvalidBinaryOperands {
         operator: &'static str,
@@ -195,6 +208,9 @@ impl SemanticError {
             | Self::InvalidDefaultExpression { span, .. }
             | Self::InvalidDefaultNumberLiteral { span, .. }
             | Self::DefaultNumberLiteralOutOfRange { span, .. }
+            | Self::InvalidContractExpression { span, .. }
+            | Self::InvalidContractNumberLiteral { span, .. }
+            | Self::ContractNumberLiteralOutOfRange { span, .. }
             | Self::InvalidBinaryOperands { span, .. }
             | Self::InvalidAssignmentTarget { span }
             | Self::InvalidCompoundAssignmentOperator { span, .. }
@@ -220,6 +236,7 @@ struct FunctionSignature {
     params: Vec<Type>,
     param_names: Vec<String>,
     defaults: Vec<Option<defaults::CheckedDefault>>,
+    contracts: Vec<TypedContract>,
     return_type: Type,
 }
 
@@ -284,6 +301,7 @@ impl SemanticAnalyzer {
                 params: vec![Type::NumberArray],
                 param_names: vec![],
                 defaults: vec![],
+                contracts: vec![],
                 return_type: Type::Number,
             },
         );
@@ -296,6 +314,7 @@ impl SemanticAnalyzer {
                     params: function.params.clone(),
                     param_names: vec![],
                     defaults: vec![],
+                    contracts: vec![],
                     return_type: function.return_type,
                 },
             );
@@ -312,6 +331,7 @@ impl SemanticAnalyzer {
     fn analyze_program(&mut self, program: &Program) -> Result<TypedProgram, SemanticError> {
         let staged_declarations = program.functions.iter().any(|function| {
             function.return_type.is_none()
+                || !function.contracts.is_empty()
                 || function.params.iter().any(|param| param.default.is_some())
         });
 
@@ -325,6 +345,7 @@ impl SemanticAnalyzer {
                     .map(|param| param.name.clone())
                     .collect(),
                 defaults: (0..function.params.len()).map(|_| None).collect(),
+                contracts: vec![],
                 return_type: function.return_type.unwrap_or(Type::Void),
             };
 
@@ -340,7 +361,7 @@ impl SemanticAnalyzer {
             }
 
             if staged_declarations {
-                self.validate_defaults(function)?;
+                self.validate_declaration_expressions(function)?;
             } else {
                 for param in &function.params {
                     self.check_variable_type(&param.name, param.ty, param.span)?;
@@ -367,11 +388,20 @@ impl SemanticAnalyzer {
         function: &Function,
         id: FunctionId,
     ) -> Result<TypedFunction, SemanticError> {
-        self.analyze_function_with_context(
+        let mut typed = self.analyze_function_with_context(
             function,
             id,
             ReturnContext::Known(self.functions[&function.name].return_type),
-        )
+        )?;
+        typed.contracts = std::mem::take(
+            &mut self
+                .functions
+                .get_mut(&function.name)
+                .expect("final body analysis has a declared signature")
+                .contracts,
+        );
+
+        Ok(typed)
     }
 
     fn infer_result(&mut self, function: &Function, id: FunctionId) -> Result<Type, SemanticError> {
@@ -455,6 +485,7 @@ impl SemanticAnalyzer {
             name: function.name.clone(),
             params,
             return_type,
+            contracts: vec![],
             body,
             span: function.span,
         })

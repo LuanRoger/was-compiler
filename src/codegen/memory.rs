@@ -104,7 +104,7 @@ impl MemoryPlan {
                 used: &mut used,
             };
 
-            if let ControlFlow::Break(error) = walker::walk_block(&function.body, &mut visitor) {
+            if let ControlFlow::Break(error) = walker::walk_function(function, &mut visitor) {
                 return Err(error);
             }
         }
@@ -703,6 +703,7 @@ mod tests {
                 name: "test".to_owned(),
                 params: vec![],
                 return_type: Type::Void,
+                contracts: vec![],
                 body,
                 span: Span::new(0, 0),
             }],

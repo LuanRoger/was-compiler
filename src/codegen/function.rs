@@ -38,7 +38,7 @@ impl<'a> Context<'a> {
             .ok_or(CodegenError::LimitExceeded {
                 what: "function local count",
             })?;
-        let temporary_types = temporaries::plan(&function.body)?;
+        let temporary_types = temporaries::plan(function)?;
         first_temporary
             .checked_add(checked_u32(temporary_types.len(), "temporary local count")?)
             .ok_or(CodegenError::LimitExceeded {
@@ -506,6 +506,37 @@ pub(super) fn emit(function: &TypedFunction, module: &Layout) -> Result<Function
         }
     }
 
+    let readable: Vec<_> = function.params.iter().map(|param| param.id).collect();
+    for contract in &function.contracts {
+        super::pure::check(&contract.value, &readable).map_err(|violation| {
+            let reason = match violation {
+                super::pure::Violation::Read => "contracts may only read formal parameters",
+                super::pure::Violation::Membership => {
+                    "range membership is not allowed in contracts"
+                }
+                super::pure::Violation::Expression => {
+                    "contract expression is outside the pure-expression whitelist"
+                }
+            };
+            CodegenError::InvalidContractExpression {
+                reason,
+                span: contract.span,
+            }
+        })?;
+        expect_result(
+            emitter.name(),
+            Type::Bool.into(),
+            contract.value.ty,
+            contract.span,
+        )?;
+        emitter.emit_expr(&contract.value, contract.span)?;
+        emitter.instruction(&Instruction::I32Eqz);
+        emitter.begin_if(BlockType::Empty)?;
+        emitter.instruction(&Instruction::Unreachable);
+        emitter.end();
+    }
+
+    // Contracts are assertions, not trusted flow facts, even when constant false.
     let flow = emitter.emit_block(&function.body)?;
 
     if function.return_type != Type::Void && !flow.returns_or_diverges() {

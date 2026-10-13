@@ -157,7 +157,14 @@ pub struct Function {
     pub name: String,
     pub params: Vec<Param>,
     pub return_type: Option<Type>,
+    pub contracts: Vec<ContractExpression>,
     pub body: Block,
+    pub span: Span,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct ContractExpression {
+    pub value: Expr,
     pub span: Span,
 }
 

@@ -1,5 +1,5 @@
+use super::pure_expression::PureExpressionContext;
 use super::*;
-use crate::number_literal::{self, LiteralError};
 
 pub(super) struct CheckedDefault {
     pub(super) value: TypedExpr,
@@ -7,29 +7,34 @@ pub(super) struct CheckedDefault {
 }
 
 impl SemanticAnalyzer {
-    pub(super) fn validate_defaults(&mut self, function: &Function) -> Result<(), SemanticError> {
+    pub(super) fn validate_declaration_expressions(
+        &mut self,
+        function: &Function,
+    ) -> Result<(), SemanticError> {
         // Declaration lookup must not inherit any caller/body bindings. Formal IDs
         // are template identities, independent of the next body's allocator.
         let scopes = std::mem::replace(&mut self.scopes, vec![HashMap::new()]);
         let next_variable_id = std::mem::replace(&mut self.next_variable_id, 0);
-        let result = self.check_function_defaults(function);
+        let result = self.check_declaration_expressions(function);
 
         self.scopes = scopes;
         self.next_variable_id = next_variable_id;
 
-        let defaults = result?;
-        self.functions
+        let (defaults, contracts) = result?;
+        let signature = self
+            .functions
             .get_mut(&function.name)
-            .expect("function signatures precede default validation")
-            .defaults = defaults;
+            .expect("function signatures precede declaration validation");
+        signature.defaults = defaults;
+        signature.contracts = contracts;
 
         Ok(())
     }
 
-    fn check_function_defaults(
+    fn check_declaration_expressions(
         &mut self,
         function: &Function,
-    ) -> Result<Vec<Option<CheckedDefault>>, SemanticError> {
+    ) -> Result<(Vec<Option<CheckedDefault>>, Vec<TypedContract>), SemanticError> {
         let mut defaults = Vec::with_capacity(function.params.len());
         let mut saw_default = false;
 
@@ -38,7 +43,11 @@ impl SemanticAnalyzer {
 
             let default = if let Some(default) = &param.default {
                 saw_default = true;
-                self.check_default_expression(&default.value, default.span)?;
+                self.check_pure_expression(
+                    &default.value,
+                    default.span,
+                    PureExpressionContext::Default,
+                )?;
                 let (value, _) = self.analyze_expr(
                     &default.value,
                     default.span,
@@ -72,93 +81,29 @@ impl SemanticAnalyzer {
             defaults.push(default);
         }
 
-        Ok(defaults)
-    }
+        let mut contracts = Vec::with_capacity(function.contracts.len());
 
-    fn check_default_expression(&self, expr: &Expr, span: Span) -> Result<(), SemanticError> {
-        let invalid = |reason| SemanticError::InvalidDefaultExpression { reason, span };
-
-        match expr {
-            Expr::Number(literal) => {
-                number_literal::parse(literal).map_err(|error| match error {
-                    LiteralError::Invalid => SemanticError::InvalidDefaultNumberLiteral {
-                        literal: literal.clone(),
-                        span,
-                    },
-                    LiteralError::OutOfRange => SemanticError::DefaultNumberLiteralOutOfRange {
-                        literal: literal.clone(),
-                        span,
-                    },
-                })?;
-            }
-            Expr::String(_) | Expr::Bool(_) => {}
-            Expr::Identifier(name) => {
-                if self.lookup_variable(name).is_none() {
-                    return Err(SemanticError::UndefinedVariable {
-                        name: name.clone(),
-                        span,
-                    });
-                }
-            }
-            Expr::Unary { op, expr } => {
-                match op {
-                    UnaryOp::Negate | UnaryOp::Not => {}
-                }
-
-                self.check_default_expression(expr, span)?;
-            }
-            Expr::Binary { left, op, right } => {
-                match op {
-                    BinaryOp::In => return Err(invalid("range membership is not allowed")),
-                    BinaryOp::Add
-                    | BinaryOp::Subtract
-                    | BinaryOp::Multiply
-                    | BinaryOp::Divide
-                    | BinaryOp::Remainder
-                    | BinaryOp::Equal
-                    | BinaryOp::NotEqual
-                    | BinaryOp::LessThan
-                    | BinaryOp::GreaterThan
-                    | BinaryOp::LessThanOrEqual
-                    | BinaryOp::GreaterThanOrEqual
-                    | BinaryOp::And
-                    | BinaryOp::Or => {}
-                }
-
-                self.check_default_expression(left, span)?;
-                self.check_default_expression(right, span)?;
-            }
-            Expr::Call { func, args } => {
-                if self.lookup_variable(func).is_some() {
-                    return Err(SemanticError::NotCallable {
-                        name: func.clone(),
-                        span,
-                    });
-                }
-
-                if !matches!(
-                    self.functions
-                        .get(func)
-                        .map(|signature| signature.reference),
-                    Some(FunctionRef::Builtin(BuiltinFunction::Len))
-                ) || args.iter().any(|arg| arg.name.is_some())
-                {
-                    return Err(invalid("only positional builtin len calls are allowed"));
-                }
-
-                for arg in args {
-                    self.check_default_expression(&arg.value, span)?;
-                }
-            }
-            Expr::Array(_) => return Err(invalid("array construction is not allowed")),
-            Expr::Range { .. } => return Err(invalid("range construction is not allowed")),
-            Expr::Index { .. } => return Err(invalid("indexing is not allowed")),
-            Expr::Block(_) => return Err(invalid("blocks are not allowed")),
-            Expr::If { .. } => return Err(invalid("if expressions are not allowed")),
-            Expr::Loop { .. } => return Err(invalid("loop expressions are not allowed")),
+        // The whitelist cannot allocate bindings. These formal-order identities
+        // therefore match the parameters allocated by final body analysis.
+        for contract in &function.contracts {
+            self.check_pure_expression(
+                &contract.value,
+                contract.span,
+                PureExpressionContext::Contract,
+            )?;
+            let (value, _) = self.analyze_expr(
+                &contract.value,
+                contract.span,
+                ReturnContext::Known(Type::Void),
+            )?;
+            self.expect_type(Type::Bool, value.ty, contract.span)?;
+            contracts.push(TypedContract {
+                value,
+                span: contract.span,
+            });
         }
 
-        Ok(())
+        Ok((defaults, contracts))
     }
 }
 

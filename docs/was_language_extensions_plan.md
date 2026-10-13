@@ -1,6 +1,6 @@
 # WAS language extensions implementation plan
 
-**Status:** WP1–WP7 implemented; WP5, WP6 (#13), and WP7 (#16) release gates passed (exact evidence in §5). WP8–WP12 remain proposed; WP13 requires separate authorization.
+**Status:** WP1–WP8 implemented; WP5, WP6 (#13), WP7 (#16), and WP8 release gates passed (exact evidence in §5). WP9–WP12 remain proposed; WP13 requires separate authorization.
 **Baseline:** Extension specification v0.3.
 
 Follow the [agent guide](../AGENTS.md), [extension specification](was_language_extensions_spec.md),
@@ -65,7 +65,10 @@ Evidence: `src/lexer.rs`, `src/parser.rs`, `src/semantic.rs`, `src/codegen/numer
 WP1–WP5 are implemented, including array iteration and issue #6 adapter/interaction
 support; all WP5 release gates passed as recorded in §5. WP6 named/default parameters
 and WP7 acyclic result inference are implemented with release gates passed (#13/#16).
-WP8–WP12 remain proposed, and WP13 requires separate authorization. New keywords require matching host source-name
+WP8 whitelist contracts are implemented, with
+[release gates passed](#wp8-release-validation). WP9–WP12 remain proposed, and WP13 requires separate authorization.
+`requires` is reserved for source/host-language names, not module/field names.
+New keywords require matching host source-name
 validation, not restrictions on arbitrary
 nonempty host module/field names. Reserve standalone `_`
 when its syntax arrives, reject its bindings, retain `_temp`, and keep `by` contextual.
@@ -143,7 +146,13 @@ Public-shape gates occur immediately before the package that needs the change:
    metadata; update exhaustive public statement matches/constructors.
    WP6 changes raw argument/parameter metadata; WP7 makes only raw function result
    annotations optional. No unresolved inference variables reach `TypedProgram`.
-5. WP11 represents callable bindings in dedicated symbol/helper metadata, not in
+5. WP8 adds raw `Function.contracts: Vec<ContractExpression>` and typed
+   `TypedFunction.contracts: Vec<TypedContract>`. Existing constructors supply
+   `vec![]`; wrappers contain `value: Expr` / `TypedExpr` and expression-only
+   UTF-8 byte `span`, excluding the keyword and surrounding trivia. Expressions
+   themselves still have no independent spans. Contracts retain declaration order
+   and resolved callee parameter IDs; checked lowering validates public metadata.
+6. WP11 represents callable bindings in dedicated symbol/helper metadata, not in
    `Type`; public metadata/IDs remain checked. Capture owner IDs must distinguish
    enclosing and helper functions whose variable IDs are separately scoped.
 
@@ -222,9 +231,12 @@ not introduce public unresolved types or public flow annotations.
 
 ### First-wave execution handoff
 
-Implement WP6 and WP7 only after final design confirmation. WP8–WP12 remain future
-waves; WP13 remains separately authorized. Proposed module paths below are write-scope
-assignments, not existing implementation or a reason to create empty scaffolding.
+This historical first-wave handoff required final design confirmation before WP6
+and WP7 implementation. Those packages and their release gates are now complete;
+WP8 is implemented with release gates passed, while WP9–WP12
+remain future waves and WP13 remains separately authorized. The module paths below
+record original write-scope assignments, not current module inventory or a reason
+to create empty scaffolding.
 
 | Owner | Exclusive write scope | Handoff |
 | --- | --- | --- |
@@ -642,15 +654,60 @@ legacy fixture and combined effect suites pass. See [exact release evidence](#is
 
 ### WP8 — Whitelist contracts (spec §13)
 
-**Entry:** WP7; reuse WP6's narrow pure-expression policy. Attach ordered typed
-contracts with origin spans to named functions; bool required. Reject all user/host
-calls, writes and nonwhitelisted constructs, including in skipped contract branches.
-Emit checks at function entry after parameter validation/binding, before body, on
-exported/internal/recursive calls alike. Caller defaults have already run. False means
-a Wasm trap, not a portable custom exception or trusted proof. No check elimination.
-**Exit tests:** proposed `tests/contracts.rs`; whitelist/type/forged metadata rejection,
-decoded entry checks, declaration-order short circuit/traps and body-not-run effects.
-Execute direct host exports and default calls; keep shared diagnostic span rendering.
+**Implementation and release validation complete.** Native, freshly rebuilt browser,
+full ignored runtime and Clippy gates passed. See [WP8's separate release evidence](#wp8-release-validation);
+historical WP5–WP7 evidence retains its original scope.
+
+**Frozen contracts:**
+
+- Named declarations accept ordered `requires` expressions after an optional result
+  annotation and before the body. `requires` is reserved in source and host-language
+  names, not arbitrary nonempty host module/field names.
+- Raw `Function.contracts: Vec<ContractExpression>` and typed
+  `TypedFunction.contracts: Vec<TypedContract>` contain `value` and expression-only
+  UTF-8 byte `span`. Existing constructors supply `vec![]`. No new IR or per-expression
+  span field is introduced.
+- Require exact `bool`; reuse WP6's narrow default whitelist with all callee formals
+  readable. Reject body/caller-local reads, user/host calls, writes, indexing,
+  array/range construction, membership, blocks/if/loops, and normalized calls,
+  including in runtime-skipped children. Pure expressions may read shared arrays
+  or trap; they perform no writes or runtime allocation.
+- Source-order declaration checking handles each function's parameter types/defaults
+  then contracts before inference/body checking. Contract number literals use the
+  same syntax/finite-representability rules as defaults; malformed/overflowing
+  literals fail semantically at the declaration origin, underflow is allowed.
+  Ordinary body-literal stages remain unchanged. False conditions do not affect
+  inferred results, body checking, or missing-return rules.
+- Invocation order is explicit arguments in written order, omitted defaults in formal
+  order, all callee parameter validation, contracts sequentially, then body. Validate
+  even parameters not read by contracts, before the first condition. Apply this entry
+  path to internal, recursive, and raw export calls; raw exports remain full-arity
+  with no host-generated defaults.
+- False executes standard Wasm `unreachable`. No custom failure metadata, trusted
+  refinement facts, constant folding or check elimination is implemented. Exact
+  optimization-level output/diagnostic parity remains required. Feature-free bytes,
+  import snapshots/order, export selection and helper order remain compatible.
+- The shared structural walker visits contracts in declaration order before the body.
+  Local, temporary, memory, range and remainder policies remain separate; the private
+  checked boundary validates forged contracts and lowers every function, even unexported.
+
+**Actual suites:** `tests/contracts_frontend.rs` covers syntax, expression-only spans,
+reservation, scope, whitelist/types, declaration staging, literals and inference/return
+interactions. `tests/contracts_lowering.rs` covers forged metadata/reads/annotations,
+`wasmparser::Validator`, independent decoded entry order, helper/layout discovery,
+feature-free compatibility and optimization parity. `src/codegen/contracts_tests.rs`
+covers ordered structural traversal, early exit and independent planner discovery.
+`tests/contracts_runtime.rs` covers bounded Node execution, written/default/entry/body
+order, sequential and logical short-circuit traps, all-parameter validation, shared
+arrays, raw exports and recursion at every level. `tests/contracts_adapters.rs` covers
+CLI bytes/WAT, diagnostics/origins, host-name reservation, output preservation and
+recovery, plus rebuilt-browser equivalence/raw calls. Node/browser cases retain their
+ignored-test policy; runtime/browser release coverage is established by the explicit
+rebuilt-browser and include-ignored runs recorded in §5, not default Cargo success.
+
+**Future only:** local refinement, constant-check simplification, optional debug
+metadata and proof-based check elimination require separate design/authorization;
+none is part of WP8. WP9–WP12 match/pipelines/closures/placeholders remain proposed.
 
 ### WP9 — `match` statements/values (spec §8)
 
@@ -751,6 +808,38 @@ passes may change optimized bytes only under a documented new parity contract;
 retain semantic/diagnostic equivalence and the unoptimized compatibility baseline.
 
 ## 5. Documentation and validation workflow
+
+### WP8 release validation
+
+On 2026-10-13, WP8's library, native CLI, checked lowering, runtime and rebuilt-browser
+release gates passed on Windows with Rust/Cargo 1.98.0, Node.js v24.12.0 and wasm-pack
+0.15.0. Builds used offline cached dependencies and available tooling; no dependencies
+were added. `pkg/` was rebuilt from the WP8 source before browser or full ignored execution.
+
+| Exact command (repository root) | Actual result |
+| --- | --- |
+| `cargo test --offline --test contracts_frontend --test contracts_lowering --test contracts_runtime --test contracts_adapters -- --include-ignored` | Passed: 27 frontend, 11 lowering, 7 runtime and 4 adapter tests, including rebuilt-browser parity |
+| `cargo test --offline` | Passed; Node/browser cases retain their default ignored policy |
+| `cargo clippy --offline --all-targets -- -D warnings` | Passed |
+| `cargo check --offline --target wasm32-unknown-unknown --lib` | Passed |
+| `cargo clippy --offline -p was-compiler-browser --target wasm32-unknown-unknown --lib -- -D warnings` | Passed |
+| `wasm-pack build browser --target web --out-dir ../pkg --out-name was_compiler --mode no-install --no-opt --offline` | Passed; rebuilt current WP8 source |
+| `node tests/browser.cjs pkg` | Passed: 24 browser cases against rebuilt bindings |
+| `cargo test --offline -- --include-ignored` | Passed; all ignored Node/browser cases executed |
+
+Frontend coverage checks clause syntax/origins, reservation, whitelist/type/literal
+errors, declaration precedence and inference isolation. Lowering coverage validates
+Wasm and independently decodes parameter-validation/contract/body order, contract-only
+helper/data discovery, forged metadata, sparse formal identities and feature-free bytes.
+Two backend unit tests cover structural traversal and separate planner discovery.
+Bounded runtime cases exercise named/default/recursive/raw calls, caller transfers,
+shared-array mutation, IEEE edge cases, descriptor checks, ordered traps and body
+suppression at all optimization levels. CLI/browser tests compare native bytes,
+diagnostics, full arity, export selection, host-name reservation and recovery.
+
+No check elimination, rich runtime metadata, ABI change, or WP9+ feature is included.
+Historical fixtures were not regenerated. Issue tracker state was not changed, and
+no changes were staged or committed.
 
 ### Issue #13 WP6 release validation
 
