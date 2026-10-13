@@ -350,6 +350,45 @@ fn contracts_preserve_ieee_remainder_signed_zero_and_elementwise_equality() {
 
 #[test]
 #[ignore = "requires Node.js on PATH"]
+fn collection_inequality_checks_contents_special_values_and_suppresses_body() {
+    run(
+        r#"
+        fn arrays(xs: number[], ys: number[]) -> bool requires xs != ys {
+            mark(62); return true;
+        }
+        fn texts(a: string, b: string) -> bool requires a != b {
+            mark(63); return true;
+        }
+        "#,
+        r#"
+        for (const [left, right] of [[[1], [2]], [[1], [1, 2]], [[], [0]]]) {
+            assert.equal(e.arrays(array(left), array(right)), 1);
+            assert.deepEqual(events.splice(0), [62]);
+        }
+        const nan = array([NaN]);
+        assert.equal(e.arrays(nan, nan), 1); // NaN is unequal even on the same handle.
+        assert.deepEqual(events.splice(0), [62]);
+        const finite = array([1]);
+        trap(() => e.arrays(finite, finite));
+        trap(() => e.arrays(array([1]), array([1])));
+        trap(() => e.arrays(array([0, Infinity, Number.MIN_VALUE]), array([-0, Infinity, Number.MIN_VALUE])));
+        trap(() => e.arrays(array([]), array([])));
+        trap(() => e.arrays(0, nan)); // Descriptor validation precedes comparison.
+        for (const [left, right] of [['é', 'e\u0301'], ['é🦀', 'é'], ['', 'x']]) {
+            assert.equal(e.texts(text(left), text(right)), 1);
+            assert.deepEqual(events.splice(0), [63]);
+        }
+        const same = text('é🦀');
+        trap(() => e.texts(same, same));
+        trap(() => e.texts(text('é🦀'), text('é🦀')));
+        trap(() => e.texts(text(''), text('')));
+        trap(() => e.texts(0, same));
+        "#,
+    );
+}
+
+#[test]
+#[ignore = "requires Node.js on PATH"]
 fn selected_export_calls_private_contracts_using_the_analyzed_import_snapshot() {
     let source = "fn private(n: number = 2) -> number requires n > 0 { mark(70); return n; } fn main(b: bool) { if b { return private(); } return private(-1); }";
     let mut compiler = compiler();

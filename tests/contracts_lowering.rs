@@ -454,6 +454,31 @@ fn contract_only_equality_and_len_keep_memory_helper_order_and_body_temporaries(
 }
 
 #[test]
+fn collection_inequality_contracts_complement_content_helpers_without_allocation() {
+    let source = "fn target(a: number[], b: number[], s: string, t: string) -> number
+        requires a != b requires s != t { return 7; }";
+    let mut compiler = Compiler::new();
+    let baseline = compiler.compile_source(source).unwrap();
+    let ops = operators(&baseline, 0);
+    assert_eq!(calls(&ops), [3, 3, 2, 2, 7, 6]);
+    for (left, right, helper) in [(0, 1, 7), (2, 3, 6)] {
+        assert!(ops.windows(8).any(|window| matches!(window, [
+            Operator::LocalGet { local_index: a },
+            Operator::LocalGet { local_index: b },
+            Operator::Call { function_index },
+            Operator::I32Eqz, Operator::I32Eqz,
+            Operator::If { blockty: BlockType::Empty },
+            Operator::Unreachable, Operator::End,
+        ] if *a == left && *b == right && *function_index == helper)));
+    }
+
+    for level in LEVELS {
+        compiler.set_optimization_level(level);
+        assert_eq!(compiler.compile_source(source).unwrap(), baseline);
+    }
+}
+
+#[test]
 fn static_strings_are_discovered_in_contract_order_before_body_and_after_prior_functions() {
     let mut program = Compiler::new()
         .analyze(
