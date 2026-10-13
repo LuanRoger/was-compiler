@@ -266,20 +266,14 @@ fn defaulted_calls_retain_conservative_lexical_recursion_and_shadowing() {
 }
 
 #[test]
-fn deferred_dependencies_include_defaulted_calls_and_skipped_explicit_arguments() {
-    for (body, fragment) in [
-        ("return target();", "return target();"),
-        ("return target(value: 3);", "return target(value: 3);"),
-        ("return 1; target();", "target();"),
-        (
-            "false && target() == 1; return 1;",
-            "false && target() == 1;",
-        ),
-        ("return consume(value: target());", "value: target()"),
-        (
-            "return consume(value: { return 1; target() });",
-            "{ return 1; target() }",
-        ),
+fn resolved_dependencies_include_defaulted_calls_and_skipped_explicit_arguments() {
+    for body in [
+        "return target();",
+        "return target(value: 3);",
+        "return 1; target();",
+        "false && target() == 1; return 1;",
+        "return consume(value: target());",
+        "return consume(value: { return 1; target() });",
     ] {
         for target_first in [false, true] {
             let target = "fn target(value: number = 1) { return value; }";
@@ -291,12 +285,12 @@ fn deferred_dependencies_include_defaulted_calls_and_skipped_explicit_arguments(
             } else {
                 format!("{caller} {target}")
             };
-            let actual = error(&source);
-            assert!(
-                matches!(&actual, SemanticError::UnresolvedResultDependency { name, callee, .. } if name == "caller" && callee == "target"),
-                "{source}: {actual:?}"
+            let program = Compiler::new().analyze(&source).unwrap();
+            assert_eq!(
+                program.functions[usize::from(target_first)].return_type,
+                Type::Number
             );
-            assert_eq!(actual.span(), Some(span(&source, fragment)), "{source}");
+            compile_valid(&source);
         }
     }
 }
@@ -561,31 +555,48 @@ fn pure_defaults_can_trap_after_explicit_effects_without_folding_ieee_arithmetic
 }
 
 #[test]
-fn default_normalized_positional_dependencies_keep_written_argument_origins() {
-    for (body, origin) in [
-        ("return consume(target());", "target()"),
+fn resolved_call_type_errors_keep_default_normalized_written_argument_origins() {
+    for (body, origin, expected_operator) in [
+        ("return consume(target());", "target()", None),
         (
             "return consume(target(), 0);",
             "return consume(target(), 0);",
+            None,
         ),
-        ("return consume(value: target());", "value: target()"),
+        ("return consume(value: target());", "value: target()", None),
         (
-            "return consume({ return 1; target() });",
-            "{ return 1; target() }",
+            "return consume({ return 1; target() + 0 });",
+            "{ return 1; target() + 0 }",
+            Some("+"),
         ),
         (
             "return consume(false && target() == 1);",
             "false && target() == 1",
+            Some("=="),
         ),
     ] {
         let source = format!(
-            "fn caller() {{ {body} }} fn target() {{ return 1; }} fn consume(value: number, other: number = 0) -> number {{ return value; }}"
+            "fn caller() {{ {body} }} fn target() {{ return true; }} fn consume(value: number, other: number = 0) -> number {{ return value; }}"
         );
         let actual = error(&source);
-        assert!(matches!(
-            actual,
-            SemanticError::UnresolvedResultDependency { .. }
-        ));
+        if let Some(expected_operator) = expected_operator {
+            assert!(
+                matches!(&actual, SemanticError::InvalidBinaryOperands { operator, left: Type::Bool, right: Type::Number, .. } if *operator == expected_operator),
+                "{source}: {actual:?}"
+            );
+        } else {
+            assert!(
+                matches!(
+                    actual,
+                    SemanticError::TypeMismatch {
+                        expected: Type::Number,
+                        found: Type::Bool,
+                        ..
+                    }
+                ),
+                "{source}: {actual:?}"
+            );
+        }
         assert_eq!(actual.span(), Some(span(&source, origin)), "{source}");
     }
 }

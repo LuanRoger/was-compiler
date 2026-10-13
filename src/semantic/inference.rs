@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use super::{FunctionId, SemanticAnalyzer, SemanticError};
 use crate::{
@@ -27,9 +27,9 @@ impl SemanticAnalyzer {
             .iter()
             .map(|function| {
                 let mut calls = Vec::new();
-                let mut walker = LexicalWalker::new(|name, span| {
+                let mut walker = LexicalWalker::new(|name, _span| {
                     if let Some(&callee) = names.get(name) {
-                        calls.push(Call { callee, span });
+                        calls.push(Call { callee });
                         Some(&program.functions[callee])
                     } else {
                         None
@@ -43,8 +43,8 @@ impl SemanticAnalyzer {
             .collect();
         let recursive = recursive_members(&graph);
 
-        // Complete dependency checks before probing any body. Resolving an earlier
-        // declaration must not accidentally enable the chains deferred to #14.
+        // Recursion uses every resolved call, including annotated barriers and
+        // skipped/unreachable syntax, independently of result scheduling.
         for (index, function) in program.functions.iter().enumerate() {
             if function.return_type.is_some() {
                 continue;
@@ -55,29 +55,51 @@ impl SemanticAnalyzer {
                     span: function.span,
                 });
             }
-            for call in &graph[index] {
-                let callee = &program.functions[call.callee];
+        }
 
-                if callee.return_type.is_none() {
-                    return Err(SemanticError::UnresolvedResultDependency {
-                        name: function.name.clone(),
-                        callee: callee.name.clone(),
-                        span: call.span,
-                    });
+        let mut pending = vec![0; graph.len()];
+        let mut callers = vec![Vec::new(); graph.len()];
+        let mut ready = BTreeSet::new();
+
+        for (index, function) in program.functions.iter().enumerate() {
+            if function.return_type.is_some() {
+                continue;
+            }
+
+            // All calls in a probed body need concrete signatures, even when
+            // their values are discarded. Duplicate edges are counted and
+            // released together; annotated signatures are already available.
+            for call in &graph[index] {
+                if program.functions[call.callee].return_type.is_none() {
+                    pending[index] += 1;
+                    callers[call.callee].push(index);
+                }
+            }
+
+            if pending[index] == 0 {
+                ready.insert(index);
+            }
+        }
+
+        while let Some(index) = ready.pop_first() {
+            let function = &program.functions[index];
+            let return_type = self.infer_result(function, FunctionId(index))?;
+
+            self.functions
+                .get_mut(&function.name)
+                .expect("inference follows declaration registration")
+                .return_type = return_type;
+
+            for &caller in &callers[index] {
+                pending[caller] -= 1;
+
+                if pending[caller] == 0 {
+                    ready.insert(caller);
                 }
             }
         }
 
-        for (index, function) in program.functions.iter().enumerate() {
-            if function.return_type.is_none() {
-                let return_type = self.infer_result(function, FunctionId(index))?;
-
-                self.functions
-                    .get_mut(&function.name)
-                    .expect("inference follows declaration registration")
-                    .return_type = return_type;
-            }
-        }
+        debug_assert!(pending.iter().all(|&count| count == 0));
 
         Ok(())
     }
@@ -85,7 +107,6 @@ impl SemanticAnalyzer {
 
 struct Call {
     callee: usize,
-    span: Span,
 }
 
 // Iterative Kosaraju traversal avoids consuming the Rust call stack for long

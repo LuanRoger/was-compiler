@@ -125,8 +125,8 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
 - WP6 implements user-function named/mixed-prefix calls and trailing pure defaults;
   #13's release gates passed with [recorded evidence](docs/was_language_extensions_plan.md#issue-13-wp6-release-validation).
   Issue #11 integrates initial result inference with released WP6 on
-  `develop/wp7-initial-inference`; #14 chain scheduling and the full WP7 release
-  gate remain pending. Preserve `target/wp7-inference` when cleaning generated
+  `develop/wp7-initial-inference`; #14 completes acyclic chain/diamond inference.
+  Combined-feature acceptance (#15) and the full WP7 release gate remain pending. Preserve `target/wp7-inference` when cleaning generated
   output. Before changing defaults, call binding, or
   normalized lowering, read [the handoff](docs/wp6-wp7-development.md) and
   [named-call interface](docs/named-call-interface.md) for origins, ownership,
@@ -135,10 +135,12 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
 - Types: `number`, `bool`, `string`, `number[]`, `range`, and `void`. Parameters
   require explicit types. Omitted function results infer concrete types from
   reachable explicit returns, or void without value-return syntax. Recursive
-  components require all results annotated; inferred-to-inferred calls are
-  rejected until #14. Never-only value-return syntax requires an annotation.
+  components require all results annotated, even across annotated barriers.
+  Acyclic inferred-to-inferred calls use dependency scheduling with source-order
+  ties among ready functions. Never-only value-return syntax requires an annotation.
   All unreachable/skipped children remain checked against final concrete results.
-  See [the incremental contract](docs/result-inference-development.md). Locals accept `let name = initializer;` or
+  Before changing result inference, read [the #14 contract](docs/result-inference-development.md#issue-14-acyclic-chains-and-diamonds)
+  for graph separation, diagnostic staging, and concrete/source-order boundaries. Locals accept `let name = initializer;` or
   `let name: type = initializer;`; every declaration requires an initializer.
   Value-producing expressions infer concrete existing types; `[]` infers `number[]`
   because only numeric arrays exist. An inferred `Never` initializer is rejected;

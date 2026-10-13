@@ -63,9 +63,15 @@ Issue #11 integrates initial result inference with released WP6. Raw
 `Function.return_type` is `Option<Type>`; typed signatures remain concrete. Private
 `semantic/inference.rs` discovers lexical dependencies and conservative recursive
 components; the existing expression checker and private `Flow` compose reachable
-return constraints. Inferred-to-inferred calls remain rejected until #14; this
-incremental integration does not complete the full WP7 release gate. See
-[the initial inference contract](result-inference-development.md). See the
+return constraints. Issue #14 completes acyclic chain/diamond inference with
+source-order ties among ready functions. Full-call-graph recursion checks remain
+separate: annotated scheduling barriers cannot hide recursive omitted results.
+Owned typed signatures remain concrete; IDs, typed functions and Wasm layout stay
+source-ordered. Staging is declaration/default checks in source order, recursive
+annotation errors in source order, inference in stable dependency order, then
+final body checks in source order. Combined-feature acceptance (#15) and the full
+WP7 release gate remain pending. See
+[the #14 inference contract](result-inference-development.md#issue-14-acyclic-chains-and-diamonds). See the
 [interface gate](named-call-interface.md) and [handoff](wp6-wp7-development.md).
 
 The compiler emits bytes. The embedding application decides whether to write a
@@ -508,7 +514,8 @@ An inferred void-returning call initializer uses the existing
 `SemanticError::InvalidVoidType` for the local, not a new error variant.
 
 This is local initializer inference, not function inference or whole-program
-type unification. Parameter and result annotations remain mandatory, and every
+type unification. Parameter annotations remain mandatory; function results follow
+the separate #11/#14 contract above. Every
 local declaration still requires an initializer. No `i32` language type,
 promotions, or implicit coercions are introduced: `number` remains IEEE-754 `f64`,
 including integer-looking literals. Inference ends at semantic analysis; typed

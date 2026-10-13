@@ -93,7 +93,8 @@ Named host/builtin arguments remain unsupported. WP6 named/default parameters ar
 The [development handoff](docs/wp6-wp7-development.md) records historical worktree
 evidence; see the
 [current named/default interface and AST migration](docs/named-call-interface.md#current-wp6-contract-issues-1012).
-Issue #11 adds initial function-result inference after the WP6 gate:
+Issues #11/#14 implement function-result inference, including acyclic chains and
+diamonds, after the WP6 gate:
 
 ```text
 fn square(x: number) { return x * x; }  // inferred number
@@ -102,11 +103,13 @@ fn main() -> number { return square(4); }
 
 Reachable explicit returns must agree exactly. Procedures without value-return
 syntax infer void; Never-only value-return syntax needs an annotation. Recursive
-components require explicit results on every member. An inferred function can
-call annotated targets, but inferred-to-inferred dependencies remain rejected
-until #14, regardless of declaration order. There are no implicit function tails.
-See [the incremental inference contract](docs/result-inference-development.md).
-This does not complete the full WP7 release gate. Contracts, match, pipelines,
+components require explicit results on every member; annotated barriers do not
+hide recursive omitted results. Acyclic inferred-to-inferred calls resolve in
+stable dependency order, choosing source order among currently ready functions.
+Owned typed signatures stay concrete and function/layout order stays source-ordered.
+There are no implicit function tails.
+See [the #14 inference contract](docs/result-inference-development.md#issue-14-acyclic-chains-and-diamonds).
+Combined-feature acceptance (#15) and the full WP7 release gate remain pending. Contracts, match, pipelines,
 closures, and placeholders remain later packages with ordered release gates.
 
 Local declarations support both `let name = initializer;` and the existing

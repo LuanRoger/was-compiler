@@ -101,8 +101,8 @@ Range advancement and array index iteration are inline checked control-flow
 lowering, not new helpers. Array iteration reuses checked `ArrayAddress` and
 preserves live alias observation without changing the descriptor ABI.
 
-**Private policy modules:** `src/semantic/inference.rs` implements the initial #11
-slice; `src/semantic/captures.rs` remains proposed for WP11 if those policies
+**Private policy modules:** `src/semantic/inference.rs` implements #11 result
+inference and #14 acyclic dependency scheduling; `src/semantic/captures.rs` remains proposed for WP11 if those policies
 outgrow `semantic.rs`; `src/codegen/closures.rs` in WP11 for direct helpers/cells.
 These are cohesive modules, not another IR. Proposed integration suites appear below;
 create them at their step, not as empty scaffolding now. Keep specialized decoders local.
@@ -599,7 +599,8 @@ reachable explicit returns, check all unreachable source and definite return. If
 syntax exists but no reachable value-return supplies a concrete type, require an explicit
 result annotation rather than guessing void. Thus `fn spin() { return loop {}; }` needs
 an annotation, while `fn spin() { loop {} }` can infer void. Never is not a function ABI type.
-**Exit tests:** proposed `tests/result_inference.rs`; chains/diamonds/forward calls,
+**Exit tests:** `tests/result_inference.rs` and `tests/result_inference_chains.rs`;
+chains/diamonds/forward calls,
 void, mixed returns, missing return, named tails, annotated recursion and SCC errors.
 Cover Never-only value returns requiring annotations versus divergence without value-return syntax.
 Forge result/body mismatches; decode signatures and execute chains. Compare inferred
@@ -610,8 +611,20 @@ dependencies are combined with released WP6 on `develop/wp7-initial-inference`,
 after #13's gate. The original 34-test suite, dedicated named/default interaction
 and adapter tests, and combined offline/runtime/browser checks passed; see
 [the incremental contract and evidence](result-inference-development.md).
-Unannotated dependencies remain rejected (chain scheduling is #14). This completes
-only #11's incremental scope, not the full WP7 integration/release gate.
+At that historical #11 checkpoint, unannotated dependencies remained rejected.
+That evidence completes only #11's incremental scope, not the full WP7
+integration/release gate.
+
+**Issue #14 implementation complete:** acyclic chains/diamonds now resolve in
+stable dependency order with source-order ties among currently ready functions.
+Recursion uses the full lexical call graph separately from scheduling; annotated
+barriers do not hide recursive omitted results. Owned concrete signatures, source
+IDs, typed-function order and Wasm layout remain unchanged. Diagnostics stage
+source-order declarations/defaults, source-order recursive annotation errors,
+stable dependency-order inference, then source-order final body checks. See
+[the #14 contract and test coverage](result-inference-development.md#issue-14-acyclic-chains-and-diamonds).
+Combined-feature acceptance (#15) and full WP7 release validation remain pending;
+#11's historical commands are not #14 validation evidence.
 
 ### WP8 — Whitelist contracts (spec §13)
 

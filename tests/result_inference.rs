@@ -50,14 +50,10 @@ fn assert_recursive(source: &str, expected_name: &str) {
     assert_eq!(error.span(), Some(function.span));
 }
 
-fn assert_dependency(source: &str, caller: &str, target: &str, excerpt: &str) {
+fn assert_type_error(source: &str, excerpt: &str) {
     let error = semantic_error(source);
     assert!(
-        matches!(
-            &error,
-            SemanticError::UnresolvedResultDependency { name, callee, .. }
-                if name == caller && callee == target
-        ),
+        matches!(&error, SemanticError::TypeMismatch { .. }),
         "{source}: {error:?}"
     );
     let span = error.span().unwrap();
@@ -371,58 +367,62 @@ fn explicit_recursive_components_and_old_body_error_order_are_preserved() {
 }
 
 #[test]
-fn unannotated_dependencies_are_rejected_in_both_source_orders_without_scheduling() {
-    assert_dependency(
-        "fn caller() { return target(); } fn target() { return 1; }",
-        "caller",
-        "target",
-        "return target();",
-    );
-    assert_dependency(
-        "fn target() { return 1; } fn caller() { return target(); }",
-        "caller",
-        "target",
-        "return target();",
-    );
-    assert_dependency(
-        "fn caller() { target(); } fn target() {}",
-        "caller",
-        "target",
-        "target();",
-    );
-    assert_dependency(
-        "fn caller() { return 1; target(); } fn target() { return 2; }",
-        "caller",
-        "target",
-        "target();",
-    );
-    assert_dependency(
-        "fn caller() { false && target(); return false; } fn target() { return true; }",
-        "caller",
-        "target",
-        "false && target();",
-    );
+fn unannotated_dependencies_resolve_in_both_source_orders_including_skipped_calls() {
+    for (caller, target, expected) in [
+        (
+            "fn caller() { return target(); }",
+            "fn target() { return 1; }",
+            Type::Number,
+        ),
+        ("fn caller() { target(); }", "fn target() {}", Type::Void),
+        (
+            "fn caller() { return 1; target(); }",
+            "fn target() { return 2; }",
+            Type::Number,
+        ),
+        (
+            "fn caller() { false && target(); return false; }",
+            "fn target() { return true; }",
+            Type::Bool,
+        ),
+    ] {
+        for target_first in [false, true] {
+            let source = if target_first {
+                format!("{target} {caller}")
+            } else {
+                format!("{caller} {target}")
+            };
+            let program = Compiler::new().analyze(&source).unwrap();
+            assert_eq!(
+                program.functions[usize::from(target_first)].return_type,
+                expected
+            );
+            Validator::new()
+                .validate_all(&Compiler::new().compile(&program).unwrap())
+                .unwrap();
+        }
+    }
 }
 
 #[test]
-fn dependencies_use_written_call_order_and_checker_span_origins() {
-    assert_dependency(
-        "fn caller() { return combine(b: second(), a: first()); } fn first() { return 1; } fn second() { return 2; } fn combine(a: number, b: number) -> number { return a + b; }",
-        "caller",
-        "second",
+fn resolved_calls_keep_written_type_check_order_and_checker_span_origins() {
+    assert_type_error(
+        "fn caller() { return combine(b: second(), a: first()); } fn first() { return true; } fn second() { return false; } fn combine(a: number, b: number) -> number { return a + b; }",
         "b: second()",
     );
-    assert_dependency(
-        "fn caller() { return { let x = 0; target() }; } fn target() { return 1; }",
-        "caller",
-        "target",
-        "{ let x = 0; target() }",
+    assert_type_error(
+        "fn caller() { let x: number = { let x = 0; target() }; return x; } fn target() { return true; }",
+        "let x: number = { let x = 0; target() };",
     );
-    assert_dependency(
-        "fn caller() { return second() + first(); } fn first() { return 1; } fn second() { return 2; }",
-        "caller",
-        "second",
-        "return second() + first();",
+    let source = "fn caller() { return second() + first(); } fn first() { return true; } fn second() { return false; }";
+    let error = semantic_error(source);
+    assert!(
+        matches!(&error, SemanticError::InvalidBinaryOperands { operator, left: Type::Bool, right: Type::Bool, .. } if *operator == "+")
+    );
+    let span = error.span().unwrap();
+    assert_eq!(
+        &source[span.start()..span.end()],
+        "return second() + first();"
     );
 }
 
@@ -455,17 +455,13 @@ fn initializers_and_iterables_resolve_before_their_new_bindings() {
     assert_recursive("fn f() { let f = f(); return 1; }", "f");
     assert_recursive("fn f() { for f in f() {} return 1; }", "f");
     assert_recursive("fn f() { return { let f = f(); f }; }", "f");
-    assert_dependency(
-        "fn caller() { let target = target(); return 1; } fn target() { return 2; }",
-        "caller",
-        "target",
-        "let target = target();",
+    assert_result(
+        "fn caller() { let target = target(); return target; } fn target() { return 2; }",
+        Type::Number,
     );
-    assert_dependency(
+    assert_result(
         "fn caller() { for target in target() {} return 1; } fn target() { return []; }",
-        "caller",
-        "target",
-        "for target in target() {}",
+        Type::Number,
     );
     assert_result(
         "fn caller() { let target = target(); return target; } fn target() -> number { return 2; }",
@@ -529,7 +525,9 @@ fn declaration_errors_precede_graph_errors_and_graph_errors_precede_probes() {
     assert_recursive(source, "recur");
     let source =
         "fn bad() { return missing; } fn caller() { return target(); } fn target() { return 1; }";
-    assert_dependency(source, "caller", "target", "return target();");
+    assert!(
+        matches!(semantic_error(source), SemanticError::UndefinedVariable { name, .. } if name == "missing")
+    );
 }
 
 #[test]
@@ -557,11 +555,9 @@ fn fully_annotated_programs_keep_body_errors_before_later_duplicate_parameters()
 
 #[test]
 fn graph_diagnostics_use_source_order_across_dependencies_and_recursive_components() {
-    assert_dependency(
+    assert_recursive(
         "fn caller() { return target(); } fn recur() { return recur(); } fn target() { return 1; }",
-        "caller",
-        "target",
-        "return target();",
+        "recur",
     );
     assert_recursive(
         "fn recur() { return recur(); } fn caller() { return target(); } fn target() { return 1; }",
@@ -570,6 +566,47 @@ fn graph_diagnostics_use_source_order_across_dependencies_and_recursive_componen
     assert_recursive(
         "fn first() -> number { return late(); } fn early() { return early(); } fn late() { return first(); }",
         "early",
+    );
+}
+
+#[test]
+fn dependency_probes_choose_the_smallest_source_index_after_each_completion() {
+    for (source, expected) in [
+        (
+            "fn first() { target(); return missing_first; } fn target() { return 1; } fn later() { return missing_later; }",
+            "missing_first",
+        ),
+        (
+            "fn first() { return consume(second(), third()); } fn second() { return missing_second; } fn third() { return missing_third; } fn consume(a: number, b: number) -> number { return a; }",
+            "missing_second",
+        ),
+    ] {
+        let error = semantic_error(source);
+        assert!(
+            matches!(&error, SemanticError::UndefinedVariable { name, .. } if name == expected),
+            "{error:?}"
+        );
+        let origin = error.span().unwrap();
+        assert_eq!(
+            &source[origin.start()..origin.end()],
+            format!("return {expected};")
+        );
+    }
+}
+
+#[test]
+fn annotated_results_break_scheduling_dependencies_but_not_recursive_graph_checks() {
+    assert_result(
+        "fn first() { return bridge(); } fn bridge() -> number { return leaf(); } fn leaf() { return 1; }",
+        Type::Number,
+    );
+    assert_recursive(
+        "fn first() { return bridge(); } fn bridge() -> number { return first(); } fn bad() { return missing; }",
+        "first",
+    );
+    let source = "fn first() { return bridge(); } fn bridge() -> number { return leaf(); } fn leaf() { return missing_leaf; }";
+    assert!(
+        matches!(semantic_error(source), SemanticError::UndefinedVariable { name, .. } if name == "missing_leaf")
     );
 }
 
@@ -1139,8 +1176,8 @@ fn node_rebuilt_browser_result_inference_matches_native_bytes_diagnostics_and_re
             "<browser>:2:2: semantic error:",
         ),
         (
-            "// é\r\nfn callee() { return 1; }\r\nfn caller() {\r\n\treturn callee();\r\n}\r\n",
-            "return callee();",
+            "// é\r\nfn callee() { return true; }\r\nfn caller() {\r\n\treturn callee() + 1;\r\n}\r\n",
+            "return callee() + 1;",
             "<browser>:4:2: semantic error:",
         ),
         (
@@ -1168,15 +1205,13 @@ fn node_rebuilt_browser_result_inference_matches_native_bytes_diagnostics_and_re
             }
             (
                 1,
-                CompileError::Semantic(SemanticError::UnresolvedResultDependency {
-                    name,
-                    callee,
+                CompileError::Semantic(SemanticError::InvalidBinaryOperands {
+                    operator,
+                    left: Type::Bool,
+                    right: Type::Number,
                     ..
                 }),
-            ) => {
-                assert_eq!(name, "caller");
-                assert_eq!(callee, "callee");
-            }
+            ) if *operator == "+" => {}
             (
                 2,
                 CompileError::Semantic(SemanticError::IncompatibleInferredReturns {

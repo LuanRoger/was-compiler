@@ -1,4 +1,11 @@
-# Initial function-result inference: issue #11 integration
+# Function-result inference development
+
+Current support includes #14 acyclic chains/diamonds; see
+[the current contract and coverage](#issue-14-acyclic-chains-and-diamonds).
+The #11 integration contract and validation below are historical evidence, not
+#14 combined-feature acceptance or full WP7 release evidence.
+
+## Historical issue #11 integration
 
 This is the deliberately incremental #11 implementation on
 `develop/wp7-initial-inference` in `target/wp7-inference`. Released WP6 from main
@@ -95,3 +102,78 @@ Review found a default-normalized positional dependency origin mismatch. The new
 `default_normalized_positional_dependencies_keep_written_argument_origins` test
 failed with a statement span, then passed after lexical discovery mirrored the
 checker's normalization decision. Full-arity positional origins stay unchanged.
+
+## Issue #14: acyclic chains and diamonds
+
+Issue #14 completes acyclic inferred-to-inferred calls, including forward chains
+and diamonds. The production change is confined to `src/semantic/inference.rs`;
+no new IR, public unresolved type, backend representation, or ABI is introduced.
+
+Recursion and scheduling use separate policies. Conservative recursion detection
+uses the full lexically resolved user-call graph, including annotated functions
+and skipped/unreachable calls. Every recursive member must have an explicit
+result annotation; an annotated scheduling barrier cannot hide an omitted result
+inside a recursive component. No fixed-point inference is attempted.
+
+Scheduling waits for every omitted-result callee of an inferred body, including
+calls whose values are discarded or whose syntax is skipped/unreachable. Annotated
+signatures are already concrete and act as scheduling barriers. Among currently
+ready functions, the earliest source declaration is probed next; newly ready
+functions participate in that same source-order selection. Repeated call edges
+are released together, preserving deterministic chain/diamond resolution.
+
+The existing expression checker and private `Flow` still infer reachable explicit
+returns. Void, Never-only value-return syntax, exact joins, definite return, and
+final checking of all skipped/unreachable children retain the #11 rules. Typed
+programs own concrete, full-arity signatures and host snapshots. Function IDs,
+typed-function order, emitted function/layout order, and default templates remain
+source-ordered or otherwise unchanged by probe scheduling.
+
+For staged programs, first-error order is:
+
+1. Declaration/default validation in source order.
+2. Recursive omitted-result annotation errors in source order.
+3. Result inference in stable dependency order, with source-order ready ties.
+4. Final body checks in source order against concrete signatures.
+
+Fully annotated legacy programs retain their existing path and diagnostic order.
+
+### Test coverage and acceptance boundary
+
+`tests/result_inference_chains.rs` adds forward chains, diamonds in both declaration
+orders, concrete/Never joins, void chains, anchored recursion rejection, and
+unreachable-return checking. It checks owned source-order signatures/IDs, host
+snapshots, decoded imports/functions/exports/calls, inferred-versus-explicit bytes
+at all optimization levels, descriptor/internal-range signatures, and forged
+result/body mismatches. Bounded Node cases exercise values and effect order;
+those runtime tests retain the normal ignored policy.
+
+Migrations in `tests/result_inference.rs`, `tests/result_inference_defaults.rs`,
+and `tests/result_inference_adapters.rs` replace obsolete dependency-rejection
+expectations with the resolved-chain contract and retained diagnostics.
+Combined-feature acceptance (#15) and the full WP7 integration/release gate remain
+pending. The historical #11 validation and coordination handoff remain evidence
+only for their recorded checkpoint.
+
+### Issue #14 validation (2026-10-13)
+
+The initial forward-chain test failed with `UnresolvedResultDependency` before
+scheduler implementation, then passed after dependency resolution was added.
+The following commands passed from the repository root:
+
+- `cargo check --offline --all-targets`
+- `cargo test --offline --test result_inference_chains -- --include-ignored`
+  (10 tests, including two bounded Node execution cases)
+- `cargo clippy --offline --all-targets -- -D warnings`
+- `wasm-pack build browser --target web --out-dir ../pkg --out-name was_compiler --mode no-install --no-opt --offline`
+- `node tests/browser.cjs pkg`
+- `cargo test --offline --test result_inference --test result_inference_defaults --test result_inference_adapters -- --include-ignored`
+  (56 tests, including rebuilt-browser and CLI cases)
+- `cargo test --offline -- --include-ignored`
+- `cargo clippy --offline -p was-compiler-browser --target wasm32-unknown-unknown --lib -- -D warnings`
+- `git --no-pager diff --check`
+
+Two-axis review found no documented-standard breaches or confirmed spec defects.
+Two low-priority test-maintainability observations were addressed with explicit
+case expectations and clearer test names. No golden fixtures were regenerated.
+These results validate this change, not the separate #15/full WP7 acceptance gate.

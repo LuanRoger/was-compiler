@@ -293,9 +293,9 @@ const ERRORS: [(&str, &str, &str); 8] = [
         "Recursive function 'recurse'",
     ),
     (
-        "// é🦀\r\n\tfn first(n: number = 1) { return second(n: n); }\r\nfn second(n: number = 1) { return n; }\r\n",
-        "return second(n: n);",
-        "callee 'second' has an unresolved result",
+        "// é🦀\r\n\tfn first(n: number = 1) { return consume(n: second(n: n)); }\r\nfn second(n: number = 1) { return true; }\r\nfn consume(n: number) -> number { return n; }\r\n",
+        "n: second(n: n)",
+        "Type mismatch",
     ),
     (
         "// é🦀\r\n\tfn first(n: number = 1) { return second(n); }\r\nfn second(n: number = 1) -> number { return first(n); }\r\n",
@@ -308,9 +308,9 @@ const ERRORS: [(&str, &str, &str); 8] = [
         "requires an explicit result annotation",
     ),
     (
-        "fn caller() { return consume(target()); } fn target() { return 1; } fn consume(a: number, b: number = 0) -> number { return a; }",
+        "fn caller() { return consume(target()); } fn target() { return true; } fn consume(a: number, b: number = 0) -> number { return a; }",
         "target()",
-        "callee 'target' has an unresolved result",
+        "Type mismatch",
     ),
 ];
 
