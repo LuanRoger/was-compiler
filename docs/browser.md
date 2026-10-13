@@ -263,8 +263,16 @@ retaining UTF-8 byte spans and declaration/call origins. Fully annotated source
 keeps existing literal stages and first-error ordering. See the
 [public raw-AST migration](named-call-interface.md#public-ast-migration) and
 [#16 release evidence](was_language_extensions_plan.md#issue-16-wp7-release-validation).
-Match, pipelines, closures, and placeholders (WP9–WP12) remain proposed;
-optimization requires separate authorization.
+WP9 match statements/values are implemented through the shared core with
+[release gates passed](was_language_extensions_plan.md#wp9-release-validation),
+including 25 current-source rebuilt-browser cases and full ignored runtime
+validation. `tests/match_adapters.rs` covers CLI/browser byte and diagnostic parity;
+`tests/browser.cjs` includes the WP9 browser case. Match does not change raw result
+ABIs or explicit descriptor marshaling. Runtime/browser tests retain their default
+ignored policy; rebuild bindings after core changes before browser validation.
+See [the frozen match rules](was_language_extensions_spec.md#82-match-expression-syntax).
+Pipelines, closures, and placeholders (WP10–WP12) remain proposed;
+WP13 optimization requires separate authorization.
 
 ## Function preconditions (WP8)
 

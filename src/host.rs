@@ -85,6 +85,8 @@ impl HostFunctions {
             name.as_str(),
             "fn" | "let"
                 | "if"
+                | "match"
+                | "_"
                 | "else"
                 | "while"
                 | "for"

@@ -77,11 +77,47 @@ pub enum Expr {
         else_: Option<ValueBlock>,
     },
 
+    Match {
+        scrutinee: Box<Expr>,
+        arms: Vec<MatchArm>,
+    },
+
     Array(Vec<Expr>),
     Index {
         expr: Box<Expr>,
         index: Box<Expr>,
     },
+}
+
+/// A literal-only match pattern with its original UTF-8 byte span.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchPattern {
+    pub kind: MatchPatternKind,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum MatchPatternKind {
+    Wildcard,
+    Number(String),
+    String(String),
+    Bool(bool),
+    Relational {
+        op: BinaryOp,
+        value: String,
+    },
+    Interval {
+        start: String,
+        end: String,
+        inclusive: bool,
+    },
+}
+
+#[derive(Debug, PartialEq)]
+pub struct MatchArm {
+    pub pattern: MatchPattern,
+    pub body: Expr,
+    pub span: Span,
 }
 
 #[derive(Debug, PartialEq)]
@@ -129,6 +165,11 @@ pub enum StatementKind {
         cond: Box<Expr>,
         then: Block,
         else_: Option<Block>,
+    },
+
+    Match {
+        scrutinee: Box<Expr>,
+        arms: Vec<MatchArm>,
     },
 
     While {

@@ -7,6 +7,7 @@ pub mod exports;
 mod flow;
 pub mod host;
 pub mod lexer;
+mod match_patterns;
 mod number_literal;
 mod optimization;
 pub mod parser;

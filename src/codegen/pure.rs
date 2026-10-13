@@ -42,6 +42,7 @@ pub(super) fn check(value: &TypedExpr, readable: &[VariableId]) -> Result<(), Vi
         | TypedExprKind::Loop { .. }
         | TypedExprKind::Block(_)
         | TypedExprKind::If { .. }
+        | TypedExprKind::Match { .. }
         | TypedExprKind::Array(_)
         | TypedExprKind::Index { .. } => return Err(Violation::Expression),
     }

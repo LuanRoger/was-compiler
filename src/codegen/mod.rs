@@ -19,6 +19,7 @@ mod function;
 mod indices;
 mod layout;
 mod locals;
+mod match_;
 mod memory;
 mod numeric;
 mod place;
@@ -168,6 +169,9 @@ pub enum CodegenError {
     #[error("invalid normalized call: {reason} at {span:?}")]
     InvalidNormalizedCall { reason: &'static str, span: Span },
 
+    #[error("invalid match: {message} at {span:?}")]
+    InvalidMatch { message: &'static str, span: Span },
+
     #[error("invalid contract expression: {reason} at {span:?}")]
     InvalidContractExpression { reason: &'static str, span: Span },
 
@@ -270,6 +274,7 @@ impl CodegenError {
             | Self::ArgumentCountMismatch { span, .. }
             | Self::InvalidNormalizedCall { span, .. }
             | Self::InvalidContractExpression { span, .. }
+            | Self::InvalidMatch { span, .. }
             | Self::UnsupportedBuiltin { span, .. }
             | Self::DuplicateVariableId { span, .. }
             | Self::DuplicateLoopId { span, .. }

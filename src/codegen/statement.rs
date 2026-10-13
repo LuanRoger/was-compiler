@@ -8,7 +8,7 @@ use wasm_encoder::Instruction;
 use super::{
     CodegenError, control_flow, expect_operand, expect_type,
     function::{BodyEmitter, LoopKind},
-    place,
+    match_, place,
 };
 
 pub(super) fn emit_block(
@@ -92,6 +92,10 @@ pub(super) fn emit(
 
         TypedStatementKind::If { cond, then, else_ } => {
             control_flow::emit_if(cond, then, else_.as_ref(), emitter, span)
+        }
+
+        TypedStatementKind::Match { scrutinee, arms } => {
+            match_::emit(scrutinee, arms, None, emitter, span).map(|(flow, _)| flow)
         }
 
         TypedStatementKind::While {

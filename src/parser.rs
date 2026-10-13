@@ -3,7 +3,8 @@ use thiserror::Error;
 use crate::{
     ast::{
         BinaryOp, Block, CallArgument, ContractExpression, DefaultExpression, Expr, Function,
-        Param, Program, Statement, StatementKind, Type, UnaryOp, ValueBlock,
+        MatchArm, MatchPattern, MatchPatternKind, Param, Program, Statement, StatementKind, Type,
+        UnaryOp, ValueBlock,
     },
     tokens::{Span, Token, TokenKind},
 };
@@ -179,6 +180,11 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
         let kind = match self.peek().map(|token| &token.kind) {
             Some(TokenKind::Let) => self.parse_let()?,
             Some(TokenKind::If) => self.parse_if()?,
+            Some(TokenKind::Match) => {
+                let expr = self.parse_match_expression()?;
+                self.consume(TokenKind::Semicolon);
+                self.discard_match(expr)
+            }
             Some(TokenKind::While) => self.parse_while()?,
             Some(TokenKind::For) => self.parse_for()?,
             Some(TokenKind::Loop) => {
@@ -273,6 +279,108 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
         Ok(Expr::If { cond, then, else_ })
     }
 
+    fn parse_match_expression(&mut self) -> Result<Expr, ParseError> {
+        self.expect(TokenKind::Match)?;
+        let scrutinee = Box::new(self.parse_expression()?);
+        self.expect(TokenKind::LeftBrace)?;
+        let mut arms = Vec::new();
+
+        while !self.check(&TokenKind::RightBrace) {
+            let start = self.current_span().start();
+            let pattern = self.parse_match_pattern()?;
+            self.expect(TokenKind::FatArrow)?;
+            let body = self.parse_expression()?;
+            arms.push(MatchArm {
+                pattern,
+                body,
+                span: self.span_since(start),
+            });
+            if !self.consume(TokenKind::Comma) {
+                break;
+            }
+        }
+        self.expect(TokenKind::RightBrace)?;
+        Ok(Expr::Match { scrutinee, arms })
+    }
+
+    fn parse_pattern_number(&mut self) -> Result<String, ParseError> {
+        let negative = self.consume(TokenKind::Minus);
+        let Some(TokenKind::NumberLiteral(value)) = self.peek().map(|token| &token.kind) else {
+            return Err(self.unexpected("number literal"));
+        };
+        let value = if negative {
+            format!("-{value}")
+        } else {
+            value.clone()
+        };
+        self.advance();
+        Ok(value)
+    }
+
+    fn parse_match_pattern(&mut self) -> Result<MatchPattern, ParseError> {
+        let start = self.current_span().start();
+        let kind = match self.peek().map(|token| &token.kind) {
+            Some(TokenKind::Wildcard) => {
+                self.advance();
+                MatchPatternKind::Wildcard
+            }
+            Some(TokenKind::True | TokenKind::False) => {
+                let value = self.check(&TokenKind::True);
+                self.advance();
+                MatchPatternKind::Bool(value)
+            }
+            Some(TokenKind::StringLiteral(value)) => {
+                let value = value.clone();
+                self.advance();
+                MatchPatternKind::String(value)
+            }
+            Some(
+                TokenKind::Less
+                | TokenKind::LessEqual
+                | TokenKind::Greater
+                | TokenKind::GreaterEqual,
+            ) => {
+                let op = self
+                    .binary_operator()
+                    .expect("relational token has an operator")
+                    .0;
+                self.advance();
+                MatchPatternKind::Relational {
+                    op,
+                    value: self.parse_pattern_number()?,
+                }
+            }
+            Some(TokenKind::Minus | TokenKind::NumberLiteral(_)) => {
+                let start = self.parse_pattern_number()?;
+                if self.check(&TokenKind::DotDot) || self.check(&TokenKind::DotDotEqual) {
+                    let inclusive = self.consume(TokenKind::DotDotEqual);
+                    if !inclusive {
+                        self.expect(TokenKind::DotDot)?;
+                    }
+                    MatchPatternKind::Interval {
+                        start,
+                        end: self.parse_pattern_number()?,
+                        inclusive,
+                    }
+                } else {
+                    MatchPatternKind::Number(start)
+                }
+            }
+            _ => return Err(self.unexpected("match pattern")),
+        };
+        Ok(MatchPattern {
+            kind,
+            span: self.span_since(start),
+        })
+    }
+
+    fn discard_match(&self, expr: Expr) -> StatementKind {
+        let Expr::Match { scrutinee, arms } = expr else {
+            unreachable!("discard_match receives a match expression");
+        };
+        StatementKind::Match { scrutinee, arms }
+    }
+
     fn discard_if(&self, expr: Expr) -> StatementKind {
         let Expr::If { cond, then, else_ } = expr else {
             unreachable!("discard_if is called only with an if expression");
@@ -301,6 +409,9 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
             let kind = match *tail {
                 expr @ Expr::If { .. } if first_kind == Some(&TokenKind::If) => {
                     self.discard_if(expr)
+                }
+                expr @ Expr::Match { .. } if first_kind == Some(&TokenKind::Match) => {
+                    self.discard_match(expr)
                 }
                 Expr::Loop { body } if first_kind == Some(&TokenKind::Loop) => {
                     StatementKind::Loop { body }
@@ -379,13 +490,16 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
             }
 
             let statement_start = self.current_span().start();
+            let starts_with_match = self.check(&TokenKind::Match);
             let starts_with_if = self.check(&TokenKind::If);
             let starts_with_loop = self.check(&TokenKind::Loop);
             let starts_with_identifier = matches!(
                 self.peek().map(|token| &token.kind),
                 Some(TokenKind::Identifier(_))
             );
-            let expr = if starts_with_if {
+            let expr = if starts_with_match {
+                self.parse_match_expression()?
+            } else if starts_with_if {
                 self.parse_if_expression()?
             } else if starts_with_loop {
                 Expr::Loop {
@@ -408,7 +522,9 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
                 });
             } else if self.consume(TokenKind::Semicolon) {
                 statements.push(Statement {
-                    kind: if starts_with_loop {
+                    kind: if starts_with_match {
+                        self.discard_match(expr)
+                    } else if starts_with_loop {
                         let Expr::Loop { body } = expr else {
                             unreachable!("a bare loop was parsed above");
                         };
@@ -422,6 +538,11 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
             } else if self.check(&TokenKind::RightBrace) {
                 tail = Some(Box::new(expr));
                 break;
+            } else if starts_with_match {
+                statements.push(Statement {
+                    kind: self.discard_match(expr),
+                    span: self.span_since(statement_start),
+                });
             } else if starts_with_if {
                 statements.push(Statement {
                     kind: self.discard_if(expr),
@@ -692,6 +813,7 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
 
             Some(TokenKind::LeftBrace) => return Ok(Expr::Block(self.parse_value_block()?)),
             Some(TokenKind::If) => return self.parse_if_expression(),
+            Some(TokenKind::Match) => return self.parse_match_expression(),
             Some(TokenKind::Loop) => {
                 return Ok(Expr::Loop {
                     body: self.parse_loop_body()?,
@@ -867,6 +989,9 @@ fn token_name(kind: &TokenKind<'_>) -> &'static str {
         TokenKind::Fn => "fn",
         TokenKind::Let => "let",
         TokenKind::If => "if",
+        TokenKind::Match => "match",
+        TokenKind::Wildcard => "_",
+        TokenKind::FatArrow => "=>",
         TokenKind::Else => "else",
         TokenKind::While => "while",
         TokenKind::For => "for",

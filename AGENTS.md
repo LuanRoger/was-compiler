@@ -77,6 +77,7 @@ bypasses the compiler's optimization/options orchestration.
 | `src/semantic.rs`, `src/typed_ast.rs` | Types, scopes, loop targets, return analysis, resolved semantic IDs |
 | `src/semantic/defaults.rs`, `src/semantic/pure_expression.rs`, `src/semantic/call_binding.rs` | Declaration-checked defaults/contracts, shared whitelist, and hygienic named/default binding |
 | `src/number_literal.rs` | Shared literal syntax/finite-representability rules with stage-specific errors |
+| `src/match_patterns.rs` | Shared semantic/backend numeric-pattern, domain and exhaustiveness checks |
 | `src/flow.rs` | Private completion sets shared by semantic/backend flow summaries |
 | `src/host.rs`, `src/exports.rs` | Ordered host declarations, private external-type eligibility, and owned export selection |
 | `src/optimization.rs` | Borrowed `Cow<TypedProgram>` no-op; future transformation boundary |
@@ -90,6 +91,9 @@ bypasses the compiler's optimization/options orchestration.
 | `src/codegen/control_flow.rs`, `src/codegen/call.rs`, `src/codegen/values.rs` | Structured control flow, calls, literal values |
 | `src/codegen/memory.rs`, `src/codegen/numeric.rs` | Memory planning/helpers and optional floating remainder helper |
 | `src/codegen/range.rs` | Private range discovery, construction, record-validation, and exact membership helpers |
+| `src/codegen/match_.rs` | Private checked match lowering, scrutinee cache, scoped arms and ordered comparison regions |
+| `tests/match_frontend.rs`, `tests/match_lowering.rs` | Match syntax/inference and forged-tree/decoded lowering contracts |
+| `tests/match_runtime.rs`, `tests/match_adapters.rs` | Bounded match effects and CLI/current-source browser compatibility |
 | `src/codegen/validation.rs`, `src/codegen/mod.rs` | Checked internal boundary and section assembly |
 | `src/diagnostic.rs` | Shared native/browser diagnostic rendering |
 | `src/main.rs`, `src/cli.rs` | Thin native entry point and clap/file/output adapter |
@@ -129,7 +133,9 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   including current-source native/browser ABI and diagnostic coverage. Every recursive
   component member still needs an explicit result in the initial release. WP8 implements
   whitelist `requires` contracts; [release gates passed](docs/was_language_extensions_plan.md#wp8-release-validation).
-  WP9–WP12 remain proposed; WP13 optimization requires separate authorization.
+  WP9 match statements/values are implemented with frontend/backend integrated;
+  [release gates passed](docs/was_language_extensions_plan.md#wp9-release-validation). WP10–WP12 remain proposed; WP13
+  optimization requires separate authorization.
   Preserve `target/wp7-inference` when cleaning generated output. Before changing defaults, call binding, or
   normalized lowering, read [the handoff](docs/wp6-wp7-development.md) and
   [named-call interface](docs/named-call-interface.md) for origins, ownership,
@@ -161,7 +167,8 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   string equality, numeric-array equality, indexing, and built-in `len(array)`.
   Tail-valued blocks and `if`/`else if` expressions support all concrete result
   types. Value-context if requires else and exact branch joins, allowing `Never`.
-  Statement-if may omit else and discards branch tails. No `match` expressions yet.
+  Statement-if may omit else and discards branch tails. WP9 adds scoped match
+  statements/values; read its frozen contract below before changing them.
 - WP5 implements range construction/internal calls, exact numeric membership,
   and range/array statement iteration:
   `start..end` / `start..=end`, optional contextual `by step`, default `+1`.
@@ -215,6 +222,56 @@ refactors; specify and test any intentional behavior change explicitly.
   `tests/contracts_frontend.rs`, `tests/contracts_lowering.rs`,
   `tests/contracts_runtime.rs`, and `tests/contracts_adapters.rs` cover these boundaries;
   runtime/browser cases retain the default ignored policy.
+
+### Match statements and values (WP9)
+
+- Before changing match syntax, patterns, flow, inference or lowering, read
+  [spec §8.2–§8.4](docs/was_language_extensions_spec.md#82-match-expression-syntax)
+  and [WP9's frozen interview](docs/was_language_extensions_plan.md#wp9--match-statementsvalues-spec-8-implemented).
+  Frontend/backend are integrated and [release gates passed](docs/was_language_extensions_plan.md#wp9-release-validation).
+- Match requires nonempty comma-separated `pattern => expression` arms, with an
+  optional trailing comma even for block arms. Each arm is scoped independently;
+  declarations never leak between arms. Transfers need a block RHS and retain
+  enclosing function/nearest-loop targets.
+- Completing scrutinees are number/bool/string only. Patterns are `_`, exact scalar
+  literals, numeric comparisons and constant intervals. Numeric constants are
+  finite decimal literals with optional unary minus, not general expressions.
+  Fractional endpoints are allowed without safe-integer restrictions. Intervals
+  use bound comparisons, not range progressions; reject `by`. Reversed and
+  equal-exclusive intervals never match; signed zeros compare equal and NaN
+  reaches `_`. String matching uses content equality.
+- Both contexts require exhaustive coverage: number/string need final `_`; bool
+  needs both literals, either literal then `_`, or `_` alone. Wildcard is unique
+  and last. Duplicates/overlaps remain accepted without new warnings. Cache the
+  scrutinee once; execute only the first matching arm.
+- Check every arm conservatively, including constant, duplicate, covered and
+  unreachable cases. Value arms structurally join exact concrete types or all
+  Void with Never compatibility; statement arms discard heterogeneous results.
+  Never scrutinees still require valid patterns/coverage/structural joins; their
+  non-wildcard patterns establish one domain, wildcard-only needs none. Compose
+  flow after the scrutinee, so no arm supplies reachable flow after Never. With
+  a completing scrutinee every arm contributes to inference/transfer summaries.
+- Bare match follows bare-if statement/tail classification: statement bodies
+  discard results, final bare matches without `;` in value blocks are tails,
+  nonfinal/semicolon-terminated matches are statements. Parenthesize for arithmetic
+  continuation there. Preserve no-newline-heuristic/no-implicit-return behavior.
+- Reserve exact `match` and `_` for source/host-language names, retaining `_temp`
+  and arbitrary nonempty host module/field names. This breaks prior exact-name
+  uses deliberately; it adds no ignored bindings or placeholders. Match remains
+  outside the default/contract pure whitelist, including forged backend trees.
+- Share pattern checks through `src/match_patterns.rs`; keep checked lowering in
+  private `src/codegen/match_.rs`. The walker visits scrutinee then scoped arms;
+  retain separate locals/scratch/memory/range/remainder policies and deterministic
+  pattern-string discovery. Preserve pattern-only and arm-through-RHS byte spans,
+  checked annotations/flow, label identities and scoped initialization restoration.
+- `tests/match_frontend.rs` owns syntax/spans/reservation/domain/coverage/scope and
+  inference/structural-join tests; `tests/match_lowering.rs` owns forged trees,
+  validator and independent decoded cache/result-region/branch-depth/planner checks.
+  `tests/match_runtime.rs` owns bounded effects, overlaps, strings, fractional/NaN
+  cases and transfers; `tests/match_adapters.rs` owns CLI bytes/diagnostics,
+  reservations and rebuilt-browser compatibility. Preserve their default ignored
+  runtime/browser policy; release evidence comes from the explicit runs linked
+  above, not default Cargo success.
 
 ### Lexical trivia and source spans
 

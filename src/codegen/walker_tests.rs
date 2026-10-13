@@ -27,6 +27,72 @@ fn statement(id: usize, kind: TypedStatementKind) -> TypedStatement {
     }
 }
 
+#[test]
+fn match_patterns_are_separate_visits_in_scrutinee_pattern_body_order() {
+    use crate::{
+        ast::{MatchPattern, MatchPatternKind},
+        typed_ast::TypedMatchArm,
+    };
+
+    struct PatternVisitor(Vec<String>);
+    impl Visitor for PatternVisitor {
+        type Break = ();
+
+        fn enter_expression(&mut self, expr: &TypedExpr) -> ControlFlow<()> {
+            if let TypedExprKind::String(value) = &expr.kind {
+                self.0.push(format!("expression:{value}"));
+            }
+            ControlFlow::Continue(())
+        }
+
+        fn visit_pattern(&mut self, pattern: &MatchPattern) -> ControlFlow<()> {
+            if let MatchPatternKind::String(value) = &pattern.kind {
+                self.0.push(format!("pattern:{value}"));
+            }
+            ControlFlow::Continue(())
+        }
+    }
+    let arms = || {
+        vec![TypedMatchArm {
+            pattern: MatchPattern {
+                kind: MatchPatternKind::String("pattern".into()),
+                span: Span::new(0, 1),
+            },
+            body: expr(TypedExprKind::String("body".into())),
+            span: Span::new(0, 2),
+        }]
+    };
+    let block = vec![
+        statement(
+            0,
+            TypedStatementKind::Match {
+                scrutinee: Box::new(expr(TypedExprKind::String("statement".into()))),
+                arms: arms(),
+            },
+        ),
+        statement(
+            1,
+            TypedStatementKind::Expression(expr(TypedExprKind::Match {
+                scrutinee: Box::new(expr(TypedExprKind::String("value".into()))),
+                arms: arms(),
+            })),
+        ),
+    ];
+    let mut visitor = PatternVisitor(vec![]);
+    assert_eq!(walk_block(&block, &mut visitor), ControlFlow::Continue(()));
+    assert_eq!(
+        visitor.0,
+        [
+            "expression:statement",
+            "pattern:pattern",
+            "expression:body",
+            "expression:value",
+            "pattern:pattern",
+            "expression:body"
+        ]
+    );
+}
+
 fn fixture() -> TypedBlock {
     vec![
         statement(
@@ -148,6 +214,7 @@ impl Visitor for Recorder {
             TypedExprKind::Index { .. } => "index".into(),
             TypedExprKind::Block(_) => "value-block".into(),
             TypedExprKind::If { .. } => "value-if".into(),
+            TypedExprKind::Match { .. } => "value-match".into(),
             TypedExprKind::Loop { .. } => "value-loop".into(),
         };
 

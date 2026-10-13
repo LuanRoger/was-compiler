@@ -1046,6 +1046,100 @@ mod tests {
     }
 
     #[test]
+    fn match_arm_errors_restore_labels_and_bindings_without_reusing_scratch() {
+        use crate::{
+            ast::{MatchPattern, MatchPatternKind},
+            typed_ast::{TypedExpr, TypedExprKind, TypedMatchArm, VariableId},
+        };
+
+        for fail in [false, true] {
+            let mut program = Compiler::new()
+                .analyze("fn test(param: number) -> void { { let inside = [1]; 2 }; [3]; }")
+                .unwrap();
+            let function = &mut program.functions[0];
+            let TypedStatementKind::Expression(mut arm_body) = function.body.remove(0).kind else {
+                panic!("expression");
+            };
+            let TypedExprKind::Block(block) = &mut arm_body.kind else {
+                panic!("block");
+            };
+            let TypedStatementKind::Let { id: inside, .. } = block.statements[0].kind else {
+                panic!("declaration");
+            };
+            if fail {
+                block.tail.as_mut().unwrap().kind = TypedExprKind::Identifier {
+                    id: VariableId(999),
+                    name: "unknown".into(),
+                };
+            }
+            let span = function.span;
+            function.body.insert(
+                0,
+                crate::typed_ast::TypedStatement {
+                    kind: TypedStatementKind::Match {
+                        scrutinee: Box::new(TypedExpr {
+                            kind: TypedExprKind::Identifier {
+                                id: function.params[0].id,
+                                name: "param".into(),
+                            },
+                            ty: Type::Number.into(),
+                        }),
+                        arms: vec![
+                            TypedMatchArm {
+                                pattern: MatchPattern {
+                                    kind: MatchPatternKind::Number("1".into()),
+                                    span,
+                                },
+                                body: arm_body,
+                                span,
+                            },
+                            TypedMatchArm {
+                                pattern: MatchPattern {
+                                    kind: MatchPatternKind::Wildcard,
+                                    span,
+                                },
+                                body: TypedExpr {
+                                    kind: TypedExprKind::Bool(true),
+                                    ty: Type::Bool.into(),
+                                },
+                                span,
+                            },
+                        ],
+                    },
+                    span,
+                },
+            );
+            let layout = Layout::new(&program).unwrap();
+            let function = &program.functions[0];
+            let mut emitter = BodyEmitter::new(function, &layout).unwrap();
+            let outer = emitter.begin_block().unwrap();
+            let initialized = emitter.context.initialized.clone();
+            let first = emitter.context.first_temporary;
+            let result = statement::emit(&function.body[0], &mut emitter);
+            if fail {
+                assert!(matches!(result, Err(CodegenError::UnknownVariable { .. })));
+            } else {
+                assert_eq!(result, Ok(Flow::FALLTHROUGH));
+            }
+            assert_eq!(emitter.labels, [outer]);
+            assert!(emitter.loops.is_empty());
+            assert_eq!(emitter.context.initialized, initialized);
+            assert_eq!(emitter.context.next_temporary.get(), first + 2);
+            assert!(matches!(
+                emitter.resolve(inside, Type::NumberArray, span),
+                Err(CodegenError::UninitializedVariable { .. })
+            ));
+            let next_label = emitter.next_label;
+            assert_eq!(
+                statement::emit(&function.body[1], &mut emitter),
+                Ok(Flow::FALLTHROUGH)
+            );
+            assert_eq!(emitter.context.next_temporary.get(), first + 3);
+            assert_eq!(emitter.next_label, next_label);
+        }
+    }
+
+    #[test]
     fn borrowed_call_targets_preserve_function_indices_with_shared_type_indices() {
         let mut compiler = Compiler::new();
         compiler

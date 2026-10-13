@@ -411,6 +411,96 @@ async function main() {
         }
     });
 
+    test('match preserves ordered fractional patterns, effects, values, transfers, and diagnostics', compiler => {
+        compiler.registerHostFunction('mark', 'match', '_', ['number'], 'number');
+        const source = `
+            fn choose(n: number) {
+                return mark(10) + (match mark(n) {
+                    1 => mark(11), 1 => mark(99), 3..1 => mark(98), 2..2 => mark(97),
+                    0.5..2.5 => mark(12), 2.5..=2.5 => mark(13), _ => mark(14)
+                }) + mark(20);
+            }
+            fn text(s: string) { return match s { "é🦀" => "hit", _ => "miss" }; }
+            fn boolean(b: bool) { return match b { true => true, false => false }; }
+            fn items(b: bool) { return match b { true => [1, 2], false => [3] }; }
+            fn transfers() {
+                let sum = 0;
+                for x in [0, 1, 2, 3] {
+                    sum += 10 + (match x { 1 => { continue; }, 3 => { break; }, _ => x });
+                }
+                return sum;
+            }
+            fn returning(b: bool) {
+                return mark(30) + (match b { true => { return 7; }, false => 2 });
+            }
+            fn discard(b: bool) {
+                match b { true => "discarded", false => [1] };
+                return { match b { true => 7, false => 8 } };
+            }
+        `;
+        const expected = compiler.compile(source);
+        const wat = compiler.compileWat(source);
+        const invalid = '// é🦀\r\n\tfn f(b: bool) { return match b { true => 1, false => "é" }; }\r\n';
+        const origin = 'false => "é"';
+        const start = invalid.indexOf(origin);
+        const prefix = invalid.slice(invalid.lastIndexOf('\n', start) + 1, start);
+        const excerpt = invalid.split('\r\n')[1].replace(/\t/g, '    ');
+        const span = `Span { start: ${Buffer.byteLength(invalid.slice(0, start))}, end: ${Buffer.byteLength(invalid.slice(0, start + origin.length))} }`;
+        const message = `<browser>:2:${Array.from(prefix).length + 1}: semantic error: Type mismatch: expected Number, found String at ${span}\n  |\n2 | ${excerpt}\n  | ${' '.repeat(Array.from(prefix.replace(/\t/g, '    ')).length)}${'^'.repeat(Array.from(origin).length)}`;
+        for (let level = 0; level < 4; level++) {
+            compiler.setOptimizationLevel(level);
+            const { bytes, module } = compile(compiler, source);
+            assert.deepEqual(bytes, expected);
+            assert.equal(compiler.compileWat(source), wat);
+            const events = [];
+            const instance = new WebAssembly.Instance(module, {
+                match: { _(n) { events.push(n); return n; } },
+            });
+            const e = instance.exports;
+            for (const [n, arm] of [[1, 11], [1.25, 12], [2, 12], [2.5, 13], [3, 14],
+                [NaN, 14], [Infinity, 14], [-Infinity, 14], [-0, 14]]) {
+                assert.equal(e.choose(n), 30 + arm);
+                const observed = events.splice(0);
+                assert.equal(observed.length, 4);
+                assert.equal(observed[0], 10);
+                assert.ok(Object.is(observed[1], n));
+                assert.deepEqual(observed.slice(2), [arm, 20]);
+            }
+            const a = writeDescriptor(instance, 'string', 'é🦀');
+            const b = writeDescriptor(instance, 'string', 'é🦀');
+            assert.notEqual(a, b);
+            assert.equal(readDescriptor(instance, 'string', e.text(a)), 'hit');
+            assert.equal(readDescriptor(instance, 'string', e.text(b)), 'hit');
+            assert.equal(readDescriptor(instance, 'string', e.text(writeDescriptor(instance, 'string', 'é🦀'))), 'miss');
+            assert.equal(e.boolean(-7), 1);
+            assert.equal(e.boolean(0), 0);
+            assert.deepEqual(readDescriptor(instance, 'number[]', e.items(1)), [1, 2]);
+            assert.deepEqual(readDescriptor(instance, 'number[]', e.items(0)), [3]);
+            assert.equal(e.transfers(), 22);
+            assert.equal(e.returning(1), 7);
+            assert.deepEqual(events.splice(0), [30]);
+            assert.equal(e.returning(0), 32);
+            assert.deepEqual(events.splice(0), [30]);
+            assert.equal(e.discard(1), 7);
+            assert.equal(e.discard(0), 8);
+            for (const method of ['compile', 'compileWat']) {
+                assert.throws(() => compiler[method](invalid), error => {
+                    assert.equal(error.message, message);
+                    return true;
+                });
+                assert.deepEqual(compiler.compile(source), expected);
+            }
+        }
+        for (const name of ['match', '_']) {
+            fails(() => compiler.registerHostFunction(name, 'env', 'f', [], 'void'), /name/);
+        }
+        compiler.registerHostFunction('_temp', '_', 'match', [], 'number');
+        assert.equal(instantiate(compiler, 'fn main() { return _temp(); }', {
+            match: { _() { throw new Error('unused import executed'); } },
+            _: { match() { return 9; } },
+        }).exports.main(), 9);
+    });
+
     test('comments preserve bytes across optimization levels and execute without changing strings or division', compiler => {
         const plain = 'fn main() -> number { return 84 / 2; } fn text() -> string { return "// /* */ é🦀"; }';
         const commented = '// leading comment\n'

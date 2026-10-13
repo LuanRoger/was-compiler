@@ -187,6 +187,9 @@ impl<'a> Lexer<'a> {
                 if self.source_iter.peek().is_some_and(|&&char| char == b'=') {
                     self.advance();
                     self.make_token(TokenKind::EqualEqual)
+                } else if self.source_iter.peek().is_some_and(|&&char| char == b'>') {
+                    self.advance();
+                    self.make_token(TokenKind::FatArrow)
                 } else {
                     self.make_token(TokenKind::Equal)
                 }
@@ -286,6 +289,8 @@ impl<'a> Lexer<'a> {
             "requires" => self.make_token(TokenKind::Requires),
             "let" => self.make_token(TokenKind::Let),
             "if" => self.make_token(TokenKind::If),
+            "match" => self.make_token(TokenKind::Match),
+            "_" => self.make_token(TokenKind::Wildcard),
             "else" => self.make_token(TokenKind::Else),
             "while" => self.make_token(TokenKind::While),
             "for" => self.make_token(TokenKind::For),

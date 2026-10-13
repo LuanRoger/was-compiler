@@ -1,5 +1,5 @@
 use crate::{
-    ast::{BinaryOp, Type, UnaryOp},
+    ast::{BinaryOp, MatchPattern, Type, UnaryOp},
     host::{HostFunction, HostFunctionId},
     tokens::Span,
 };
@@ -117,12 +117,24 @@ pub enum TypedExprKind {
         else_: Option<TypedValueBlock>,
     },
 
+    Match {
+        scrutinee: Box<TypedExpr>,
+        arms: Vec<TypedMatchArm>,
+    },
+
     Array(Vec<TypedExpr>),
 
     Index {
         expr: Box<TypedExpr>,
         index: Box<TypedExpr>,
     },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypedMatchArm {
+    pub pattern: MatchPattern,
+    pub body: TypedExpr,
+    pub span: Span,
 }
 
 /// Ordered invocation-local storage followed by a canonical full-arity user call.
@@ -187,6 +199,11 @@ pub enum TypedStatementKind {
         cond: Box<TypedExpr>,
         then: TypedBlock,
         else_: Option<TypedBlock>,
+    },
+
+    Match {
+        scrutinee: Box<TypedExpr>,
+        arms: Vec<TypedMatchArm>,
     },
 
     While {

@@ -1,6 +1,6 @@
 # WAS language
 
-Terms for the language's default-argument and contract rules. Proposed extensions
+Terms for the language's defaults, contracts, and numeric patterns. Proposed extensions
 remain distinct from implemented language support.
 
 ## Language
@@ -17,3 +17,8 @@ declaration scope with access only to earlier formal parameters.
 **Contract expression**:
 A boolean precondition over a named function's formal parameters, evaluated in declaration
 order before its body; a false condition causes a trap.
+
+**Interval pattern**:
+A numeric match pattern selecting values between constant bounds, including fractional
+values. It denotes an interval, not the stepped progression of a range value.
+_Avoid_: Range membership pattern, progression pattern

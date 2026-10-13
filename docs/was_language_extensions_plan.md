@@ -1,6 +1,6 @@
 # WAS language extensions implementation plan
 
-**Status:** WP1–WP8 implemented; WP5, WP6 (#13), WP7 (#16), and WP8 release gates passed (exact evidence in §5). WP9–WP12 remain proposed; WP13 requires separate authorization.
+**Status:** WP1–WP9 implemented; WP5, WP6 (#13), WP7 (#16), and WP8 release gates passed (exact evidence in §5). WP9 frontend/backend are integrated and [release gates passed](#wp9-release-validation). WP10–WP12 remain proposed; WP13 requires separate authorization.
 **Baseline:** Extension specification v0.3.
 
 Follow the [agent guide](../AGENTS.md), [extension specification](was_language_extensions_spec.md),
@@ -66,12 +66,11 @@ WP1–WP5 are implemented, including array iteration and issue #6 adapter/intera
 support; all WP5 release gates passed as recorded in §5. WP6 named/default parameters
 and WP7 acyclic result inference are implemented with release gates passed (#13/#16).
 WP8 whitelist contracts are implemented, with
-[release gates passed](#wp8-release-validation). WP9–WP12 remain proposed, and WP13 requires separate authorization.
-`requires` is reserved for source/host-language names, not module/field names.
-New keywords require matching host source-name
-validation, not restrictions on arbitrary
-nonempty host module/field names. Reserve standalone `_`
-when its syntax arrives, reject its bindings, retain `_temp`, and keep `by` contextual.
+[release gates passed](#wp8-release-validation). WP9 match statements/values are
+implemented with frontend/backend integrated and [release gates passed](#wp9-release-validation). WP10–WP12 remain proposed, and WP13 requires separate authorization.
+`requires`, `match`, and standalone `_` are reserved for source/host-language names,
+not arbitrary nonempty host module/field names. `_temp` remains valid; `by` stays
+contextual. WP9 does not implement ignored bindings or placeholder expressions.
 
 ## 2. File ownership and change boundaries
 
@@ -84,6 +83,9 @@ These paths exist today; ownership denotes responsibility, not mandatory edits f
 | `src/semantic.rs`, `src/semantic_tests.rs`, `src/typed_ast_tests.rs` | Scope/type/flow rules, call binding, inference and captures |
 | `src/typed_ast.rs` | Concrete bindings/signatures, resolved nodes/IDs, origin information |
 | `src/flow.rs` | Shared private completion sets, independent of static traversal |
+| `src/match_patterns.rs` | Shared semantic/backend pattern-domain, numeric-constant and exhaustiveness checks |
+| `src/codegen/match_.rs` | Private checked match lowering, cached scrutinee, scoped arms and ordered comparison regions |
+| `tests/match_frontend.rs`, `tests/match_lowering.rs` | WP9 frontend/inference and forged-tree/decoded lowering contracts |
 | `src/host.rs`, `src/exports.rs`, `src/compiler.rs`, `src/lib.rs` | Registration/export restrictions, owned snapshots, public API and stage errors |
 | `src/codegen/walker.rs`, `src/codegen/walker_tests.rs` | Exhaustive structural traversal and traversal-order tests |
 | `src/codegen/locals.rs`, `src/codegen/temporaries.rs` | Separate declaration and typed scratch-slot planning policies |
@@ -233,8 +235,9 @@ not introduce public unresolved types or public flow annotations.
 
 This historical first-wave handoff required final design confirmation before WP6
 and WP7 implementation. Those packages and their release gates are now complete;
-WP8 is implemented with release gates passed, while WP9–WP12
-remain future waves and WP13 remains separately authorized. The module paths below
+WP8 is implemented with release gates passed; WP9 frontend/backend are now
+integrated with [release gates passed](#wp9-release-validation). WP10–WP12 remain
+future waves and WP13 remains separately authorized. The module paths below
 record original write-scope assignments, not current module inventory or a reason
 to create empty scaffolding.
 
@@ -578,7 +581,7 @@ locals/later formals. Use the shared initial whitelist specified in spec §14.2:
 scalar literals, permitted parameter reads, existing type-valid unary/arithmetic/
 comparison/equality/logical operations, and positional builtin `len`. Existing string
 and array equality are allowed. Reject indexing, array/range construction, membership,
-blocks/if/loops, writes, and user/host calls, even in runtime-skipped operands. Pure
+blocks/if/loops/match, writes, and user/host calls, even in runtime-skipped operands. Pure
 means no writes or runtime allocation, not absence of descriptor traps. Reuse this
 policy for WP8 with all formals readable there; no user-function purity analysis.
 
@@ -669,7 +672,7 @@ historical WP5–WP7 evidence retains its original scope.
   span field is introduced.
 - Require exact `bool`; reuse WP6's narrow default whitelist with all callee formals
   readable. Reject body/caller-local reads, user/host calls, writes, indexing,
-  array/range construction, membership, blocks/if/loops, and normalized calls,
+  array/range construction, membership, blocks/if/loops/match, and normalized calls,
   including in runtime-skipped children. Pure expressions may read shared arrays
   or trap; they perform no writes or runtime allocation.
 - Source-order declaration checking handles each function's parameter types/defaults
@@ -707,9 +710,10 @@ rebuilt-browser and include-ignored runs recorded in §5, not default Cargo succ
 
 **Future only:** local refinement, constant-check simplification, optional debug
 metadata and proof-based check elimination require separate design/authorization;
-none is part of WP8. WP9–WP12 match/pipelines/closures/placeholders remain proposed.
+none is part of WP8. WP9 match is implemented with [release gates passed](#wp9-release-validation);
+WP10–WP12 pipelines/closures/placeholders remain proposed.
 
-### WP9 — `match` statements/values (spec §8)
+### WP9 — `match` statements/values (spec §8): implemented
 
 **Entry:** WP8 and existing result/flow/range machinery. Reserve `_` as wildcard here
 if not already reserved; reject standalone binding names across source/host APIs.
@@ -719,9 +723,94 @@ final wildcard for number/string and exhaustive boolean cases in either context.
 Use ordered comparison chains and existing string content equality; evaluate scrutinee
 once, only selected arm at runtime, all arms statically. No br_table optimization or
 new warning framework; defer duplicate/unreachable warnings unless one already exists.
-**Exit tests:** proposed `tests/match.rs`; coverage/constants/types/forged results,
-NaN wildcard, fractional intervals, ordered overlap, strings, Never arms and transfers.
-Decode cached scrutinee, result types/depths; execute branch/effect order in range for.
+**Implementation and release validation complete.** Frontend/backend, bounded
+runtime, native adapters and current-source rebuilt-browser gates passed on
+2026-10-13; see [the parent-run evidence](#wp9-release-validation). The agreed
+design interview details below remain frozen.
+
+**Agreed implementation scope (design interview; implemented):**
+- Restrict patterns to wildcard, exact number/string/bool literals, numeric
+  comparisons, and constant numeric intervals. No bindings, guards, destructuring,
+  or-patterns, optimizations, or new duplicate/unreachable-arm warnings.
+- Normally completing scrutinees must be `number`, `bool`, or `string`; reject
+  Void and retain Never compatibility with unconditional arm checking, as detailed
+  below.
+- Numeric pattern constants are decimal literals with optional unary minus, not
+  arithmetic, calls, or names. Preserve finite-literal representability checks;
+  interval endpoints may be fractional and need not be safe integers.
+- Bare match follows bare-if statement/tail classification: statement contexts
+  discard arm results; a final bare match in a value block supplies its tail;
+  nonfinal or semicolon-terminated matches are statements. Parenthesize the whole
+  match for arithmetic continuation in these positions. No newline heuristics or
+  implicit function returns. Arm syntax and result joining are detailed below.
+- Match remains outside the shared defaults/contracts pure-expression whitelist,
+  including frontend and forged-typed backend checks.
+
+**Agreed arm and coverage rules (design interview; implemented):**
+- Require at least one arm. Each arm is `pattern => expression`; commas separate
+  all arms, including block-expression arms, with an optional trailing comma.
+  Each arm has its own lexical scope; declarations do not leak to later arms or
+  beyond the match. Return/break/continue statements require an arm block, not a
+  direct statement RHS; transfers still target the enclosing function/nearest loop.
+- Interval `a..b` tests `a <= value && value < b`; `a..=b` includes both bounds.
+  Reversed intervals and equal-endpoint exclusive intervals are accepted and never
+  match. Reject `by`. Numeric equality identifies both signed zeros; NaN falls
+  through numeric patterns to the wildcard.
+- A wildcard may occur at most once, only last. Number/string matches require it.
+  Boolean coverage accepts both literals, either literal followed by wildcard,
+  or wildcard alone. Duplicate non-wildcard patterns and overlapping intervals
+  remain accepted with first-match-wins behavior.
+- When the scrutinee can complete, conservatively include every arm in result
+  joins, return inference, and loop-transfer summaries. Do not prune using constant
+  scrutinees, duplicate patterns, overlap, or earlier pattern coverage. Pattern
+  coverage checking remains separate from flow analysis.
+- Value matches join exactly matching concrete categories or all Void, with Never
+  compatibility; all-Never arms produce Never. Statement matches discard arm
+  results and permit heterogeneous tails while independently checking every arm.
+
+**Agreed divergence and compatibility rules (design interview; implemented):**
+- A Never scrutinee does not excuse invalid patterns, missing coverage, or structural
+  value-arm result mismatches. Non-wildcard patterns establish a single domain
+  (number, bool, or string); reject mixed domains and apply ordinary coverage rules.
+  Wildcard-only matches need no concrete scrutinee domain. Check every arm, but
+  compose flow after the noncompleting scrutinee: no arm contributes reachable flow
+  and the overall match is Never.
+- Reserve exact `match` and `_` for source binding/function names and registered
+  host source-language names. Preserve `_temp` and arbitrary nonempty host module/
+  field names. This deliberately breaks existing uses of these source identifiers;
+  WP9 adds neither ignored bindings nor placeholder expressions.
+- Preserve pattern-only spans and arm spans (pattern through RHS, excluding comma)
+  in raw and typed records. Pattern errors use pattern spans; incompatible arm
+  results use the offending arm span. Overall coverage errors retain the enclosing
+  expression/statement location. Do not introduce general expression spans or alter
+  existing diagnostics and first-error ordering for unchanged syntax.
+- Release requires frontend/inference and forged-typed checks, Wasm validation plus
+  independent decoded caching/result-region/branch-depth assertions, bounded runtime
+  effects/overlap/string/fractional/NaN/transfer tests, optimization-level parity,
+  and native/browser compatibility. Rebuild browser bindings before browser checks.
+  Preserve ignored-runtime defaults, but execute runtime cases for release evidence.
+  Missing prerequisites leave gates incomplete; do not install tooling or introduce
+  dependencies without authorization.
+
+**Implementation ownership:** `src/match_patterns.rs` shares pattern constants,
+domains and coverage checks between semantic analysis and checked lowering.
+`src/codegen/match_.rs` privately owns ordered numeric/string comparison chains,
+scoped arm lowering and reconstructed results/flow. The structural walker visits
+the scrutinee then every arm within separate block hooks; pattern-string discovery
+and typed scrutinee scratch planning retain separate policies. No new ABI, helper
+kind, IR, optimizer or warning framework is introduced.
+
+**Actual test ownership:** `tests/match_frontend.rs` owns syntax/spans,
+reservations, domains/coverage, scopes, structural joins and inference/transfer
+checks. `tests/match_lowering.rs` owns forged trees, Wasm validation and independent
+decoded scrutinee-cache/result-region/branch-depth/planner assertions.
+`tests/match_runtime.rs` owns bounded effects, overlaps, strings, fractional/NaN
+cases and transfers. `tests/match_adapters.rs` owns CLI bytes/diagnostics,
+host-name reservations and current-source browser compatibility;
+`tests/browser.cjs` includes the WP9 browser case. Runtime/browser cases retain
+the default ignored policy. Optimization-level parity remains required; actual
+release evidence is recorded in [§5](#wp9-release-validation), not inferred from
+default Cargo success.
 
 ### WP10 — Named-only pipelines (spec §12)
 
@@ -809,6 +898,42 @@ retain semantic/diagnostic equivalence and the unoptimized compatibility baselin
 
 ## 5. Documentation and validation workflow
 
+### WP9 release validation
+
+On 2026-10-13, the parent-run results established that WP9's frontend/backend,
+bounded runtime, native adapters and current-source rebuilt-browser release
+gates passed. The parent reported Node.js v24.12.0, wasm-pack 0.15.0 and an
+installed `wasm32-unknown-unknown` target. Builds used offline cached dependencies
+and installed tooling; `pkg/` was rebuilt from current integrated source before
+browser and full ignored execution. The commands/results below are supplied
+parent-run evidence, not additional runs performed by the documentation owner.
+
+| Exact command (repository root) | Actual result |
+| --- | --- |
+| `cargo test --offline` | Passed; Node/browser cases retain their default ignored policy |
+| `cargo clippy --offline --all-targets -- -D warnings` | Passed; rerun after integration fixes also passed |
+| `wasm-pack build browser --target web --out-dir ../pkg --out-name was_compiler --mode no-install --no-opt --offline` | Passed with wasm-pack 0.15.0 and the installed Wasm target; rebuilt current source |
+| `node tests/browser.cjs pkg` | Passed: 25 browser cases against rebuilt bindings |
+| `cargo clippy --offline -p was-compiler-browser --target wasm32-unknown-unknown --lib -- -D warnings` | Passed |
+| `cargo test --offline -- --include-ignored` | Passed after correcting the browser summary harness expectation described below; no aggregate full-suite count is asserted |
+| `cargo test --offline --test match_frontend --test match_lowering --test match_runtime --test match_adapters -- --include-ignored` | Passed: 45 tests (17 frontend, 18 lowering, 6 runtime, 4 adapters) |
+| `git diff --check` | Passed |
+
+The initial full ignored run failed because `tests/browser.rs` still expected
+24 browser cases after the new WP9 case raised the summary to 25. Updating that
+harness expectation from 24 to 25 was followed by a successful full ignored rerun.
+This records the resolved validation failure, not a failing WP9 release gate.
+
+Frontend/lowering ownership and frozen semantics remain in [WP9 §4](#wp9--match-statementsvalues-spec-8-implemented).
+`tests/match_runtime.rs` supplies bounded observable effects, first-match overlap,
+string/fractional/NaN cases and transfers; `tests/match_adapters.rs` and
+`tests/browser.cjs` establish native/current-source browser compatibility.
+The focused include-ignored run and rebuilt-browser/full ignored gates supply
+runtime evidence; ordinary default Cargo success alone does not. Ignored defaults,
+optimization-level parity and sequential compiler planning remain unchanged.
+WP10–WP12 remain proposed; WP13 optimization requires separate authorization.
+Earlier WP5–WP8 release records retain their historical scope and counts.
+
 ### WP8 release validation
 
 On 2026-10-13, WP8's library, native CLI, checked lowering, runtime and rebuilt-browser
@@ -876,9 +1001,11 @@ now explicitly lists both contract collections and invocation order.
 Runtime subprocesses retain the bounded harness and ignored policy. Deadlines are
 not guest fuel or process-tree cancellation. Raw exports remain full-arity;
 preconditions use ordinary traps without rich metadata or check elimination.
-WP9–WP12 remain proposed and WP13 still requires separate authorization. Earlier
-release evidence above is historical and unchanged; this record does not assert
-that the current work was committed or merged, or close parent issue #19.
+At this WP8 checkpoint, WP9–WP12 remained proposed; WP9's current integrated
+status and completed release gates are recorded in §4 and §5. WP13 still requires separate
+authorization. Earlier release evidence above is historical and unchanged; this
+record does not assert that the current work was committed or merged, or close
+parent issue #19.
 
 ### Issue #13 WP6 release validation
 

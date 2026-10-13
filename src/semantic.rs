@@ -4,8 +4,8 @@ use thiserror::Error;
 
 use crate::{
     ast::{
-        BinaryOp, Block, CallArgument, Expr, Function, Program, Statement, StatementKind, Type,
-        UnaryOp, ValueBlock,
+        BinaryOp, Block, CallArgument, Expr, Function, MatchArm, Program, Statement, StatementKind,
+        Type, UnaryOp, ValueBlock,
     },
     flow::Flow,
     host::HostFunctions,
@@ -13,8 +13,8 @@ use crate::{
     typed_ast::{
         BuiltinFunction, CallBindingOrigin, ExprResult, FunctionId, FunctionRef, LoopId,
         TypedBlock, TypedCallBinding, TypedContract, TypedExpr, TypedExprKind, TypedFunction,
-        TypedNormalizedCall, TypedParam, TypedProgram, TypedStatement, TypedStatementKind,
-        TypedValueBlock, VariableId,
+        TypedMatchArm, TypedNormalizedCall, TypedParam, TypedProgram, TypedStatement,
+        TypedStatementKind, TypedValueBlock, VariableId,
     },
 };
 
@@ -25,6 +25,9 @@ mod pure_expression;
 
 #[derive(Debug, Error, PartialEq)]
 pub enum SemanticError {
+    #[error("Invalid match: {message} at {span:?}")]
+    InvalidMatch { message: &'static str, span: Span },
+
     #[error("Recursive function '{name}' requires an explicit result annotation at {span:?}")]
     RecursiveResultAnnotationRequired { name: String, span: Span },
 
@@ -183,7 +186,8 @@ pub enum SemanticError {
 impl SemanticError {
     pub fn span(&self) -> Option<Span> {
         match self {
-            Self::RecursiveResultAnnotationRequired { span, .. }
+            Self::InvalidMatch { span, .. }
+            | Self::RecursiveResultAnnotationRequired { span, .. }
             | Self::UnresolvedResultDependency { span, .. }
             | Self::CannotInferFunctionResult { span, .. }
             | Self::IncompatibleInferredReturns { span, .. }
@@ -251,6 +255,12 @@ struct VariableBinding {
 enum BindingMutability {
     Mutable,
     ReadOnly,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MatchContext {
+    Statement,
+    Value,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -646,6 +656,21 @@ impl SemanticAnalyzer {
                 TypedStatementKind::If { cond, then, else_ }
             }
 
+            StatementKind::Match { scrutinee, arms } => {
+                let (scrutinee, arms, _, match_flow) = self.analyze_match(
+                    scrutinee,
+                    arms,
+                    span,
+                    return_type,
+                    MatchContext::Statement,
+                )?;
+                flow = match_flow;
+                TypedStatementKind::Match {
+                    scrutinee: Box::new(scrutinee),
+                    arms,
+                }
+            }
+
             StatementKind::While { cond, body } => {
                 let id = LoopId(self.next_loop_id);
 
@@ -958,6 +983,56 @@ impl SemanticAnalyzer {
         }
     }
 
+    fn analyze_match(
+        &mut self,
+        scrutinee: &Expr,
+        arms: &[MatchArm],
+        span: Span,
+        return_type: ReturnContext,
+        context: MatchContext,
+    ) -> Result<(TypedExpr, Vec<TypedMatchArm>, ExprResult, Flow), SemanticError> {
+        let (scrutinee, scrutinee_flow) = self.analyze_expr(scrutinee, span, return_type)?;
+        crate::match_patterns::check(scrutinee.ty, arms.iter().map(|arm| &arm.pattern)).map_err(
+            |(message, pattern_span)| SemanticError::InvalidMatch {
+                message,
+                span: if pattern_span == Span::new(0, 0) {
+                    span
+                } else {
+                    pattern_span
+                },
+            },
+        )?;
+        let mut typed_arms = Vec::with_capacity(arms.len());
+        let mut result_type = ExprResult::Never;
+        let mut arm_flow = Flow::NONE;
+
+        for arm in arms {
+            self.scopes.push(HashMap::new());
+            let result = self.analyze_expr(&arm.body, arm.span, return_type);
+            self.scopes.pop();
+            let (body, flow) = result?;
+            if context == MatchContext::Value {
+                result_type = self.join_results(result_type, body.ty, arm.span)?;
+            }
+            arm_flow = arm_flow.join(flow);
+            typed_arms.push(TypedMatchArm {
+                pattern: arm.pattern.clone(),
+                body,
+                span: arm.span,
+            });
+        }
+        let flow = scrutinee_flow.then(arm_flow);
+        let ty = Self::completion_result(
+            if context == MatchContext::Value {
+                result_type
+            } else {
+                ExprResult::Void
+            },
+            flow,
+        );
+        Ok((scrutinee, typed_arms, ty, flow))
+    }
+
     fn analyze_expr(
         &mut self,
         expr: &Expr,
@@ -1031,6 +1106,19 @@ impl SemanticAnalyzer {
                         cond: Box::new(cond),
                         then,
                         else_: Some(else_),
+                    },
+                    ty,
+                )
+            }
+
+            Expr::Match { scrutinee, arms } => {
+                let (scrutinee, arms, ty, match_flow) =
+                    self.analyze_match(scrutinee, arms, span, return_type, MatchContext::Value)?;
+                flow = match_flow;
+                (
+                    TypedExprKind::Match {
+                        scrutinee: Box::new(scrutinee),
+                        arms,
                     },
                     ty,
                 )

@@ -28,6 +28,10 @@ pub(super) trait Visitor {
         ControlFlow::Continue(())
     }
 
+    fn visit_pattern(&mut self, _pattern: &crate::ast::MatchPattern) -> ControlFlow<Self::Break> {
+        ControlFlow::Continue(())
+    }
+
     fn visit_expressions(&self) -> bool {
         true
     }
@@ -75,6 +79,10 @@ fn walk_statements<V: Visitor>(block: &TypedBlock, visitor: &mut V) -> ControlFl
                 }
             }
 
+            TypedStatementKind::Match { scrutinee, arms } => {
+                walk_match(scrutinee, arms, visitor)?;
+            }
+
             TypedStatementKind::While { cond, body, .. } => {
                 walk_expression(cond, visitor)?;
                 walk_block(body, visitor)?;
@@ -97,6 +105,19 @@ fn walk_statements<V: Visitor>(block: &TypedBlock, visitor: &mut V) -> ControlFl
         }
     }
 
+    ControlFlow::Continue(())
+}
+
+fn walk_match<V: Visitor>(
+    scrutinee: &TypedExpr,
+    arms: &[crate::typed_ast::TypedMatchArm],
+    visitor: &mut V,
+) -> ControlFlow<V::Break> {
+    walk_expression(scrutinee, visitor)?;
+    for arm in arms {
+        visitor.visit_pattern(&arm.pattern)?;
+        walk_expression(&arm.body, visitor)?;
+    }
     ControlFlow::Continue(())
 }
 
@@ -160,6 +181,8 @@ fn walk_expression<V: Visitor>(expr: &TypedExpr, visitor: &mut V) -> ControlFlow
             walk_expression(expr, visitor)?;
             walk_expression(index, visitor)?;
         }
+
+        TypedExprKind::Match { scrutinee, arms } => walk_match(scrutinee, arms, visitor)?,
 
         TypedExprKind::Loop { body, .. } => walk_block(body, visitor)?,
 

@@ -9,6 +9,7 @@ use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
 use super::{
     CodegenError, abi, call, control_flow, expect_operand, expect_result,
     function::{BodyEmitter, LoopKind},
+    match_,
     memory::Helper,
     range, values,
 };
@@ -251,6 +252,10 @@ pub(super) fn emit(
 
         TypedExprKind::Loop { id, body: block } => {
             control_flow::emit_loop(*id, block, LoopKind::Value(expr.ty), body, span)?
+        }
+
+        TypedExprKind::Match { scrutinee, arms } => {
+            match_::emit(scrutinee, arms, Some(expr.ty), body, span)?
         }
 
         TypedExprKind::Block(block) => emit_value_block(block, expr.ty, body)?,

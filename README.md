@@ -82,7 +82,7 @@ Explicit arguments are captured once in written order; omitted defaults run
 afterward in formal order on each invocation. Defaults allow scalar literals,
 earlier parameter reads, existing unary/arithmetic/comparison/equality/logical
 operators (including string/array equality), and positional builtin `len(array)`.
-Indexing, array/range construction, membership, blocks/if/loops, writes, and
+Indexing, array/range construction, membership, blocks/if/loops/match, writes, and
 user/host calls are forbidden, including in skipped logical operands. Every
 declaration is checked even when unused or explicitly supplied. Pure defaults
 perform no writes or runtime allocation but may read shared arrays or trap.
@@ -149,8 +149,9 @@ module/field names. See [the contract specification](docs/was_language_extension
 and [WP8 status and suites](docs/was_language_extensions_plan.md#wp8--whitelist-contracts-spec-13).
 [WP8 release gates passed](docs/was_language_extensions_plan.md#wp8-release-validation),
 including freshly rebuilt browser bindings and the full ignored runtime suite.
-Match, pipelines, closures, and
-placeholders (WP9–WP12) remain proposed; WP13 optimization requires separate
+WP9 match statements/values are implemented with frontend/backend integrated;
+[release gates passed](docs/was_language_extensions_plan.md#wp9-release-validation). Pipelines, closures, and
+placeholders (WP10–WP12) remain proposed; WP13 optimization requires separate
 authorization.
 
 Local declarations support both `let name = initializer;` and the existing
@@ -625,6 +626,76 @@ no range helpers; array-only iteration requires none.
 The optional `Contains` helper follows `Construct` and `Validate` only when membership exists;
 construction-only programs retain their bytes, as do programs without ranges.
 Membership alone needs no floating remainder helper or host callback.
+
+### Match statements and values (WP9)
+
+**Implemented, frontend/backend integrated, with [release gates passed](docs/was_language_extensions_plan.md#wp9-release-validation).**
+The parent-run evidence includes current-source rebuilt-browser and full ignored
+runtime validation. See the [approved WP9 rules and suites](docs/was_language_extensions_plan.md#wp9--match-statementsvalues-spec-8-implemented).
+`tests/match_frontend.rs` and `tests/match_lowering.rs` cover frontend/inference
+and forged-tree/decoded lowering contracts; `tests/match_runtime.rs` and
+`tests/match_adapters.rs` cover bounded effects and native/browser compatibility.
+Node/browser cases retain their default ignored policy.
+
+```text
+fn classify(value: number) -> string {
+    return match value {
+        < -2.5 => "low",
+        -2.5..=2.5 => { let label = "middle"; label },
+        _ => "other",
+    };
+}
+fn choose(ready: bool) -> number {
+    return match ready { true => 10, false => 0 };
+}
+```
+
+Each arm is `pattern => expression`, with commas required between all arms
+(including block arms) and an optional trailing comma. At least one arm is
+required. Each arm has its own lexical scope; declarations do not leak to other
+arms or outside the match. Use a block RHS for `return`, `break`, or `continue`;
+these retain their enclosing function/nearest-loop targets.
+
+Patterns support `_`, exact number/string/bool literals, numeric comparisons
+`<`, `<=`, `>`, `>=`, and numeric intervals `a..b` / `a..=b`. Numeric constants
+are decimal literals with optional unary minus, not names, calls, arithmetic,
+or unary plus. They must be finitely representable; underflow is allowed.
+Interval bounds may be fractional and need not be safe integers. An interval
+uses bound comparisons, not stepped range membership: `1..=9` includes `1.5`.
+`by` is rejected. Reversed intervals and equal-endpoint exclusive intervals
+are accepted but never match. Signed zeros compare equal; NaN reaches `_`.
+String patterns compare UTF-8 byte contents.
+
+Normally completing scrutinees must be `number`, `bool`, or `string`; arrays,
+ranges and Void are rejected. Both statement and value matches are exhaustive:
+number/string require `_`; bool requires both literals, either literal then `_`,
+or `_` alone. Wildcard occurs at most once and only last. Duplicate non-wildcard
+patterns and overlaps are accepted without new warnings. The scrutinee runs
+exactly once, and only the first matching arm executes.
+
+Every arm is conservatively checked, including duplicates, covered arms and
+constant/skipped/unreachable cases. Value results join exact concrete types or
+all Void with Never compatibility; all-Never arms yield Never. Statement matches
+discard results and allow heterogeneous tails. A Never scrutinee still requires
+valid patterns, coverage and structural value-arm joins: non-wildcard patterns
+establish one domain; wildcard-only needs none. Its arms contribute no reachable
+flow and the whole match is Never. Completing scrutinees conservatively include
+all arms in result joins, return inference and loop-transfer summaries.
+
+Bare match follows bare-if statement/tail classification: statement-body matches
+discard results; a final bare match without `;` in a value block is its tail;
+nonfinal or semicolon-terminated bare matches are statements. Parenthesize the
+whole match for arithmetic continuation in these classification positions.
+Parenthesized matches remain expressions even when discarded. There are no
+newline heuristics or implicit function returns.
+
+`match` and standalone `_` are reserved for source bindings/functions and host
+source-language names; `_temp` and arbitrary nonempty host module/field names
+remain valid. This intentionally breaks prior uses of these exact source names.
+WP9 adds no ignored bindings, placeholder expressions, guards, binding patterns,
+destructuring or or-patterns. Match remains excluded from the defaults/contracts
+pure-expression whitelist. Ordered comparison-chain lowering adds no ABI,
+helper kind or optimization pass; all optimization levels retain parity.
 
 ## Optimization levels
 

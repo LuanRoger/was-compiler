@@ -181,6 +181,16 @@ impl Visitor for MemoryVisitor<'_> {
         ControlFlow::Continue(())
     }
 
+    fn visit_pattern(&mut self, pattern: &crate::ast::MatchPattern) -> ControlFlow<CodegenError> {
+        if let crate::ast::MatchPatternKind::String(value) = &pattern.kind {
+            *self.used = true;
+            if let Err(error) = self.plan.intern(value) {
+                return ControlFlow::Break(error);
+            }
+        }
+        ControlFlow::Continue(())
+    }
+
     fn enter_expression(&mut self, expr: &TypedExpr) -> ControlFlow<CodegenError> {
         *self.used |= expr.ty.value_type().is_some_and(memory_type);
 

@@ -1,11 +1,11 @@
 # WAS Language Extensions — Unified Design and Implementation Specification
 
-**Status:** Design baseline with the 13 approved decisions and implementation clarifications (WP1–WP5 implementation complete: compound assignments, while transfers, block/if values, internal Never, statement/value loops, and range construction/internal calls, numeric membership, and range/array statement for; issue #6 adapter/interaction support implemented, all WP5 release gates passed (exact evidence in plan §5), WP6 named/default parameters are implemented and #13 release validation passed; WP7 acyclic result inference and named/default integration are implemented and #16 release validation passed; WP8 whitelist contracts are implemented and release gates passed (exact evidence in plan §5); WP9–WP12 remain proposed and WP13 requires separate authorization)
+**Status:** Design baseline with the 13 approved decisions and implementation clarifications (WP1–WP5 implementation complete: compound assignments, while transfers, block/if values, internal Never, statement/value loops, and range construction/internal calls, numeric membership, and range/array statement for; issue #6 adapter/interaction support implemented, all WP5 release gates passed (exact evidence in plan §5), WP6 named/default parameters are implemented and #13 release validation passed; WP7 acyclic result inference and named/default integration are implemented and #16 release validation passed; WP8 whitelist contracts are implemented and release gates passed (exact evidence in plan §5); WP9 match statements/values are implemented with frontend/backend integrated and [release gates passed](was_language_extensions_plan.md#wp9-release-validation); WP10–WP12 remain proposed and WP13 requires separate authorization)
 **Version:** 0.3 — 9 October 2026 (implementation clarification update)  
 **Target:** Core WebAssembly, initially the MVP-compatible instruction set already used by `was-compiler`, with optional optimizations gated by Wasm features.  
 **Repository:** https://github.com/LuanRoger/was-compiler
 
-> **Normative language.** **MUST**, **SHOULD**, and **MAY** describe requirements, strong recommendations, and optional implementation choices. This document establishes a coherent *proposed* semantic model. Decisions tagged **Open decision** need confirmation before being frozen as language guarantees. Compound assignments (§4/WP1), bare `while` transfers (§7/WP2), block/if values with internal Never (§§3.2, 8.1/WP3), and statement/value loops (§7/WP4) are implemented. Range construction, internal calls, exact numeric membership (§5/WP5), and range/array statement `for` (§6/issues #4–#5) are also implemented, with adapter/interaction support under issue #6; all WP5 release gates passed (exact evidence in plan §5). WP6 user-function named/mixed-prefix calls and trailing pure defaults (§14/issues #10/#12) are implemented, and [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation). WP7 acyclic result inference (§9) and its named/default integration are implemented, and [#16 release validation passed](was_language_extensions_plan.md#issue-16-wp7-release-validation). Every recursive component member requires an explicit result in this initial release. WP8 whitelist contracts (§13) are implemented and [release gates passed](was_language_extensions_plan.md#wp8-release-validation), including rebuilt-browser and full ignored runtime coverage. WP9–WP12 match/pipelines/closures/placeholders and their integrated examples remain proposed `.was` syntax, not claims about the present compiler.
+> **Normative language.** **MUST**, **SHOULD**, and **MAY** describe requirements, strong recommendations, and optional implementation choices. This document establishes a coherent semantic model, distinguishing implemented support from proposed extensions. Decisions tagged **Open decision** need confirmation before being frozen as language guarantees. Compound assignments (§4/WP1), bare `while` transfers (§7/WP2), block/if values with internal Never (§§3.2, 8.1/WP3), and statement/value loops (§7/WP4) are implemented. Range construction, internal calls, exact numeric membership (§5/WP5), and range/array statement `for` (§6/issues #4–#5) are also implemented, with adapter/interaction support under issue #6; all WP5 release gates passed (exact evidence in plan §5). WP6 user-function named/mixed-prefix calls and trailing pure defaults (§14/issues #10/#12) are implemented, and [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation). WP7 acyclic result inference (§9) and its named/default integration are implemented, and [#16 release validation passed](was_language_extensions_plan.md#issue-16-wp7-release-validation). Every recursive component member requires an explicit result in this initial release. WP8 whitelist contracts (§13) are implemented and [release gates passed](was_language_extensions_plan.md#wp8-release-validation), including rebuilt-browser and full ignored runtime coverage. WP9 match statements/values (§8.2–§8.3) are implemented with frontend/backend integrated and [release gates passed](was_language_extensions_plan.md#wp9-release-validation). WP10–WP12 pipelines/closures/placeholders and examples using them remain proposed `.was` syntax, not claims about the present compiler.
 
 The [concrete implementation plan](was_language_extensions_plan.md) maps this
 specification to ordered work packages, repository files, acceptance tests, and
@@ -16,7 +16,7 @@ and bare `while` transfers (§7/WP2), followed by block/if values and internal N
 (§§3.2, 8.1/WP3) and statement/value loops (§7/WP4), are implemented;
 WP5's construction/internal-call, numeric membership, range-for, and array-for checkpoints are implemented;
 issue #6 completes adapter/interaction implementation and all release gates passed.
-Exact evidence is recorded in [plan §5](was_language_extensions_plan.md#5-documentation-and-validation-workflow). WP6 named/default parameters are implemented on main, and [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation). WP7 acyclic result inference and combined-feature integration are implemented, with [#16 release validation](was_language_extensions_plan.md#issue-16-wp7-release-validation). WP8 whitelist contracts are implemented, with [release gates passed](was_language_extensions_plan.md#wp8-release-validation). WP9–WP12 remain proposed later packages and WP13 requires separate authorization.
+Exact evidence is recorded in [plan §5](was_language_extensions_plan.md#5-documentation-and-validation-workflow). WP6 named/default parameters are implemented on main, and [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation). WP7 acyclic result inference and combined-feature integration are implemented, with [#16 release validation](was_language_extensions_plan.md#issue-16-wp7-release-validation). WP8 whitelist contracts are implemented, with [release gates passed](was_language_extensions_plan.md#wp8-release-validation). WP9 match statements/values are implemented with [release gates passed](was_language_extensions_plan.md#wp9-release-validation). WP10–WP12 remain proposed later packages and WP13 requires separate authorization.
 
 ## 1. Goals and non-goals
 
@@ -686,7 +686,8 @@ expressions, leaving memory/local/scratch/remainder policies separate.
 ### 8.1 `if` expression
 
 **Implementation status:** Implemented in WP3 for all existing concrete result
-kinds and Void/Never joins. `match` (§8.2 onward) remains proposed.
+kinds and Void/Never joins. `match` (§8.2 onward) is implemented in WP9;
+[release gates passed](was_language_extensions_plan.md#wp9-release-validation).
 
 ```
 let sign: number = if value >= 0 { 1 } else { -1 };
@@ -733,18 +734,88 @@ let choice: number = match ready {
 };
 ```
 
-v1 patterns: wildcard `_`, exact constant literals, relational patterns (`<`, `<=`, `>`, `>=` followed by a compile-time constant number), compile-time-constant range patterns, and boolean patterns. String exact-literal matching MAY use the existing content-equality implementation. General destructuring, binding patterns, or-patterns, and guards are deferred.
+**Implementation status:** WP9 frontend/backend integrated, with
+[release gates passed](was_language_extensions_plan.md#wp9-release-validation),
+including current-source rebuilt-browser and full ignored runtime validation.
+These are the frozen v1 rules, not optimizer proposals.
+
+- A match MUST contain at least one `pattern => expression` arm. Commas separate
+  all arms, including block-expression arms; a trailing comma is optional.
+- Patterns are `_`, exact number/string/bool literals, numeric relational patterns
+  (`<`, `<=`, `>`, `>=`), and constant numeric intervals (`a..b`, `a..=b`).
+  Numeric constants MUST be decimal literals with optional unary minus: no unary
+  plus, arithmetic, calls, names, or general constant expressions. Existing finite
+  literal representability checks apply; underflow is allowed. Interval endpoints
+  may be fractional and need not be safe integers.
+- Each arm has its own lexical scope. Arm declarations MUST NOT leak into other
+  arms or outside the match. A direct RHS is an expression; `return`, `break`, and
+  `continue` statements require a block RHS. Transfers retain the enclosing
+  function/nearest active loop target; match creates no transfer target.
+- Bare match follows bare-if classification: function/statement-body matches
+  discard arm results; a final bare match without `;` in a value block is its
+  tail; nonfinal or semicolon-terminated bare matches are statements. Parenthesize
+  the whole match for arithmetic continuation in these classification positions.
+  Parenthesized matches are expressions even when discarded. There are no newline
+  heuristics or implicit function returns.
+- Exact `match` and standalone `_` are reserved for source binding/function names
+  and registered host source-language names. `_temp` and arbitrary nonempty host
+  module/field names remain valid. This intentionally breaks prior use of these
+  exact source identifiers; `_` is neither an ignored binding nor a placeholder
+  expression in WP9.
+- Match is excluded from the defaults/contracts pure-expression whitelist,
+  including skipped children and forged typed input. Binding patterns, guards,
+  destructuring and or-patterns remain unsupported.
 
 ### 8.3 Semantics
 
-- Evaluate the scrutinee once; examine arms top to bottom; evaluate only the selected arm's expression/block.
-- Relational patterns compare scrutinee against their constant with IEEE-754 `f64` comparisons. NaN does not satisfy equality or relational numeric patterns and can fall through to `_`.
-- A match in value context MUST be exhaustive. The initial analyzer MAY require a final `_` arm for `number`/`string` scrutinees; `bool` can be exhaustively covered by `true` and `false`.
-- Each reachable arm MUST have a compatible result type. Duplicate or provably unreachable arms SHOULD be warned about (not silently rejected until pattern coverage analysis is reliable).
-- `match` as a statement is allowed; non-exhaustive statement matches SHOULD still be rejected or require `_` for simplicity and predictability.
-- The range pattern `1..=9` means numeric interval matching, **not** the iteration/progression-membership meaning of first-class `range` values with `by`. It matches values satisfying interval bounds, including fractional numbers unless the language explicitly restricts it later. This context-sensitive distinction MUST be documented. To test progression membership use `value in range` in an `if` expression.
+- Evaluate the scrutinee exactly once, then test arms in source order. The first
+  matching arm wins and only its expression/block executes. String patterns use
+  UTF-8 byte-content equality, not descriptor identity.
+- A normally completing scrutinee MUST be `number`, `bool`, or `string`.
+  Array, range and Void scrutinees are rejected. Patterns MUST share its domain.
+- Both statement and value matches MUST be exhaustive. Number/string matches
+  require a final wildcard, even if comparisons appear to cover the domain.
+  Boolean coverage accepts both literals, either literal followed by `_`, or `_`
+  alone. Wildcard MUST occur at most once and only last.
+- Numeric patterns use IEEE-754 `f64` comparisons. Signed zeros compare equal;
+  NaN satisfies no numeric literal, relational or interval pattern and reaches `_`.
+  `a..b` tests `a <= value && value < b`; `a..=b` includes both bounds. Reversed
+  intervals and equal-endpoint exclusive intervals are valid but never match.
+  Intervals include fractional values: `1..=9` is **not** stepped progression
+  membership. `by` is rejected in patterns; use `value in range` for progression
+  membership.
+- Duplicate non-wildcard patterns and overlapping intervals are accepted without
+  new warnings. All arms MUST be conservatively checked, even after constant
+  scrutinees, duplicates, complete earlier coverage, or noncompletion. Coverage
+  checking is separate from flow analysis; no pattern-based pruning is performed.
+- Value-arm results structurally join exact concrete types or all Void, with
+  Never compatible with the other category; all-Never arms produce Never. A
+  statement match discards completing arm results and allows heterogeneous tails,
+  while independently checking every arm. When the scrutinee can complete, every
+  arm contributes conservatively to result joins, return inference and loop-transfer
+  summaries, regardless of overlap or apparent reachability from pattern values.
+- A Never scrutinee still requires valid patterns, ordinary coverage and structural
+  value-arm joins. Non-wildcard patterns establish one number/bool/string domain;
+  mixed domains are rejected. Wildcard-only needs no concrete domain. Check every
+  arm, then compose flow after the noncompleting scrutinee: arms contribute no
+  reachable flow and the overall match is Never. Divergence does not excuse an
+  incompatible pair of completing value-arm results.
+- Raw/typed pattern records retain pattern-only UTF-8 byte spans; arm spans run
+  from pattern through RHS, excluding commas. Pattern errors use pattern spans;
+  incompatible results use the offending arm span. Whole-match coverage errors
+  retain the enclosing expression/statement location, without general expression
+  spans or changes to unchanged-syntax diagnostic ordering.
 
 ### 8.4 Wasm optimization opportunities
+
+WP9 currently uses ordered comparison chains, one cached scrutinee (`f64` for
+number, `i32` for bool/string), scoped arms and MVP single-result regions. A Never
+scrutinee needs no fabricated cached value. Shared `src/match_patterns.rs` checks
+constants/domains/coverage; private `src/codegen/match_.rs` reconstructs checked
+results/flow. The walker visits scrutinee then all scoped arms; static pattern
+strings and scratch slots are discovered deterministically by separate policies.
+No new ABI or helper kind is introduced. The opportunities below are **future
+only**; WP9 adds no `br_table`, constant pruning or optimization pass.
 
 - Prefer direct numeric comparisons/branch chains for sparse or relational cases.
 - If a collection of exact numeric literal cases is proved integral, safe, and sufficiently dense, MAY lower to `br_table` after validated conversion; maintain a fallback for NaN/nonintegral values.
@@ -1031,7 +1102,7 @@ span field to ordinary expressions.
 - Conditions use the narrow shared pure-expression whitelist in §14.2 with all
   formal parameters readable, but no body/caller locals. Require exact `bool` and
   existing operator/builtin types. Reject all user/host calls, writes, indexing,
-  array/range construction, membership, blocks/if/loops and normalized calls,
+  array/range construction, membership, blocks/if/loops/match and normalized calls,
   including in runtime-skipped children. Pure permits shared-array reads and traps,
   not writes or runtime allocation. User-function purity analysis is future work.
 - Semantic declaration checks run in source order: each function's parameter
@@ -1108,9 +1179,9 @@ fn increment(value: number, by: number = value / 10) -> number {
 - Positional calls to the compiler-known builtin `len`, including its existing
   descriptor-validation traps. No other builtin is initially allowlisted.
 
-Reject indexing, array/range construction, range membership (`in`), blocks, if/loop
-expressions, writes, and user/host calls. Check every child, including runtime-skipped
-logical operands. Defaults can read only earlier formals; contracts can read all
+Reject indexing, array/range construction, range membership (`in`), blocks,
+if/loop/match expressions, writes, and user/host calls. Check every child, including
+runtime-skipped logical operands. Defaults can read only earlier formals; contracts can read all
 formals. Pure means no writes or runtime allocation, not that evaluation cannot trap
 or read shared array contents. This policy does not broaden the ordinary operator
 type rules or establish user-function purity.
@@ -1167,9 +1238,9 @@ Local closure bindings can be called with their explicit positional signature; n
 ### 15.1 New tokens
 
 Reserved keywords: `for`, `in`, `loop`, `break`, `continue`, `match`, `requires`. `by` is **contextual only** after a range expression, not a globally reserved keyword. Existing keywords remain.  
-Operators/tokens: `+=`, `-=`, `*=`, `/=`, `%=`, `..`, `..=`, `=>`, `|>`, `:` in named arguments (already present elsewhere), and `_` as a context-dependent placeholder/wildcard token.
+Operators/tokens: `+=`, `-=`, `*=`, `/=`, `%=`, `..`, `..=`, `=>`, `|>`, `:` in named arguments (already present elsewhere), and `_`. WP9 implements `_` only as a match wildcard; `|>` and placeholder expressions remain proposed.
 
-`_` on its own is reserved in expressions/patterns **and rejected in binding positions**; ordinary identifiers such as `_temp` remain valid.
+`_` on its own is reserved **and rejected in binding positions**; WP9 accepts it only in match patterns, not as a standalone expression. Ordinary identifiers such as `_temp` remain valid.
 
 Lexer precedence must recognize `..=` before `..`, `=>` before `=`, `|>` before `|`, and compound assignment before its component punctuation. Numeric tokenization must distinguish `1.25` from `1..25`.
 
@@ -1198,8 +1269,11 @@ TailExpr        := Expr ; // no terminating semicolon
 IfExpr          := 'if' Expr Block ('else' (Block | IfExpr))? ;
 LoopExpr        := 'loop' Block ;
 MatchExpr       := 'match' Expr '{' MatchArm (',' MatchArm)* ','? '}' ;
-MatchArm        := Pattern '=>' (Expr | Block) ;
-Pattern         := '_' | Literal | RelOp ConstantExpr | ConstantRange ;
+MatchArm        := Pattern '=>' Expr ; // block expressions included
+Pattern         := '_' | STRING | 'true' | 'false' | SignedNumber
+                 | RelOp SignedNumber | SignedNumber ('..' | '..=') SignedNumber ;
+SignedNumber    := '-'? NUMBER ;
+RelOp           := '<' | '<=' | '>' | '>=' ;
 
 RangeExpr       := ExprWithoutRange ('..' | '..=') ExprWithoutRange ('by' ExprWithoutRange)? ;
 LambdaExpr      := '(' TypedParamList? ')' '=>' (Expr | Block) ; // legal only as locally bound closure or immediate stage
@@ -1208,7 +1282,7 @@ PipelineStage   := NamedFunctionOrLocalClosure | CallToKnownFunction | Parenthes
 CallArgument    := (IDENT ':')? Expr ;
 ```
 
-**Ambiguity note:** `if`/`loop` can appear as expressions and standalone statements. Parsing a source `if condition { ... }` as an `if` expression is fine if context/semicolon handling permits the previous statement form. For ambiguous adjacent expression blocks, use explicit grammar termination and parser tests rather than ad hoc newline-sensitive rules.
+**Ambiguity note:** `if`/`loop`/`match` can appear as expressions and standalone statements. Parsing a source `if condition { ... }` as an `if` expression is fine if context/semicolon handling permits the previous statement form. For ambiguous adjacent expression blocks, use explicit grammar termination and parser tests rather than ad hoc newline-sensitive rules.
 
 ### 15.3 Recommended precedence, loose to tight
 
@@ -1277,7 +1351,7 @@ parameter types/defaults then ordered contracts, before recursive annotation
 checks, stable dependency-order result inference and source-order final body
 checks. Contracts use concrete parameter types and cannot call inferred functions;
 no contract participates in result inference. The broader sequence below is a
-future architectural sketch for WP9–WP12, not implemented pass order or permission
+future architectural sketch for WP10–WP12, not implemented pass order or permission
 to move contract checking after inference.
 
 1. **Lex/parse:** recognize the surface syntax and retain precise spans.
@@ -1368,7 +1442,8 @@ implemented optimizer. All current levels are no-ops with exact output/diagnosti
 parity. In particular contract elimination/refinement, closure optimization,
 pipeline fusion and external `wasm-opt` integration are not implemented; WP13
 requires separate authorization and measured, independently validated changes.
-WP9–WP12 syntax remains proposed.
+WP9 match syntax is implemented with [release gates passed](was_language_extensions_plan.md#wp9-release-validation);
+WP10–WP12 syntax remains proposed.
 
 | Optimization | Feature(s) | Preconditions / warning |
 |---|---|---|

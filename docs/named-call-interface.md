@@ -22,7 +22,11 @@ and forged nested sequences. [#16 WP7 release validation passed](was_language_ex
 including native and current-source browser ABI/diagnostic acceptance. Every recursive
 component member still needs an explicit result. WP8 whitelist preconditions are
 implemented with [release gates passed](was_language_extensions_plan.md#wp8-release-validation).
-WP9–WP12 remain proposed, and WP13 requires separate authorization; later packages
+WP9 match statements/values are implemented with [release gates passed](was_language_extensions_plan.md#wp9-release-validation),
+including native/current-source rebuilt-browser and full ignored runtime coverage.
+Match retains named/default normalization and raw full-arity ABI; it remains
+outside the shared pure-expression whitelist, including forged typed defaults.
+WP10–WP12 remain proposed, and WP13 requires separate authorization; later packages
 reuse the approved interfaces only after their ordered integration/release gates.
 
 ### Public AST migration
@@ -85,7 +89,7 @@ explicitly supplied. Defaults are trailing-only, exact-typed, and restricted to
 scalar literals, earlier-formal reads, existing type-valid unary/arithmetic/
 comparison/equality/logical operations (including string/array equality), and
 positional builtin `len(array)`. Reject indexing, array/range construction,
-membership, blocks/if/loops, writes, and user/host calls, even in skipped operands.
+membership, blocks/if/loops/match, writes, and user/host calls, even in skipped operands.
 An earlier handle read may copy an array/string/private range handle; it does not
 allocate or snapshot its contents. Pure defaults may observe shared array contents
 or trap. See [spec §14.2](was_language_extensions_spec.md#142-default-expression-restrictions-and-scope).

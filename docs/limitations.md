@@ -38,7 +38,9 @@ release gates passed; see [#16 evidence](was_language_extensions_plan.md#issue-1
 WP8 whitelist contracts are implemented;
 [release gates passed](was_language_extensions_plan.md#wp8-release-validation),
 including rebuilt-browser and full ignored runtime coverage.
-WP9–WP12 remain proposed; WP13 optimization needs separate authorization.
+WP9 match statements/values are implemented with frontend/backend integrated;
+[release gates passed](was_language_extensions_plan.md#wp9-release-validation). WP10–WP12 remain proposed; WP13
+optimization needs separate authorization.
 See [the #14 contract](result-inference-development.md#issue-14-acyclic-chains-and-diamonds) and the
 [named/default interface](named-call-interface.md) for migration and the
 [development handoff](wp6-wp7-development.md) for historical worktree evidence.
@@ -99,7 +101,7 @@ allowed. Ordinary body-literal errors retain their previous stage and locations.
 The initial whitelist admits scalar literals, earlier-formal reads, existing
 unary/arithmetic/comparison/equality/logical operations, and positional builtin
 `len`. String/array content equality is permitted. Indexing, array/range
-construction, membership, blocks/if/loops, writes, and user/host calls are rejected,
+construction, membership, blocks/if/loops/match, writes, and user/host calls are rejected,
 including skipped operands. Pure does not mean nontrapping or snapshotting shared
 array contents. No general user-function purity analysis is implemented.
 
@@ -232,6 +234,46 @@ optimization levels. Cross-feature regression coverage for these restrictions is
 listed in the [WP5 checkpoint](was_language_extensions_plan.md#wp5--safe-ranges-rangearray-for-membership-spec-56).
 WP5 release gates passed as recorded in extension plan §5, including rebuilt
 browser bindings and the full ignored-test run. Default tests still skip Node cases.
+
+### Match restrictions (WP9)
+
+Match statements/values are implemented, with [release gates passed](was_language_extensions_plan.md#wp9-release-validation),
+including current-source rebuilt-browser and full ignored runtime coverage. The [normative match rules](was_language_extensions_spec.md#82-match-expression-syntax)
+and [frozen design interview](was_language_extensions_plan.md#wp9--match-statementsvalues-spec-8-implemented)
+separate this support from proposed pipelines/closures/placeholders.
+
+- Scrutinees that complete must be number/bool/string, not arrays, ranges or Void.
+  Patterns are wildcard, exact scalar literals, numeric comparisons and constant
+  numeric intervals only: no bindings, guards, destructuring or or-patterns.
+  Numeric constants are decimal literals with optional unary minus, not general
+  constant expressions; they must be finitely representable. Fractional endpoints
+  are allowed and need not be safe integers.
+- `a..b` means `a <= value && value < b`; `a..=b` includes both endpoints,
+  including fractional members. This is not progression membership; no `by` is
+  accepted. Reversed/equal-exclusive intervals never match. Signed zeros compare
+  equal; NaN reaches the wildcard. Use `in` for range progression membership.
+- Both contexts require exhaustiveness. Number/string need final `_`; bool needs
+  both literals, one literal then `_`, or `_` alone. Wildcard is unique and last.
+  Duplicate non-wildcard patterns/overlaps are accepted without new warnings.
+  Scrutinee evaluation occurs once, with only the first matching arm executing.
+- Every arm is scoped independently and checked conservatively, including after
+  constant scrutinees, duplicate/covered patterns or divergence. Value arms join
+  exact concrete results or all Void with Never compatibility; statement arms
+  discard heterogeneous results. A Never scrutinee still requires valid patterns,
+  coverage and structural value-arm joins, but arms supply no reachable flow.
+  Non-wildcard patterns establish one domain; wildcard-only needs none. For a
+  completing scrutinee all arms contribute to inference/transfer summaries.
+- Commas separate `pattern => expression` arms, including block arms; a trailing
+  comma is optional. Transfers require a block RHS. Bare matches in statement
+  bodies discard results; a final bare match without `;` in a value block is its
+  tail. Nonfinal/semicolon-terminated matches are statements. Parenthesize for
+  arithmetic continuation in these positions; no newline heuristics or implicit
+  function return is introduced.
+- Exact `match` and `_` are reserved source/host-language names, deliberately
+  breaking older bindings/functions with these names. `_temp` and host module/field
+  names remain valid. `_` adds neither ignored bindings nor placeholder expressions.
+  Match is excluded from the defaults/contracts pure-expression whitelist, even in
+  skipped children and forged typed trees. No match optimization is implemented.
 
 | Restriction now | Practical effect | Current alternative | Possible future choice and tradeoff |
 | --- | --- | --- | --- |

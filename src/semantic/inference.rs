@@ -2,7 +2,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use super::{FunctionId, SemanticAnalyzer, SemanticError};
 use crate::{
-    ast::{Block, Expr, Function, Program, StatementKind, ValueBlock},
+    ast::{Block, Expr, Function, MatchArm, Program, StatementKind, ValueBlock},
     tokens::Span,
 };
 
@@ -244,6 +244,7 @@ impl<'a, F: FnMut(&'a str, Span) -> Option<&'a Function>> LexicalWalker<'a, F> {
                         self.scoped_block(block);
                     }
                 }
+                StatementKind::Match { scrutinee, arms } => self.match_arms(scrutinee, arms, span),
                 StatementKind::While { cond, body } => {
                     self.expr(cond, span);
                     self.scoped_block(body);
@@ -285,6 +286,15 @@ impl<'a, F: FnMut(&'a str, Span) -> Option<&'a Function>> LexicalWalker<'a, F> {
             self.expr(tail, block.span);
         }
         self.scopes.pop();
+    }
+
+    fn match_arms(&mut self, scrutinee: &'a Expr, arms: &'a [MatchArm], span: Span) {
+        self.expr(scrutinee, span);
+        for arm in arms {
+            self.scopes.push(HashSet::new());
+            self.expr(&arm.body, arm.span);
+            self.scopes.pop();
+        }
     }
 
     fn expr(&mut self, expr: &'a Expr, span: Span) {
@@ -332,6 +342,7 @@ impl<'a, F: FnMut(&'a str, Span) -> Option<&'a Function>> LexicalWalker<'a, F> {
                     self.expr(&arg.value, if normalized { arg.span } else { span });
                 }
             }
+            Expr::Match { scrutinee, arms } => self.match_arms(scrutinee, arms, span),
             Expr::Loop { body } => self.scoped_block(body),
             Expr::Block(block) => self.value_block(block),
             Expr::If { cond, then, else_ } => {

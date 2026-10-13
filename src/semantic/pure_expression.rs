@@ -112,6 +112,7 @@ impl SemanticAnalyzer {
             Expr::Range { .. } => return Err(invalid("range construction is not allowed")),
             Expr::Index { .. } => return Err(invalid("indexing is not allowed")),
             Expr::Block(_) => return Err(invalid("blocks are not allowed")),
+            Expr::Match { .. } => return Err(invalid("match expressions are not allowed")),
             Expr::If { .. } => return Err(invalid("if expressions are not allowed")),
             Expr::Loop { .. } => return Err(invalid("loop expressions are not allowed")),
         }

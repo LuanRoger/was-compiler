@@ -75,6 +75,12 @@ impl Visitor for TemporaryVisitor {
             self.reserve(&[ValType::I32, ValType::F64])?;
         }
 
+        if let TypedStatementKind::Match { scrutinee, .. } = &statement.kind
+            && let Some(ty) = super::match_::scratch_type(scrutinee.ty)
+        {
+            self.reserve(&[ty])?;
+        }
+
         if let TypedStatementKind::For { iterable, .. } = &statement.kind {
             if iterable.ty == ExprResult::Value(Type::NumberArray) {
                 self.reserve(&[ValType::I32, ValType::I32, ValType::I32])?;
@@ -93,6 +99,12 @@ impl Visitor for TemporaryVisitor {
     }
 
     fn enter_expression(&mut self, expr: &TypedExpr) -> ControlFlow<CodegenError> {
+        if let TypedExprKind::Match { scrutinee, .. } = &expr.kind
+            && let Some(ty) = super::match_::scratch_type(scrutinee.ty)
+        {
+            self.reserve(&[ty])?;
+        }
+
         if matches!(expr.kind, TypedExprKind::Array(_)) {
             self.reserve(&[ValType::I32])?;
         }

@@ -304,6 +304,12 @@ fn normalize_block(block: &mut TypedBlock, next_id: &mut usize) {
                     normalize_block(else_, next_id);
                 }
             }
+            TypedStatementKind::Match { scrutinee, arms } => {
+                normalize_expr(scrutinee, next_id);
+                for arm in arms {
+                    normalize_expr(&mut arm.body, next_id);
+                }
+            }
             TypedStatementKind::While { cond, body, .. } => {
                 normalize_expr(cond, next_id);
                 normalize_block(body, next_id);
@@ -403,6 +409,12 @@ fn normalize_expr(expr: &mut TypedExpr, next_id: &mut usize) {
             normalize_value_block(then, next_id);
             if let Some(else_) = else_ {
                 normalize_value_block(else_, next_id);
+            }
+        }
+        TypedExprKind::Match { scrutinee, arms } => {
+            normalize_expr(scrutinee, next_id);
+            for arm in arms {
+                normalize_expr(&mut arm.body, next_id);
             }
         }
         TypedExprKind::Array(values) => {

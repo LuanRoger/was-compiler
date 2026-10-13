@@ -140,7 +140,16 @@ remain valid.
 WP8 is implemented and [release gates passed](was_language_extensions_plan.md#wp8-release-validation),
 including rebuilt-browser and full ignored runtime coverage. See
 [WP8 suites and frozen contracts](was_language_extensions_plan.md#wp8--whitelist-contracts-spec-13).
-WP9–WP12 match/pipelines/closures/placeholders remain proposed.
+WP9 match statements/values are implemented with [release gates passed](was_language_extensions_plan.md#wp9-release-validation),
+including bounded Node execution and current-source rebuilt-browser/full ignored
+validation. `tests/match_runtime.rs` covers effects, first-match overlaps, strings,
+fractional/NaN cases and transfers; `tests/match_adapters.rs` covers native/browser
+compatibility. Node/browser cases retain their default ignored policy. Match uses
+the existing raw ABI and explicit marshaling, with no new host callback or helper
+kind; its scrutinee runs once and only the first matching arm executes. See
+[the frozen match rules](was_language_extensions_spec.md#82-match-expression-syntax).
+WP10–WP12 pipelines/closures/placeholders remain proposed; WP13 optimization
+requires separate authorization.
 
 ## Export selection in Rust
 

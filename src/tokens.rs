@@ -31,6 +31,8 @@ pub enum TokenKind<'a> {
     Fn,
     Let,
     If,
+    Match,
+    Wildcard,
     Else,
     While,
     For,
@@ -95,6 +97,7 @@ pub enum TokenKind<'a> {
     DotDot,
     DotDotEqual,
     Arrow,
+    FatArrow,
 
     Eof,
     Invalid,
