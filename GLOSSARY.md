@@ -25,8 +25,7 @@ _Avoid_: Range membership pattern, progression pattern
 
 **Named-only pipeline**:
 An ordered chain that supplies its input to the first parameter of each named
-user-function stage; it does not make functions into values. This is proposed WP10
-language support, not an implemented feature.
+user-function stage; it does not make functions into values.
 
 **Pipeline stage**:
 A function invocation within a pipeline, receiving the preceding input as its first

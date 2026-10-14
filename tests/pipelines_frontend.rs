@@ -49,6 +49,186 @@ fn positional_stages_normalize_with_distinct_injection_and_written_indices() {
 }
 
 #[test]
+fn named_defaults_preserve_mapping_origins_prefixes_and_declaration_spans() {
+    let source = "/*🦀*/ fn stage(a: number = 99, b: number = a + 1, c: number = b + 1, d: number = c + 1) { return d; } fn main() { return (2) /*λ*/ |> stage(d: 8, b: 4) |> stage(); }";
+    let compiler = Compiler::new();
+    let program = compiler.analyze(source).unwrap();
+    let TypedStatementKind::Return(Some(value)) = &program.functions[1].body[0].kind else {
+        panic!("return")
+    };
+    let TypedExprKind::NormalizedCall(outer) = &value.kind else {
+        panic!("outer stage")
+    };
+    assert_eq!(
+        outer.bindings[0].span,
+        span(source, "(2) /*λ*/ |> stage(d: 8, b: 4)")
+    );
+    let TypedExprKind::NormalizedCall(inner) = &outer.bindings[0].value.kind else {
+        panic!("inner stage")
+    };
+    assert_eq!(inner.bindings[0].span, span(source, "(2)"));
+    assert_eq!(inner.bindings[1].span, span(source, "d: 8"));
+    assert_eq!(inner.bindings[2].span, span(source, "b: 4"));
+    assert_eq!(inner.bindings[3].span, span(source, "b + 1"));
+    assert_eq!(
+        inner.bindings.iter().map(|b| b.origin).collect::<Vec<_>>(),
+        [
+            CallBindingOrigin::PipelineInput,
+            CallBindingOrigin::Explicit { argument: 0 },
+            CallBindingOrigin::Explicit { argument: 1 },
+            CallBindingOrigin::Default { formal: 2 },
+        ]
+    );
+    assert_eq!(
+        inner.formal_to_binding,
+        [
+            inner.bindings[0].id,
+            inner.bindings[2].id,
+            inner.bindings[3].id,
+            inner.bindings[1].id
+        ]
+    );
+    let TypedExprKind::Binary { left, .. } = &inner.bindings[3].value.kind else {
+        panic!("default")
+    };
+    assert!(
+        matches!(left.kind, TypedExprKind::Identifier { id, .. } if id == inner.bindings[2].id)
+    );
+    assert_eq!(
+        outer.bindings.iter().map(|b| b.origin).collect::<Vec<_>>(),
+        [
+            CallBindingOrigin::PipelineInput,
+            CallBindingOrigin::Default { formal: 1 },
+            CallBindingOrigin::Default { formal: 2 },
+            CallBindingOrigin::Default { formal: 3 },
+        ]
+    );
+    wasmparser::Validator::new()
+        .validate_all(&compiler.compile(&program).unwrap())
+        .unwrap();
+    let bare = source.replace("|> stage();", "|> stage;");
+    assert_eq!(
+        compiler.compile_source(source).unwrap(),
+        compiler.compile_source(&bare).unwrap()
+    );
+}
+
+#[test]
+fn named_pipeline_binding_errors_keep_written_spans_and_structural_priority() {
+    enum BindingError {
+        Duplicate,
+        Unknown,
+        PositionalAfterNamed,
+        TooMany,
+        Type,
+    }
+
+    let declaration =
+        "fn stage(a: number = 9, b: number = a, c: number = b) -> number { return c; }";
+    for (args, origin, expected) in [
+        ("a: unknown", "a: unknown", BindingError::Duplicate),
+        ("b: unknown, b: 2", "b: 2", BindingError::Duplicate),
+        ("bad: unknown", "bad: unknown", BindingError::Unknown),
+        ("b: unknown, 2", "2)", BindingError::PositionalAfterNamed),
+        ("1, 2, unknown", "unknown", BindingError::TooMany),
+        ("b: true", "b: true", BindingError::Type),
+    ] {
+        let source =
+            format!("{declaration} fn main() -> number {{ return (2) |> stage({args}); }}");
+        let err = error(&source);
+        assert!(
+            match expected {
+                BindingError::Duplicate => matches!(err, SemanticError::DuplicateArgument { .. }),
+                BindingError::Unknown => matches!(err, SemanticError::UnknownArgument { .. }),
+                BindingError::PositionalAfterNamed =>
+                    matches!(err, SemanticError::PositionalAfterNamed { .. }),
+                BindingError::TooMany =>
+                    matches!(err, SemanticError::TooManyPositionalArguments { .. }),
+                BindingError::Type => matches!(err, SemanticError::TypeMismatch { .. }),
+            },
+            "{err:?}"
+        );
+        let origin = if matches!(expected, BindingError::PositionalAfterNamed) {
+            Span::new(
+                source.rfind(origin).unwrap(),
+                source.rfind(origin).unwrap() + 1,
+            )
+        } else {
+            span(&source, origin)
+        };
+        assert_eq!(err.span(), Some(origin));
+    }
+    for stage in ["required", "required()", "required(c: unknown)"] {
+        let source = format!(
+            "fn required(a: number, b: number, c: number = 3) -> number {{ return a; }} fn main() -> number {{ return 1 |> {stage}; }}"
+        );
+        let err = error(&source);
+        assert!(matches!(&err, SemanticError::MissingArgument { argument, .. } if argument == "b"));
+        let start = source.rfind(stage).unwrap();
+        assert_eq!(err.span(), Some(Span::new(start, start + stage.len())));
+    }
+}
+
+#[test]
+fn named_defaults_keep_declaration_resolution_hygiene_and_inference_dependencies() {
+    let source = "fn root() { let x = 99; return 2 |> left(extra: 4) |> right; } fn left(x: number, extra: number = x + 1) { return x |> leaf(add: extra); } fn right(x: number, extra: number = x + 1) { return x |> leaf(add: extra); } fn leaf(x: number, add: number = x + 1) { return x + add; } fn nested() { return 1 |> leaf(add: 2 |> right); }";
+    let compiler = Compiler::new();
+    let program = compiler.analyze(source).unwrap();
+    assert!(
+        program
+            .functions
+            .iter()
+            .all(|f| f.return_type == Type::Number)
+    );
+    assert_eq!(
+        program
+            .functions
+            .iter()
+            .map(|f| f.name.as_str())
+            .collect::<Vec<_>>(),
+        ["root", "left", "right", "leaf", "nested"]
+    );
+    wasmparser::Validator::new()
+        .validate_all(&compiler.compile(&program).unwrap())
+        .unwrap();
+    for source in [
+        "fn f(x: number, y: number = x) { return x |> f(y: y); }",
+        "fn f(x: number, y: number = x) { return 1; x |> g; } fn g(x: number, y: number = x) -> number { return x |> f(y: y); }",
+    ] {
+        assert!(matches!(
+            error(source),
+            SemanticError::RecursiveResultAnnotationRequired { .. }
+        ));
+    }
+    Compiler::new().compile_source("fn f(x: number, y: number = x) -> number { if x <= 0 { return y; } return (x - 1) |> f; }").unwrap();
+    assert!(
+        matches!(error("fn stage(a: number, b: number = a) -> number { return b; } fn main() -> number { return 1 |> stage(b: a); }"), SemanticError::UndefinedVariable { name, .. } if name == "a")
+    );
+}
+
+#[test]
+fn named_and_default_children_are_checked_after_never_and_in_skipped_source() {
+    for source in [
+        "fn stage(a: number, b: number = a) -> number { return b; } fn main() -> number { return (loop {}) |> stage(b: unknown); }",
+        "fn stage(a: number, b: number = a) -> number { return b; } fn main() -> number { return (loop {}) |> stage |> stage(b: unknown); }",
+        "fn stage(a: bool, b: bool = a) -> bool { return b; } fn main() -> bool { return false && (true |> stage(b: unknown)); }",
+        "fn stage(a: number, b: number = a) -> number { return b; } fn main() -> number { return 1; 2 |> stage(b: unknown); }",
+    ] {
+        assert!(
+            matches!(error(source), SemanticError::UndefinedVariable { name, .. } if name == "unknown")
+        );
+    }
+    let compiler = Compiler::new();
+    let source = "fn stage(a: number, b: number = a) -> number { return b; } fn main() -> number { return ({ return 7; 1 }) |> stage; }";
+    wasmparser::Validator::new()
+        .validate_all(&compiler.compile_source(source).unwrap())
+        .unwrap();
+    assert!(
+        matches!(error("fn stage(a: number, b: number = unknown) -> number { return b; } fn main() -> number { return (loop {}) |> stage(b: 2); }"), SemanticError::UndefinedVariable { name, .. } if name == "unknown")
+    );
+}
+
+#[test]
 fn raw_stages_preserve_parenthesized_input_argument_and_comment_byte_spans() {
     let source = "/*🦀*/ fn f() { return (\"é\") /*λ*/ |> first /*β*/ |> second(1, x: 2); }";
     let tokens = Lexer::new(source).tokenize();
@@ -187,13 +367,16 @@ fn stage_eligibility_shadowing_and_subset_restrictions_are_explicit() {
         error("fn id(x: number) { return x; } fn f() { let id = 1; return 1 |> id; }"),
         SemanticError::NotCallable { .. }
     ));
-    assert!(
-        matches!(error("fn pair(a: number, b: number = 2) { return a + b; } fn f() { return 1 |> pair; }"), SemanticError::MissingArgument { argument, .. } if argument == "b")
-    );
-    assert!(matches!(
-        error("fn pair(a: number, b: number) { return a + b; } fn f() { return 1 |> pair(b: 2); }"),
-        SemanticError::NamedArgumentsNotSupported { .. }
-    ));
+    Compiler::new()
+        .compile_source(
+            "fn pair(a: number, b: number = 2) { return a + b; } fn f() { return 1 |> pair; }",
+        )
+        .unwrap();
+    Compiler::new()
+        .compile_source(
+            "fn pair(a: number, b: number) { return a + b; } fn f() { return 1 |> pair(b: 2); }",
+        )
+        .unwrap();
     assert!(matches!(
         error("fn id(a: number) { return a; } fn f() { return 1 |> id(2); }"),
         SemanticError::TooManyPositionalArguments { .. }

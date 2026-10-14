@@ -1012,10 +1012,12 @@ Infer placeholder parameter types from uniquely constraining operations (e.g. `_
 
 ### 12.1 Two staged entry points, one semantic rule
 
-**Implemented subset (#25):** fully supplied positional, value-producing named
-user-function stages work through the core, CLI and browser adapter. Named stage
-arguments, omitted parameters even when defaults exist, and every declared-Void
-stage are explicitly rejected. Bare and empty-parenthesis stages are equivalent;
+**Implemented subset (#25/#26):** value-producing named user-function stages
+support positional-prefix/named written arguments and omitted trailing defaults
+through the core, CLI and browser adapter. Injection occupies formal 0 even when
+it has a default; naming formal 0 is a duplicate. Written positionals start at
+formal 1. Every declared-Void stage remains rejected pending the final slice.
+Bare and empty-parenthesis stages use remaining defaults identically;
 input binds to formal 0 with exact types. All concrete types work, including private
 internal ranges under compatible explicit export selection. Host/builtin and
 zero-parameter stages are ineligible. Ordinary calls keep named/default support.
@@ -1041,7 +1043,7 @@ The initial pipeline implementation precedes closures and supports named functio
 ```
 let result = 10 |> double |> square;
 let result = 10 |> add(5);       // add(10, 5)
-let result = 10 |> clamp(max: 100); // deferred named-stage slice, not #25
+let result = 10 |> clamp(max: 100); // min may use its declared default
 ```
 
 After local closures (§10) are available, additionally support a known lexical closure binding or an immediately expressed placeholder stage:
@@ -1061,7 +1063,7 @@ A pipeline stage is either `value |> named_function_or_local_closure` (call with
 - `|>` is left-associative, below logical OR and above assignment statements (which remain statements, not expressions).
 - Evaluate the input once, then process stages left-to-right. Within a call stage, the injected input logically binds to parameter 0; evaluate explicit arguments exactly once in written order; then omitted defaults in formal order.
 - `x |> f(a)` means `f(x, a)`, **never** `f(a)(x)` or an intermediate partial function.
-- `x |> f` requires a statically resolved named function or supported local closure accepting one argument.
+- `x |> f` and `x |> f()` are equivalent: formal 0 receives input, and every remaining formal must have a default when no arguments are written.
 - A `void`-producing stage is valid only as the final stage in statement context.
 - Named arguments on later parameters work normally: `value |> clamp(min: 0, max: 100)`.
 - `f(_, 10)` is **not** a pipeline insertion syntax; unbound `_` in an ordinary argument would attempt to pass a closure and is rejected in v1.

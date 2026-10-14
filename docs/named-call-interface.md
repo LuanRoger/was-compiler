@@ -26,8 +26,8 @@ WP9 match statements/values are implemented with [release gates passed](was_lang
 including native/current-source rebuilt-browser and full ignored runtime coverage.
 Match retains named/default normalization and raw full-arity ABI; it remains
 outside the shared pure-expression whitelist, including forged typed defaults.
-WP10's value-producing positional subset is implemented under #25; named/default
-stage binding and final Void remain deferred. WP11–WP12 remain proposed, and WP13
+WP10's value-producing pipeline subset is implemented under #25/#26, including
+named/default stage binding; final Void and full WP10 release remain deferred. WP11–WP12 remain proposed, and WP13
 requires separate authorization; later packages
 reuse the approved interfaces only after their ordered integration/release gates.
 
@@ -68,13 +68,20 @@ IDs, scope, exact types/results, Never flow, and existing default-whitelist rule
 Injection initializers, like explicit initializers, cannot read owned bindings.
 Void is not an injectable value.
 
-#25 implements only fully supplied positional, value-producing user stages.
-Source analysis rejects named stage arguments, every omitted parameter (even a
-default), and every declared-Void result, including after Never. These temporary
-source restrictions do not erase existing normalized-call support for defaults or
-Void direct calls in forged typed input; typed normalization does not retain enough
-source provenance to reconstruct stage discard context. This is not full WP10
-release completion or an ABI change. Ordinary named/default calls stay unchanged.
+#26 extends #25's value-producing user stages with the ordinary named/mixed-prefix
+and trailing-default binder. Injection occupies formal 0 even when defaulted;
+written positionals start at formal 1, and naming formal 0 is a duplicate. Bare and
+empty-parenthesis stages both use omitted remaining defaults. Structural checks
+precede injected-type and written-expression checks; defaults then instantiate in
+formal order with declaration spans and resolved earlier-formal remapping.
+Injection supplies an earlier formal without exposing generated bindings to source
+lookup. Written explicit indices remain zero-based and argument spans unchanged.
+
+Source analysis still rejects every declared-Void stage, including after Never.
+Existing normalized-call support for Void direct calls in forged typed input is
+unchanged; typed normalization does not retain enough source provenance to
+reconstruct stage discard context. This is not full WP10 release completion or an
+ABI change. Ordinary named/default calls stay unchanged.
 
 ### WP8 contract constructor migration
 

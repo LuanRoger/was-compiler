@@ -7,7 +7,8 @@ written explicit argument 0. This reuses WP6's checked evaluation-order and owne
 boundary while preserving written-argument indices and allowing lowering to verify
 that injection is unique, first, and mapped to formal 0.
 
-This is an accepted design for proposed WP10, not implemented support. Raw pipeline
+Issues #25/#26 implement this accepted design for value-producing stages, including
+named/default binding. Final Void and full WP10 release remain deferred. Raw pipeline
 syntax remains distinct until semantic analysis for stage dependency discovery,
 whitelist rejection, and source diagnostics; see the
 [WP10 interview decisions](../was_language_extensions_plan.md#wp10--named-only-pipelines-spec-12).

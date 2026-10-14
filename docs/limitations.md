@@ -49,10 +49,10 @@ See [the #14 contract](result-inference-development.md#issue-14-acyclic-chains-a
 ### Named-only pipeline restrictions (partial WP10)
 
 `value |> function(args)` injects into formal 0 of a named user function and
-requires every remaining parameter positionally, even when defaults exist. Bare
-and empty-parenthesis stages are equivalent. Named stage arguments, omitted
-parameters/defaults, and every Void stage remain deferred; ordinary calls retain
-named/default support. Host/builtin stages, zero-parameter stages, callable values,
+supports positional-prefix/named remaining arguments and omitted trailing defaults.
+Injection occupies formal 0 even when defaulted; naming it is a duplicate. Bare
+and empty-parenthesis stages are equivalent. Every Void stage remains deferred;
+ordinary calls remain unchanged. Host/builtin stages, zero-parameter stages, callable values,
 placeholders and expression callees are rejected. User-function wrappers can call
 hosts. Pipelines remain outside the default/contract whitelist. Parenthesize bare
 if/match/loop constructs for continuation across statement/tail boundaries.

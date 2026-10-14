@@ -1,6 +1,6 @@
 # WAS language extensions implementation plan
 
-**Status:** WP1–WP9 implemented; WP5, WP6 (#13), WP7 (#16), and WP8 release gates passed (exact evidence in §5). WP9 frontend/backend are integrated and [release gates passed](#wp9-release-validation). WP10's value-producing positional subset (#25) is implemented; full WP10 remains incomplete. WP11–WP12 remain proposed; WP13 requires separate authorization.
+**Status:** WP1–WP9 implemented; WP5, WP6 (#13), WP7 (#16), and WP8 release gates passed (exact evidence in §5). WP9 frontend/backend are integrated and [release gates passed](#wp9-release-validation). WP10's value-producing positional/named/default subset (#25/#26) is implemented; final Void and full WP10 release remain incomplete. WP11–WP12 remain proposed; WP13 requires separate authorization.
 **Baseline:** Extension specification v0.3.
 
 Follow the [agent guide](../AGENTS.md), [extension specification](was_language_extensions_spec.md),
@@ -816,11 +816,12 @@ default Cargo success.
 
 ### WP10 — Named-only pipelines (spec §12)
 
-**Issue #25 implemented subset:** left-associative named-user pipelines below OR,
-with input injected into formal 0 and all remaining parameters supplied positionally.
-Bare/empty stages are equivalent. Named stage arguments, omitted parameters (even
-with defaults), and every declared-Void stage are explicitly rejected until later
-slices. Ordinary named/default calls remain unchanged. Every concrete value type,
+**Issues #25/#26 implemented subset:** left-associative named-user pipelines below
+OR, with input injected into formal 0 and ordinary positional-prefix/named/default
+binding for remaining parameters. Injection occupies formal 0 even when defaulted;
+naming it is a duplicate. Bare/empty stages are equivalent and use remaining trailing
+defaults. Every declared-Void stage remains rejected pending the final slice.
+Ordinary named/default calls remain unchanged. Every concrete value type,
 including private internal ranges under compatible export selection, is supported.
 Raw stages participate in inference/recursion discovery and whitelist rejection;
 typed stages nest checked normalized direct calls with `PipelineInput` origins.
@@ -828,7 +829,7 @@ Public migration is in [the call interface](named-call-interface.md#wp10-pipelin
 The four `tests/pipelines_{frontend,lowering,runtime,adapters}.rs` suites cover this
 subset at the parent-approved public seams. Node/browser cases remain ignored by
 default. This is not full WP10 release completion. The entry/exit contract below
-describes the full target, including deferred binding/discard rules.
+describes the full target, including deferred discard rules.
 
 #### Issue #25 subset validation (2026-10-14)
 
@@ -859,6 +860,36 @@ spec review found no remaining findings. A low-priority normalized-call finalize
 duplication observation remains deliberately unchanged. This validates #25's
 subset, not the deferred named/default/final-Void slices or full WP10 release.
 
+#### Issue #26 subset validation (2026-10-14)
+
+Named/mixed-prefix/default stages reuse the ordinary semantic binder with formal 0
+preoccupied. Source acceptance failed with `MissingArgument` and
+`NamedArgumentsNotSupported` before integration; existing checked lowering required
+no production changes. The four focused suites now contain 53 tests: 18 frontend,
+20 lowering, 10 bounded runtime, and 5 adapters. Eleven Node/browser cases remain
+ignored by default and passed explicitly against freshly rebuilt browser bindings.
+No ABI, golden fixture, dependency, or final-Void discard policy changed.
+
+Passed from the repository root with cached dependencies and installed tooling:
+
+- `cargo check --offline --all-targets`
+- The four focused `pipelines_*` suites, including explicit `--include-ignored` runs
+- `cargo test --offline`
+- `cargo clippy --offline --all-targets -- -D warnings`
+- `wasm-pack build browser --target web --out-dir ../pkg --out-name was_compiler --mode no-install --no-opt --offline`
+- `node tests/browser.cjs pkg` — 25 current-source browser cases
+- `cargo test --offline -- --include-ignored`
+- `cargo clippy --offline -p was-compiler-browser --target wasm32-unknown-unknown --lib -- -D warnings`
+- Scoped Rust formatting and `git --no-pager diff --check`
+
+The first adapter attempt used stale bindings and failed; it passed after the
+current-source rebuild. A combined default-plus-ignored command reached its
+120-second deadline during the ignored run; the standalone include-ignored retry
+completed successfully within the same bound. Standards/spec review found zero
+hard breaches or spec defects; its low-priority string-based test-category smell
+was resolved with a local enum. This validates #26's binding subset, not deferred
+final-Void support or full WP10 release completion.
+
 **Entry:** WP9, normalized named/default calls from WP6. Add left-associative `|>`
 below logical OR; stage resolves only to named declarations, never an expression
 callee/value. Inject input into formal 0 before explicit stage args; reuse WP6 order
@@ -869,7 +900,7 @@ application, placeholder args, callable values or higher-order collection intrin
 calls, decoded direct calls/slots, once-only stage effects and default/contract order.
 Include range-returning internal stages under compatible export selection.
 
-**Confirmed design interview decisions (implementation still proposed):**
+**Confirmed design interview decisions (final-Void slice still deferred):**
 
 - Initial stages resolve only to user-defined named functions, not registered hosts
   or builtin `len`. Preserve ordinary lexical shadowing and `NotCallable` behavior;
@@ -944,8 +975,9 @@ The integration owner retains exclusive ownership of shared AST/parser/semantic
 and stage-error files; the combined scope coordinates shared-file edits through
 that owner rather than introducing overlapping writers.
 
-All interview decisions above are confirmed. Compiler implementation remains
-pending explicit final scope approval; these records are not release evidence.
+All interview decisions above are confirmed. Issues #25/#26 implement the
+value-producing binding subset; final-Void discard support and combined WP10
+release validation remain deferred. Interview records are not release evidence.
 
 ### WP11 — Local-only shared-binding closures/direct helpers (spec §10)
 

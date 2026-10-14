@@ -74,6 +74,479 @@ fn fixture() -> TypedProgram {
     program
 }
 
+fn multiple_default_fixture(call: &str) -> TypedProgram {
+    let mut program = Compiler::new()
+        .analyze(&format!(
+            "fn target(a: number = 7, b: number = a + 1,
+                c: number = b + 2, d: number = c + 3,
+                e: number = d + 4, f: number = e + 5) -> number {{ return f; }}
+             fn main() -> number {{ return {call}; }}"
+        ))
+        .unwrap();
+    inject(returned(&mut program));
+    program
+}
+
+#[test]
+fn named_mixed_and_default_pipeline_sources_match_checked_normalization() {
+    for (ordinary, pipeline) in [
+        ("target(11, e: 55, b: 22)", "11 |> target(e: 55, b: 22)"),
+        ("target(11, 22, e: 55)", "11 |> target(22, e: 55)"),
+        ("target(11)", "11 |> target"),
+        ("target(11)", "11 |> target()"),
+    ] {
+        let declarations = "fn target(a: number = 7, b: number = a + 1,
+            c: number = b + 2, d: number = c + 3,
+            e: number = d + 4, f: number = e + 5) -> number { return f; }";
+        let mut expected = Compiler::new()
+            .analyze(&format!(
+                "{declarations} fn main() -> number {{ return {ordinary}; }}"
+            ))
+            .unwrap();
+        inject(returned(&mut expected));
+        let program = Compiler::new()
+            .analyze(&format!(
+                "{declarations} fn main() -> number {{ return {pipeline}; }}"
+            ))
+            .unwrap();
+        let expected_bytes = Compiler::new().compile(&expected).unwrap();
+        for level in [
+            OptimizationLevel::None,
+            OptimizationLevel::Basic,
+            OptimizationLevel::Standard,
+            OptimizationLevel::Aggressive,
+        ] {
+            let mut compiler = Compiler::new();
+            compiler.set_optimization_level(level);
+            let bytes = compiler.compile(&program).unwrap();
+            Validator::new().validate_all(&bytes).unwrap();
+            assert_eq!(bytes, expected_bytes, "{pipeline}, {level:?}");
+        }
+    }
+}
+
+#[test]
+fn multiple_pipeline_defaults_store_once_in_formal_order_after_written_arguments() {
+    for (call, b_slot, e_slot) in [
+        ("target(11, e: 55, b: 22)", 2, 1),
+        ("target(11, 22, e: 55)", 1, 2),
+    ] {
+        let program = multiple_default_fixture(call);
+        let snapshot = program.clone();
+        let bytes = Compiler::new().compile(&program).unwrap();
+        Validator::new().validate_all(&bytes).unwrap();
+        let body = Parser::new(0)
+            .parse_all(&bytes)
+            .filter_map(|payload| match payload.unwrap() {
+                Payload::CodeSectionEntry(body) => Some(body),
+                Payload::TableSection(_) | Payload::ElementSection(_) => {
+                    panic!("no function table")
+                }
+                _ => None,
+            })
+            .nth(1)
+            .unwrap();
+        let locals: Vec<_> = body
+            .get_locals_reader()
+            .unwrap()
+            .into_iter()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(locals, [(1, ValType::F64); 6]);
+        let ops: Vec<_> = body
+            .get_operators_reader()
+            .unwrap()
+            .into_iter()
+            .map(Result::unwrap)
+            .collect();
+        let written = if b_slot == 2 {
+            [55f64, 22f64]
+        } else {
+            [22f64, 55f64]
+        };
+        assert!(
+            matches!(ops.as_slice(), [
+            Operator::F64Const { value: input }, Operator::LocalSet { local_index: 0 },
+            Operator::F64Const { value: first }, Operator::LocalSet { local_index: 1 },
+            Operator::F64Const { value: second }, Operator::LocalSet { local_index: 2 },
+            Operator::LocalGet { local_index: c_read }, Operator::F64Const { value: two },
+            Operator::F64Add, Operator::LocalSet { local_index: 3 },
+            Operator::LocalGet { local_index: 3 }, Operator::F64Const { value: three },
+            Operator::F64Add, Operator::LocalSet { local_index: 4 },
+            Operator::LocalGet { local_index: f_read }, Operator::F64Const { value: five },
+            Operator::F64Add, Operator::LocalSet { local_index: 5 },
+            Operator::LocalGet { local_index: 0 }, Operator::LocalGet { local_index: b_arg },
+            Operator::LocalGet { local_index: 3 }, Operator::LocalGet { local_index: 4 },
+            Operator::LocalGet { local_index: e_arg }, Operator::LocalGet { local_index: 5 },
+            Operator::Call { function_index: 0 }, Operator::Return, Operator::End,
+        ] if input.bits() == 11f64.to_bits()
+            && first.bits() == written[0].to_bits() && second.bits() == written[1].to_bits()
+            && two.bits() == 2f64.to_bits() && three.bits() == 3f64.to_bits() && five.bits() == 5f64.to_bits()
+            && *c_read == b_slot && *b_arg == b_slot && *f_read == e_slot && *e_arg == e_slot),
+            "{call}: {ops:?}"
+        );
+        assert_eq!(program, snapshot);
+        for level in [
+            OptimizationLevel::None,
+            OptimizationLevel::Basic,
+            OptimizationLevel::Standard,
+            OptimizationLevel::Aggressive,
+        ] {
+            let mut compiler = Compiler::new();
+            compiler.set_optimization_level(level);
+            assert_eq!(compiler.compile(&program).unwrap(), bytes);
+        }
+    }
+}
+
+#[test]
+fn omitted_pipeline_defaults_capture_injection_then_each_dependent_default_once() {
+    let program = multiple_default_fixture("target(11)");
+    let bytes = Compiler::new().compile(&program).unwrap();
+    Validator::new().validate_all(&bytes).unwrap();
+    let body = Parser::new(0)
+        .parse_all(&bytes)
+        .filter_map(|payload| match payload.unwrap() {
+            Payload::CodeSectionEntry(body) => Some(body),
+            _ => None,
+        })
+        .nth(1)
+        .unwrap();
+    let ops: Vec<_> = body
+        .get_operators_reader()
+        .unwrap()
+        .into_iter()
+        .map(Result::unwrap)
+        .collect();
+    assert!(
+        matches!(&ops[..2], [Operator::F64Const { value }, Operator::LocalSet { local_index: 0 }] if value.bits() == 11f64.to_bits())
+    );
+    for (chunk, (read, store, increment)) in ops[2..22].as_chunks::<4>().0.iter().zip([
+        (0, 1, 1f64),
+        (1, 2, 2f64),
+        (2, 3, 3f64),
+        (3, 4, 4f64),
+        (4, 5, 5f64),
+    ]) {
+        assert!(matches!(chunk, [
+            Operator::LocalGet { local_index: actual_read }, Operator::F64Const { value },
+            Operator::F64Add, Operator::LocalSet { local_index: actual_store },
+        ] if *actual_read == read && *actual_store == store && value.bits() == increment.to_bits()));
+    }
+    assert!(matches!(
+        &ops[22..],
+        [
+            Operator::LocalGet { local_index: 0 },
+            Operator::LocalGet { local_index: 1 },
+            Operator::LocalGet { local_index: 2 },
+            Operator::LocalGet { local_index: 3 },
+            Operator::LocalGet { local_index: 4 },
+            Operator::LocalGet { local_index: 5 },
+            Operator::Call { function_index: 0 },
+            Operator::Return,
+            Operator::End,
+        ]
+    ));
+}
+
+#[test]
+fn pipeline_default_origins_and_named_formal_mappings_remain_checked() {
+    for case in 0..7 {
+        let mut program = multiple_default_fixture("target(11, e: 55, b: 22)");
+        let span = program.functions[1].body[0].span;
+        let sequence = normalized(returned(&mut program));
+        let (reason, span) = match case {
+            0 => {
+                sequence.bindings[3].origin = CallBindingOrigin::Default { formal: 4 };
+                (
+                    "default origin must match its formal mapping",
+                    sequence.bindings[3].span,
+                )
+            }
+            1 => {
+                sequence.bindings.swap(3, 4);
+                (
+                    "defaults must follow explicit arguments in increasing formal order",
+                    sequence.bindings[4].span,
+                )
+            }
+            2 => {
+                sequence.bindings[4].origin = CallBindingOrigin::Explicit { argument: 2 };
+                (
+                    "bindings must have contiguous written-order explicit origins",
+                    sequence.bindings[4].span,
+                )
+            }
+            3 => {
+                sequence.bindings[2].origin = CallBindingOrigin::Explicit { argument: 0 };
+                (
+                    "bindings must have contiguous written-order explicit origins",
+                    sequence.bindings[2].span,
+                )
+            }
+            4 => {
+                sequence.formal_to_binding[1] = sequence.formal_to_binding[4];
+                let TypedExprKind::Call { args, .. } = &mut sequence.call.kind else {
+                    panic!("call")
+                };
+                args[1] = args[4].clone();
+                ("formal mapping must be a bijection", span)
+            }
+            5 => {
+                let TypedExprKind::Call { args, .. } = &mut sequence.call.kind else {
+                    panic!("call")
+                };
+                args.swap(1, 4);
+                (
+                    "final arguments must read owned bindings in formal order",
+                    span,
+                )
+            }
+            6 => {
+                sequence.bindings[3].origin = CallBindingOrigin::PipelineInput;
+                (
+                    "pipeline input must be the first and only injected binding",
+                    sequence.bindings[3].span,
+                )
+            }
+            _ => unreachable!(),
+        };
+        assert_invalid(&program, reason, span);
+    }
+}
+
+#[test]
+fn pipeline_defaults_read_only_earlier_formals_not_earlier_storage_slots() {
+    for (default, allowed) in [
+        (3, &[0, 2][..]),
+        (4, &[0, 2, 3][..]),
+        (5, &[0, 2, 3, 4, 1][..]),
+    ] {
+        for owned in 0..7 {
+            let mut program = multiple_default_fixture("target(11, e: 55, b: 22)");
+            let sequence = normalized(returned(&mut program));
+            let id = if owned == 6 {
+                was_compiler::typed_ast::VariableId(999)
+            } else {
+                sequence.bindings[owned].id
+            };
+            let span = sequence.bindings[default].span;
+            sequence.bindings[default].value = TypedExpr {
+                kind: TypedExprKind::Identifier {
+                    id,
+                    name: "forged".into(),
+                },
+                ty: Type::Number.into(),
+            };
+            if allowed.contains(&owned) {
+                let bytes = Compiler::new().compile(&program).unwrap();
+                Validator::new().validate_all(&bytes).unwrap();
+            } else {
+                assert_invalid(
+                    &program,
+                    "defaults may only read owned earlier-formal bindings",
+                    span,
+                );
+            }
+        }
+    }
+}
+
+fn multiple_default_chain() -> TypedProgram {
+    let mut program = multiple_default_fixture(
+        "target(target(target(11, e: 55, b: 22), 22, e: 55), e: 55, b: 22)",
+    );
+    let middle = &mut normalized(returned(&mut program)).bindings[0].value;
+    inject(middle);
+    inject(&mut normalized(middle).bindings[0].value);
+    program
+}
+
+#[test]
+fn nested_named_default_stages_have_distinct_once_only_storage_and_direct_calls() {
+    let program = multiple_default_chain();
+    let bytes = Compiler::new().compile(&program).unwrap();
+    Validator::new().validate_all(&bytes).unwrap();
+    let body = Parser::new(0)
+        .parse_all(&bytes)
+        .filter_map(|payload| match payload.unwrap() {
+            Payload::CodeSectionEntry(body) => Some(body),
+            Payload::TableSection(_) | Payload::ElementSection(_) => panic!("no function table"),
+            _ => None,
+        })
+        .nth(1)
+        .unwrap();
+    let locals: Vec<_> = body
+        .get_locals_reader()
+        .unwrap()
+        .into_iter()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(locals, [(1, ValType::F64); 18]);
+    let mut sets = Vec::new();
+    let mut gets = Vec::new();
+    let mut calls = Vec::new();
+    let mut constants = Vec::new();
+    for op in body.get_operators_reader().unwrap() {
+        match op.unwrap() {
+            Operator::LocalSet { local_index } => sets.push(local_index),
+            Operator::LocalGet { local_index } => gets.push(local_index),
+            Operator::Call { function_index } => calls.push(function_index),
+            Operator::CallIndirect { .. } => panic!("no indirect call"),
+            Operator::F64Const { value } => constants.push(f64::from_bits(value.bits())),
+            _ => {}
+        }
+    }
+    assert_eq!(
+        sets,
+        [2, 3, 4, 5, 6, 7, 1, 8, 9, 10, 11, 12, 0, 13, 14, 15, 16, 17]
+    );
+    assert_eq!(
+        gets,
+        [
+            4, 5, 3, 2, 4, 5, 6, 3, 7, 8, 10, 9, 1, 8, 10, 11, 9, 12, 14, 15, 13, 0, 14, 15, 16,
+            13, 17
+        ]
+    );
+    assert_eq!(calls, [0, 0, 0]);
+    assert_eq!(
+        constants,
+        [
+            11.0, 55.0, 22.0, 2.0, 3.0, 5.0, 22.0, 55.0, 2.0, 3.0, 5.0, 55.0, 22.0, 2.0, 3.0, 5.0
+        ]
+    );
+}
+
+#[test]
+fn named_pipeline_ownership_checks_include_all_defaults_and_nested_scopes() {
+    for initializer in 0..3 {
+        for owned in 0..6 {
+            let mut program = multiple_default_fixture("target(11, e: 55, b: 22)");
+            let sequence = normalized(returned(&mut program));
+            sequence.bindings[initializer].value = TypedExpr {
+                kind: TypedExprKind::Identifier {
+                    id: sequence.bindings[owned].id,
+                    name: "owned".into(),
+                },
+                ty: Type::Number.into(),
+            };
+            for level in [
+                OptimizationLevel::None,
+                OptimizationLevel::Basic,
+                OptimizationLevel::Standard,
+                OptimizationLevel::Aggressive,
+            ] {
+                let mut compiler = Compiler::new();
+                compiler.set_optimization_level(level);
+                assert!(
+                    matches!(
+                        compiler.compile(&program),
+                        Err(CodegenError::InvalidNormalizedCall { .. })
+                    ),
+                    "initializer {initializer}, owned {owned}"
+                );
+            }
+        }
+    }
+    for escape in [false, true] {
+        let mut program = multiple_default_chain();
+        let outer = normalized(returned(&mut program));
+        let outer_id = outer.bindings[0].id;
+        let middle = normalized(&mut outer.bindings[0].value);
+        let inner = normalized(&mut middle.bindings[0].value);
+        let inner_id = inner.bindings[0].id;
+        let binding = if escape {
+            &mut outer.bindings[3]
+        } else {
+            &mut inner.bindings[3]
+        };
+        let span = binding.span;
+        binding.value = TypedExpr {
+            kind: TypedExprKind::Identifier {
+                id: if escape { inner_id } else { outer_id },
+                name: "cross_scope".into(),
+            },
+            ty: Type::Number.into(),
+        };
+        assert_invalid(
+            &program,
+            "defaults may only read owned earlier-formal bindings",
+            span,
+        );
+    }
+}
+
+#[test]
+fn later_named_stage_defaults_and_children_are_checked_after_never() {
+    use was_compiler::typed_ast::{ExprResult, LoopId};
+
+    for divergent in [0, 1] {
+        for case in 0..4 {
+            let mut program = multiple_default_chain();
+            let value = returned(&mut program);
+            value.ty = ExprResult::Never;
+            let outer = normalized(value);
+            outer.bindings[0].value.ty = ExprResult::Never;
+            let middle = normalized(&mut outer.bindings[0].value);
+            middle.bindings[0].value.ty = ExprResult::Never;
+            let inner = normalized(&mut middle.bindings[0].value);
+            inner.bindings[divergent].value = TypedExpr {
+                kind: TypedExprKind::Loop {
+                    id: LoopId(77),
+                    body: vec![],
+                },
+                ty: ExprResult::Never,
+            };
+            let bytes = Compiler::new().compile(&program).unwrap();
+            Validator::new().validate_all(&bytes).unwrap();
+            let outer = normalized(returned(&mut program));
+            let binding = if case == 3 { 1 } else { 3 };
+            let span = outer.bindings[binding].span;
+            match case {
+                0 | 3 => {
+                    outer.bindings[binding].value.kind = TypedExprKind::Number("invalid".into());
+                    for level in [
+                        OptimizationLevel::None,
+                        OptimizationLevel::Basic,
+                        OptimizationLevel::Standard,
+                        OptimizationLevel::Aggressive,
+                    ] {
+                        let mut compiler = Compiler::new();
+                        compiler.set_optimization_level(level);
+                        compiler.set_exports(ExportOptions::None);
+                        assert!(
+                            matches!(compiler.compile(&program), Err(CodegenError::InvalidNumberLiteral { span: actual, .. }) if actual == span)
+                        );
+                    }
+                }
+                1 => {
+                    outer.bindings[3].value = TypedExpr {
+                        kind: TypedExprKind::Identifier {
+                            id: outer.bindings[1].id,
+                            name: "later_formal".into(),
+                        },
+                        ty: Type::Number.into(),
+                    };
+                    assert_invalid(
+                        &program,
+                        "defaults may only read owned earlier-formal bindings",
+                        span,
+                    );
+                }
+                2 => {
+                    outer.bindings[3].origin = CallBindingOrigin::Default { formal: 4 };
+                    assert_invalid(
+                        &program,
+                        "default origin must match its formal mapping",
+                        span,
+                    );
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+}
+
 #[test]
 fn pipeline_helpers_follow_users_memory_remainder_and_range_order() {
     use wasmparser::ExternalKind;

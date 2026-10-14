@@ -134,9 +134,9 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   component member still needs an explicit result in the initial release. WP8 implements
   whitelist `requires` contracts; [release gates passed](docs/was_language_extensions_plan.md#wp8-release-validation).
   WP9 match statements/values are implemented with frontend/backend integrated;
-  [release gates passed](docs/was_language_extensions_plan.md#wp9-release-validation). WP10's fully supplied positional value-producing subset (#25) is implemented;
-    named/default stage binding and every final Void stage remain deferred. WP11–WP12
-    remain proposed; WP13
+  [release gates passed](docs/was_language_extensions_plan.md#wp9-release-validation). WP10's value-producing subset (#25/#26) implements positional/named/default
+  stage binding; every final Void stage and full WP10 release remain deferred.
+  WP11–WP12 remain proposed; WP13
   optimization requires separate authorization.
   Preserve `target/wp7-inference` when cleaning generated output. Before changing defaults, call binding, or
   normalized lowering, read [the handoff](docs/wp6-wp7-development.md) and
@@ -202,7 +202,7 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
 
 ## Compatibility contracts
 
-### Named-only pipelines (partial WP10, issue #25)
+### Named-only pipelines (partial WP10, issues #25/#26)
 
 - Before changing pipelines, read [WP10's frozen contract and subset status](docs/was_language_extensions_plan.md#wp10--named-only-pipelines-spec-12)
   and [public migration](docs/named-call-interface.md#wp10-pipeline-migration-issue-25).
@@ -212,11 +212,14 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   mapped to formal 0, and cannot read sequence-owned bindings. Written explicit
   indices still start at zero. Preserve ordinary named/default calls and independent
   structural/planning policies.
-- The current subset requires all remaining formals positionally and rejects named
-  arguments, omitted parameters even with defaults, and every declared-Void stage.
-  Preserve static checks after Never, caller control context, once-only written
-  evaluation order, and callee parameter validation/contracts. Pipelines stay outside
-  default/contract whitelists. Later binding/discard slices do not land incidentally.
+- The current subset reuses ordinary positional-prefix/named/default binding with
+  formal 0 already occupied, even when defaulted; naming it is a duplicate. Bare
+  and empty stages both use remaining defaults. Keep declaration-scope remapping,
+  earlier-formal reads, written argument spans and declaration-default spans.
+  Every declared-Void stage remains rejected, including after Never. Preserve caller
+  control context, once-only input/written/default order, parameter validation and
+  ordered contracts. Pipelines stay outside default/contract whitelists. The later
+  discard slice does not land incidentally.
 - `tests/pipelines_frontend.rs`, `tests/pipelines_lowering.rs`,
   `tests/pipelines_runtime.rs`, and `tests/pipelines_adapters.rs` own source,
   forged-tree/decoded, bounded-effects and native/current-source browser coverage.

@@ -46,90 +46,22 @@ impl SemanticAnalyzer {
                     span,
                 });
             }
-            if let Some(arg) = stage.args.iter().find(|arg| arg.name.is_some()) {
-                return Err(SemanticError::NamedArgumentsNotSupported {
-                    name: name.clone(),
-                    span: arg.span,
-                });
-            }
-            let formal_count = signature.params.len();
-            if stage.args.len() >= formal_count {
-                return Err(SemanticError::TooManyPositionalArguments {
-                    name: name.clone(),
-                    span: stage.args[formal_count - 1].span,
-                });
-            }
-            if stage.args.len() + 1 != formal_count {
-                return Err(SemanticError::MissingArgument {
-                    name: name.clone(),
-                    argument: signature.param_names[stage.args.len() + 1].clone(),
-                    span,
-                });
-            }
-            let reference = signature.reference;
             let result_type = signature.return_type;
-            let expected = signature.params[0];
-            self.expect_type(expected, value.ty, prefix_span)?;
-            let id = VariableId(self.next_variable_id);
-            self.next_variable_id += 1;
-            let mut bindings = Vec::with_capacity(formal_count);
-            bindings.push(TypedCallBinding {
-                id,
-                ty: expected,
-                value,
-                origin: CallBindingOrigin::PipelineInput,
-                span: prefix_span,
-            });
-
-            for (argument, arg) in stage.args.iter().enumerate() {
-                let expected = self.functions[name].params[argument + 1];
-                let id = VariableId(self.next_variable_id);
-                self.next_variable_id += 1;
-                let (argument_value, argument_flow) =
-                    self.analyze_expr(&arg.value, arg.span, return_type)?;
-                self.expect_type(expected, argument_value.ty, arg.span)?;
-                flow = flow.then(argument_flow);
-                bindings.push(TypedCallBinding {
-                    id,
-                    ty: expected,
-                    value: argument_value,
-                    origin: CallBindingOrigin::Explicit { argument },
-                    span: arg.span,
-                });
-            }
+            let (stage_value, stage_flow) = self.analyze_call_bindings(
+                name,
+                &stage.args,
+                span,
+                return_type,
+                Some((value, prefix_span, flow)),
+            )?;
             if result_type == Type::Void {
                 return Err(SemanticError::InvalidPipeline {
                     message: "void stages are not supported in this pipeline subset",
                     span,
                 });
             }
-            let formal_to_binding = bindings.iter().map(|binding| binding.id).collect();
-            let args = bindings
-                .iter()
-                .enumerate()
-                .map(|(formal, binding)| TypedExpr {
-                    kind: TypedExprKind::Identifier {
-                        id: binding.id,
-                        name: self.functions[name].param_names[formal].clone(),
-                    },
-                    ty: binding.ty.into(),
-                })
-                .collect();
-            value = TypedExpr {
-                kind: TypedExprKind::NormalizedCall(TypedNormalizedCall {
-                    bindings,
-                    formal_to_binding,
-                    call: Box::new(TypedExpr {
-                        kind: TypedExprKind::Call {
-                            func: reference,
-                            name: name.clone(),
-                            args,
-                        },
-                        ty: result_type.into(),
-                    }),
-                }),
-                ty: Self::completion_result(result_type.into(), flow),
-            };
+            value = stage_value;
+            flow = stage_flow;
             prefix_span = Span::new(input_span.start(), span.end());
         }
 
@@ -156,10 +88,27 @@ impl SemanticAnalyzer {
             });
         }
 
+        self.analyze_call_bindings(name, args, span, return_type, None)
+    }
+
+    fn analyze_call_bindings(
+        &mut self,
+        name: &str,
+        args: &[CallArgument],
+        span: Span,
+        return_type: ReturnContext,
+        injection: Option<(TypedExpr, Span, Flow)>,
+    ) -> Result<(TypedExpr, Flow), SemanticError> {
+        let signature = &self.functions[name];
         let mut written_to_formal = Vec::with_capacity(args.len());
         let mut supplied = vec![false; signature.params.len()];
         let mut named = false;
         let mut positional = 0;
+
+        if injection.is_some() {
+            supplied[0] = true;
+            positional = 1;
+        }
 
         for arg in args {
             let formal = if let Some(argument) = &arg.name {
@@ -223,6 +172,22 @@ impl SemanticAnalyzer {
         let mut bindings = Vec::with_capacity(formal_count);
         let mut mapping = vec![None; formal_count];
         let mut flow = Flow::FALLTHROUGH;
+
+        if let Some((value, prefix_span, input_flow)) = injection {
+            let expected = signature.params[0];
+            self.expect_type(expected, value.ty, prefix_span)?;
+            let id = VariableId(self.next_variable_id);
+            self.next_variable_id += 1;
+            bindings.push(TypedCallBinding {
+                id,
+                ty: expected,
+                value,
+                origin: CallBindingOrigin::PipelineInput,
+                span: prefix_span,
+            });
+            mapping[0] = Some(id);
+            flow = input_flow;
+        }
 
         for (argument, (arg, formal)) in args.iter().zip(written_to_formal).enumerate() {
             let expected = self.functions[name].params[formal];
