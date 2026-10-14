@@ -23,6 +23,7 @@ pub enum CaptureMutability {
     ReadOnly,
 }
 
+/// Original binding identity, retained unchanged through intermediate helpers.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypedCapture {
     pub owner: BindingOwner,
@@ -47,7 +48,10 @@ pub struct TypedClosure {
     pub params: Vec<TypedParam>,
     pub return_type: Type,
     pub body: TypedClosureBody,
+    /// Complete direct/forwarded captures in original owner/declaration order.
     pub captures: Vec<TypedCapture>,
+    /// Complete earlier lexical dependencies in source-preorder identity order.
+    /// Context-requiring dependencies forward their original live environments.
     pub dependencies: Vec<CallableId>,
     pub span: Span,
     pub body_span: Span,
@@ -126,7 +130,7 @@ pub enum TypedExprKind {
         name: String,
     },
 
-    /// Access to an original binding owned by the immediate creator.
+    /// Access to an original ancestor binding, forwarded through intermediate helpers.
     Captured {
         owner: BindingOwner,
         id: VariableId,

@@ -1,4 +1,4 @@
-# Local callable interface — issues #29–#31
+# Local callable interface — issues #29–#32
 
 ## Frozen public interface and implementation ownership
 
@@ -7,10 +7,11 @@ lexical invocation. Issue #30 adds shared captures of immediate-creator paramete
 and ordinary lets of every concrete type: `number`, `bool`, `string`, `number[]`,
 and `range`. Captures refer to original shared bindings, never snapshots.
 Issue #31 adds all five numeric compound operators on captured places, including
-creator-side promoted bindings.
+creator-side promoted bindings. Issue #32 implements nested original-binding
+capture forwarding and earlier context-requiring callable dependencies in the
+frontend/backend; [validation passed](#issue-32-validation-2026-10-14).
 The parent [issue #28](https://github.com/LuanRoger/was-compiler/issues/28)
-defines the full contract. Nested forwarding, context-requiring callable
-dependencies, captured `for` bindings and full WP11 release remain deferred.
+defines the full contract. Captured `for` bindings and full WP11 release remain deferred.
 [#30 subset validation passed](#issue-30-validation-2026-10-14); that record predates
 #31 and does not validate captured compounds. The historical #29 evidence below
 predates shared capture storage.
@@ -37,7 +38,8 @@ Public AST consumers must migrate as follows:
   is introduced.
 - `TypedCapture` identifies an original owner/variable/type/mutability.
   `CaptureMutability` distinguishes mutable locals/parameters and read-only for
-  bindings; #30 accepts only mutable immediate-creator parameters/ordinary lets.
+  bindings; #30 accepts mutable immediate-creator parameters/ordinary lets, and
+    #32 forwards original ancestor bindings through every intermediate helper.
   Captures are unique and canonical by original owner/declaration order, with
   parameters before locals. Checked lowering derives declaration order independently
   of numeric `VariableId` values, since public typed input may use sparse IDs.
@@ -46,8 +48,10 @@ Public AST consumers must migrate as follows:
   assignment targets and indexed array bases from owner-local `Identifier` nodes.
   Creator accesses remain `Identifier`, even when their storage is promoted.
   Matching local IDs in different owners do not identify the same binding.
-- `dependencies: Vec<CallableId>` records unique earlier context-free callable
-  identities in discovery order. Context-requiring dependencies remain deferred.
+- `dependencies: Vec<CallableId>` records complete, unique earlier visible callable
+  identities in source-preorder ID order, including transitive requirements of
+  nested helpers. #32 supports context-requiring dependencies without changing
+  public shapes; context-free dependencies remain lexical permissions only.
 
 Backend planning borrows declaration-owned bodies, emits direct helpers after all
 existing runtime helpers, and validates all owners, identities, lexical availability,
@@ -60,27 +64,27 @@ operations and handle signatures may still require memory.
 Outer and helper reads/writes observe the same binding; ordinary indexed array
 mutation and array-binding reassignment retain existing alias/type rules. Capture
 resolution preserves declaration-time initialization and shadowing. Helpers keep
-independent parameter/local/return/loop contexts. A nested helper may capture its
-immediate creator's own parameters/lets and be called by that creator; it may not
-forward an ancestor binding through an intervening helper. Creator calls to its
-own capturing declarations are supported. Earlier context-free callable
-composition remains supported.
+independent parameter/local/return/loop contexts. #30 initially supported only
+immediate-creator captures and earlier context-free callable composition; #32
+extends these limits as described below.
 
-The staged semantic `InvalidClosure` reasons are stable:
+The remaining staged semantic `InvalidClosure` reason is stable:
 
 | Deferred case | Reason |
 | --- | --- |
-| Capture owned by an ancestor other than the immediate creator | `nested capture forwarding is not supported in this subset` |
-| A helper depends on a context-requiring callable owned elsewhere | `context-requiring callable dependencies are not supported in this subset` |
 | Capture of a `for` iteration binding | `capturing for bindings is not supported in this subset` |
+
+#32 removes the former `nested capture forwarding is not supported in this subset`
+and `context-requiring callable dependencies are not supported in this subset`
+rejections; ordinary scope, type and mutability checks remain.
 
 Captured parameter cells allocate eagerly in formal order after all parameter
 validation and ordered contracts; captured let cells allocate only after completing
 their initializers. Structural promotion can allocate a cell even when a later
-capturing declaration is skipped. A nonempty capture environment allocates only
+capturing declaration is skipped. A nonempty environment allocates only
 when its declaration executes; context-free declarations allocate no environment
-and add no hidden parameter. Capturing helpers receive a hidden first `i32`
-environment argument. No declaration executes its helper body.
+and add no hidden parameter. Helpers requiring captures or callable contexts receive
+a hidden first `i32` environment argument. No declaration executes its helper body.
 
 See [the private layout and lifetime contract](memory-abi.md#private-closure-storage-30)
 for uniform eight-byte cells/slots, allocation traps, monotonic growth and host view
@@ -106,9 +110,82 @@ preserves its checked pre-RHS element address, without a compound old-value read
 `%=` uses the existing exact floating remainder helper.
 
 No new AST form, scratch policy, cell/environment layout or public ABI is added.
-Ancestor forwarding, context-requiring callable dependencies, captured `for`
-bindings and full WP11 release remain deferred. [#31 validation passed](#issue-31-validation-2026-10-14).
+#32 extends forwarding as described below; captured `for` bindings and full WP11
+release remain deferred. [#31 validation passed](#issue-31-validation-2026-10-14).
 The #29/#30 records below retain their historical scope.
+
+## Implemented nested captures and callable contexts (#32)
+
+An ancestor parameter/ordinary-let capture keeps its original `(BindingOwner,
+VariableId)`, concrete type and mutability through every intermediate helper,
+even when only a deeper descendant reads or writes it. The owning helper uses
+`Identifier` for its own binding; descendants use `Captured`. Forwarding reuses the
+original shared cell, never snapshots its value or allocates a replacement cell.
+Initialization and lexical shadowing retain their declaration-time rules.
+
+Earlier visible context-requiring callable dependencies forward the earlier
+callable's original live environment, including through intermediate helpers with
+no direct value captures. Requirements stop at the creator that owns the relevant
+binding or callable declaration. Declaration-before-use and lexical visibility
+remain mandatory; this adds no self/forward hoisting or callable values.
+
+Environments place canonical original owner/declaration-ordered captures first,
+then context-requiring dependency slots in source-preorder callable-ID order.
+Context requirements propagate through earlier dependencies. Context-free
+dependencies have no slots and introduce no hidden argument or allocation of
+their own. A helper with either captures or contextful dependencies receives a
+hidden first `i32`; a truly context-free helper retains only explicit parameters.
+All slots use the existing private eight-byte layout and allocation timing.
+
+Checked lowering independently verifies complete, unique, canonical metadata,
+including requirements used only by descendants. Missing/extra entries, wrong
+owners/types/mutability, uninitialized or invisible bindings, invalid dependency
+visibility/order and forged sparse variable IDs retain checked diagnostics.
+Helpers remain borrowed, direct and unexported; no public typed shape changes.
+Captured `for` bindings and full WP11 release remain deferred.
+
+## Issue #32 validation (2026-10-14)
+
+Final integrated validation passed, as reported by the parent/integration owner.
+Node.js v24.12.0, wasm-pack 0.15.0, the Wasm target, compatible tooling and cached
+dependencies were available; the agent installed no dependencies or tooling.
+Browser bindings were rebuilt from current source before the final browser,
+focused closure-suite and full include-ignored runs.
+
+| Exact command (repository root) | Final result |
+| --- | --- |
+| `cargo check --offline --all-targets` | Passed |
+| `cargo test --offline --test closures_frontend --test closures_lowering --test closures_runtime --test closures_adapters -- --include-ignored` | Passed: 33 frontend, 44 lowering, 17 runtime and 4 adapter tests |
+| `wasm-pack build browser --target web --out-dir ../pkg --out-name was_compiler --mode no-install --no-opt --offline` | Passed; rebuilt current-source browser package before final browser/focused/include-ignored coverage |
+| `node tests/browser.cjs pkg` | Passed: 25 cases |
+| `cargo test --offline` | Passed complete default suite |
+| `cargo test --offline -- --include-ignored` | Passed complete suite including ignored runtime/browser cases |
+| `cargo clippy --offline --all-targets -- -D warnings` | Passed |
+| `cargo clippy --offline -p was-compiler-browser --target wasm32-unknown-unknown --lib -- -D warnings` | Passed |
+| `git --no-pager diff --check` | Passed |
+
+Frontend and forged-input/decoded-lowering coverage checks original-binding
+forwarding, complete canonical metadata and capture-before-dependency slot layout.
+New runtime cases verify original shared cells through shadowing helper parameters
+and locals, plus dependency-only intermediate helpers, at all four optimization
+levels. The adapter fixture exercises nested captures and live callable dependencies
+through native/browser byte parity and the CLI. Runtime/browser cases retain their
+ignored-by-default policy; the explicit runs above establish execution coverage.
+
+The initial adapter run failed because two obsolete rejection fixtures used syntax
+now allowed by #32. They were replaced with still-deferred captured-`for` rejection
+cases; the final reruns passed.
+
+Two-axis review compared the working diff against
+`28ecae41224ff31ca299c2d9e568f53d38b99b32`. Spec reported zero findings; Standards
+reported zero breaches or bugs and one nonblocking judgment call about possible
+primitive obsession in the capture-order tuple. The small internal tuple was
+retained without adding an abstraction.
+
+This validates #32's nested original-binding capture and live callable-context
+forwarding subset, not parent #28 or full WP11 release. Captured `for` bindings and
+full WP11 release remain deferred. Historical #29–#31 evidence below retains its
+original scope.
 
 ## Issue #31 validation (2026-10-14)
 

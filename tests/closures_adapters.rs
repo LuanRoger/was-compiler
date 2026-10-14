@@ -28,9 +28,14 @@ fn main() -> number {
     let sink = () => { mark(3); return; };
     let state = 0;
     let increment = () => { state = state + 1; };
-    increment(); sink(); return wrapper() + state;
+    let invoke = () => { let nested = () => increment(); nested() };
+    invoke(); sink(); return wrapper() + state;
 }
-fn text() -> string { let make = () => "hé😀"; return make(); }
+fn text() -> string {
+    let original = "hé😀";
+    let make = () => { let nested = () => original; nested() };
+    return make();
+}
 fn array() -> number[] { let make = () => [1, 2]; return make(); }
 fn internal_range() -> range { let make = () => 1..=5 by 2; return make(); }
 fn operations() -> number {
@@ -108,16 +113,14 @@ enum ErrorKind {
 
 const ERRORS: &[(&str, &str, ErrorKind)] = &[
     (
-        "let x = 1; let f = () => { let g = () => x; g() };",
+        "for x in [1] { let f = () => { let g = () => x; g() }; }",
         "x",
-        ErrorKind::Invalid("nested capture forwarding is not supported in this subset"),
+        ErrorKind::Invalid("capturing for bindings is not supported in this subset"),
     ),
     (
-        "let x = 1; let f = () => x; let g = () => f();",
-        "f()",
-        ErrorKind::Invalid(
-            "context-requiring callable dependencies are not supported in this subset",
-        ),
+        "for x in [1] { let f = () => x; }",
+        "x",
+        ErrorKind::Invalid("capturing for bindings is not supported in this subset"),
     ),
     (
         "let f: number = (() => missing);",

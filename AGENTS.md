@@ -142,8 +142,9 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   parameter/let captures (#30), plus captured numeric compounds (#31).
   [#30 subset validation passed](docs/local-callable-interface.md#issue-30-validation-2026-10-14)
   before #31; [#31 validation passed](docs/local-callable-interface.md#issue-31-validation-2026-10-14).
-  Nested forwarding, context-requiring dependencies, captured `for` bindings,
-  full WP11 release and WP12 remain deferred. WP13
+  #32 implements nested original-binding capture forwarding and earlier live
+  callable-context dependencies in the frontend/backend; [validation passed](docs/local-callable-interface.md#issue-32-validation-2026-10-14).
+  Captured `for` bindings, full WP11 release and WP12 remain deferred. WP13
   optimization requires separate authorization.
   Preserve `target/wp7-inference` when cleaning generated output. Before changing defaults, call binding, or
   normalized lowering, read [the handoff](docs/wp6-wp7-development.md) and
@@ -209,7 +210,7 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
 
 ## Compatibility contracts
 
-### Local callables and shared captures (WP11 subsets, #29–#31)
+### Local callables and shared captures (WP11 subsets, #29–#32)
 
 - Before changing closure syntax, inference, capture ownership/storage, lexical calls,
   helper planning or diagnostics, read [the subset and public migration](docs/local-callable-interface.md)
@@ -218,8 +219,9 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   source-preorder callable IDs. Return/loop/local/temporary contexts are owner-local.
   Module discovery enters bodies; creator-local planning excludes nested helpers.
 - Check/cache every borrowed helper body through `ValidatedProgram`, after layout
-  and creator checks. Emit direct unexported helpers after runtime helpers. Earlier
-  context-free dependencies remain lexical permissions, not callable values.
+  and creator checks. Emit direct unexported helpers after runtime helpers.
+  Earlier dependencies retain lexical permissions; context-requiring dependencies
+  forward their original live environments, never callable values or snapshots.
 - Context-free declarations execute no body, allocate no environment and add no
   hidden argument or callable-only memory. Preserve ordinary handle validation.
 - #30 captures immediate-creator parameters/ordinary lets of all concrete types.
@@ -229,17 +231,21 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
 - Allocate captured parameter cells in formal order after validation/contracts,
   captured let cells after completing initialization, and nonempty environments
   only when declarations execute. Use the [private uniform eight-byte layout](docs/memory-abi.md#private-closure-storage-30),
-  monotonic allocation and hidden first `i32` only for capturing helpers. Allocation
-  can grow memory/trap without rollback; hosts refresh views after possible growth.
+  monotonic allocation and hidden first `i32` for helpers requiring captures or
+  callable contexts. Allocation can grow memory/trap without rollback; hosts refresh
+  views after possible growth.
 - #31 supports all five numeric compounds on captured scalar/indexed places and
   creator-side promoted bindings, including before the capturing declaration.
   Use the existing checked place path: retain the scalar cell address and old `f64`
   on the stack; save indexed element address/old value in existing scratch before
   RHS effects. Ordinary indexed assignments retain their checked pre-RHS address.
   Preserve numeric/mutability checks, trap order and exact `%=` behavior.
-- Nested helpers may capture their immediate creator's own bindings. Reject ancestor
-  forwarding, external context-requiring callable dependencies and captured `for` bindings with
-  [stable subset reasons](docs/local-callable-interface.md#implemented-shared-capture-subset-30).
+- #32 forwards original owner-qualified captures through every intermediate helper,
+  reusing the original cell. Put canonical owner/declaration-ordered captures before
+  source-preorder context-requiring dependency slots; context-free dependencies
+  occupy no slots. Check complete/unique/canonical metadata and lexical availability
+  independently for forged input, including sparse IDs and descendant-only requirements.
+  Reject captured `for` bindings with the [stable subset reason](docs/local-callable-interface.md#implemented-shared-capture-subset-30).
   Full WP11 release remains deferred. [#30 evidence](docs/local-callable-interface.md#issue-30-validation-2026-10-14)
   covers shared storage before #31, not captured compounds; [#31 validation passed](docs/local-callable-interface.md#issue-31-validation-2026-10-14).
   Historical #29 results cover only capture-free callables.

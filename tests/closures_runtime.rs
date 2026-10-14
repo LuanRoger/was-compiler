@@ -66,6 +66,81 @@ fn run(source: &str, selected: &[&str], assertions: &str) {
 
 #[test]
 #[ignore = "requires Node.js on PATH"]
+fn nested_helpers_share_original_cells_across_shadowing_and_owner_local_bindings() {
+    run(
+        r#"
+        fn main(seed: number) -> number {
+            let original = seed;
+            let outer = (parameter: number) => {
+                let local = 3;
+                let middle = () => {
+                    let leaf = () => {
+                        original += parameter + local;
+                        parameter += 1;
+                        local += 2;
+                        mark(original)
+                    };
+                    leaf() + leaf()
+                };
+                let result = middle();
+                mark(parameter);
+                mark(local);
+                result
+            };
+            { let original = 1000; mark(original); };
+            let result = outer(2);
+            mark(original);
+            return result + original;
+        }
+        "#,
+        &["main"],
+        r#"
+        for (let i = 0; i < 2; i++) {
+            // Original: 10 -> 15 -> 23; helper-owned parameter/local: 2/3 -> 4/7.
+            assert.equal(e.main(10), 61);
+            assert.deepEqual(events.splice(0), [1000,15,23,4,7,23]);
+        }
+        "#,
+    );
+}
+
+#[test]
+#[ignore = "requires Node.js on PATH"]
+fn dependency_only_intermediates_forward_live_sibling_contexts_without_reconstruction() {
+    run(
+        r#"
+        fn add(value: number, delta: number = 2) -> number
+            requires delta > 0 { return value + delta; }
+        fn main() -> number {
+            let count = 1;
+            let increment = () => { count = add(count); mark(count) };
+            let sibling = () => increment();
+            let outer = () => {
+                let middle = () => {
+                    let leaf = () => sibling() + increment();
+                    leaf()
+                };
+                middle()
+            };
+            count = 10;
+            let result = outer();
+            { let increment = () => 999; mark(increment()); };
+            let after = sibling();
+            return result + after + count;
+        }
+        "#,
+        &["main"],
+        r#"
+        for (let i = 0; i < 2; i++) {
+            assert.equal(e.main(), 58);
+            assert.deepEqual(events.splice(0), [12,14,999,16]);
+        }
+        "#,
+    );
+}
+
+#[test]
+#[ignore = "requires Node.js on PATH"]
 fn declarations_do_not_execute_bodies_and_nested_dependencies_remain_lexical() {
     run(
         r#"

@@ -157,14 +157,16 @@ complete; [release gates passed](docs/was_language_extensions_plan.md#wp10-relea
 on 2026-10-14, including current-source rebuilt-browser and full ignored runtime coverage.
 WP11's local callable subsets are implemented: capture-free declarations/calls
 (#29), immediate-creator shared parameter/let captures (#30), and captured numeric
-compounds (#31). Nested forwarding, context-requiring callable dependencies and
-captured `for` bindings remain deferred, as does full WP11 release.
+compounds (#31). #32 implements nested original-binding capture forwarding and
+earlier context-requiring callable dependencies in the frontend/backend;
+[#32 validation passed](docs/local-callable-interface.md#issue-32-validation-2026-10-14).
+Captured `for` bindings and full WP11 release remain deferred.
 [#30 subset validation passed](docs/local-callable-interface.md#issue-30-validation-2026-10-14),
 including rebuilt-browser and full ignored runtime coverage for #30, before #31.
 [#31 validation passed](docs/local-callable-interface.md#issue-31-validation-2026-10-14). WP12 placeholders and
 WP13 optimization are separately scoped.
 
-### Local callables and shared captures (WP11 subsets, #29–#31)
+### Local callables and shared captures (WP11 subsets, #29–#32)
 
 ```text
 fn main() -> number {
@@ -178,17 +180,18 @@ Parameters require explicit existing concrete types. Results infer from reachabl
 explicit returns and a completing expression/block tail, with exact joins. A
 no-tail block may complete only as Void; Never-only expression/tail results cannot
 infer a signature. Closures have their own return and loop-control contexts.
-Earlier context-free local callables can be invoked, including through nested
+Earlier visible local callables can be invoked, including through nested
 helpers; new declarations have no special self or forward visibility. Calls are
 positional, once-only and left-to-right. Ordinary named/default calls and contracts
 inside closure bodies retain their existing behavior.
 
-Closures may share their immediate creator's parameters and ordinary lets of type
+Closures may share ancestor parameters and ordinary lets of type
 `number`, `bool`, `string`, `number[]` or `range`. Reassignment from either side is
-visible to the other; ordinary indexed array writes retain alias semantics. A
-nested closure may capture its immediate creator's own bindings, but forwarding
-ancestor captures and calling an external context-requiring local callable from a
-helper remain deferred, as does capture of `for` bindings. #31 supports `+=`, `-=`,
+visible to the other; ordinary indexed array writes retain alias semantics. #32
+forwards each original binding through every intermediate helper, without copying
+its value or allocating another cell. Earlier context-requiring callable dependencies
+forward their original live environments, not snapshots. Capture of `for` bindings
+remains deferred. #31 supports `+=`, `-=`,
 `*=`, `/=`, and `%=` on captured numbers and captured numeric-array elements,
 including creator-side promoted bindings. Updates preserve the original checked
 place and old value across RHS effects; ordinary indexed assignment also retains
@@ -203,7 +206,10 @@ Generated helpers use direct calls, are never exported, and follow existing runt
 helpers. Context-free callables add no environments, hidden arguments or memory
 solely for callable support; ordinary strings/arrays/ranges may still need memory.
 Captured bindings use eager shared cells and declaration-time environments with
-private uniform eight-byte storage. Allocation may grow memory or trap, is monotonic,
+private uniform eight-byte storage: canonical capture slots precede slots for
+context-requiring dependencies; context-free dependencies occupy no slots.
+A helper needing either kind of context receives a hidden first `i32` argument.
+Allocation may grow memory or trap, is monotonic,
 and does not roll back earlier effects. Hosts must refresh views after possible
 memory growth. See [the private storage contract](docs/memory-abi.md#private-closure-storage-30)
 and [the public AST migration and subset contract](docs/local-callable-interface.md),

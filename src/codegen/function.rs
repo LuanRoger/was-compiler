@@ -49,7 +49,9 @@ struct Context<'a> {
 impl<'a> Context<'a> {
     fn new(function: BodyOwner<'a>, module: &'a Layout<'a>) -> Result<Self, CodegenError> {
         let mut locals = LocalLayout::for_owner(function)?;
-        let hidden = u32::from(matches!(function, BodyOwner::Closure(c) if !c.captures.is_empty()));
+        let hidden = u32::from(
+            matches!(function, BodyOwner::Closure(c) if module.callables[c.id.0].needs_context),
+        );
         if hidden != 0 {
             locals.shift_for_environment()?;
         }
@@ -69,7 +71,7 @@ impl<'a> Context<'a> {
                 what: "function local count",
             })?;
 
-        let storage = closures::Storage::new(function, &locals, first_storage)?;
+        let storage = closures::Storage::new(function, &locals, first_storage, &module.callables)?;
         let mut capture_slots = HashMap::new();
         if let BodyOwner::Closure(closure) = function {
             capture_slots.reserve(closure.captures.len());
@@ -415,41 +417,58 @@ impl<'a> BodyEmitter<'a> {
             return Err(invalid("invalid closure ownership"));
         }
         let mut previous = None;
+        let mut capture_order = Vec::with_capacity(closure.captures.len());
         for capture in &closure.captures {
-            let local = self
-                .context
-                .locals
-                .get(capture.variable)
-                .ok_or_else(|| invalid("invalid capture metadata"))?;
-            if capture.owner != self.context.owner
-                || local.ty != capture.ty
-                || local.kind != BindingKind::Mutable
-                || capture.mutability != crate::typed_ast::CaptureMutability::Mutable
-                || !self.context.initialized.contains(&capture.variable)
-                || previous.is_some_and(|index| local.index.raw() <= index)
-            {
+            let key = if capture.owner == self.context.owner {
+                let local = self
+                    .context
+                    .locals
+                    .get(capture.variable)
+                    .ok_or_else(|| invalid("invalid capture metadata"))?;
+                if local.ty != capture.ty
+                    || local.kind != BindingKind::Mutable
+                    || capture.mutability != crate::typed_ast::CaptureMutability::Mutable
+                    || !self.context.initialized.contains(&capture.variable)
+                {
+                    return Err(invalid("invalid capture metadata"));
+                }
+                let owner_order = match self.context.owner {
+                    BindingOwner::Function(_) => 0,
+                    BindingOwner::Closure(id) => id.0 + 1,
+                };
+                (owner_order, local.index.raw())
+            } else {
+                let slot = self.inherited_capture(capture, closure.span)?;
+                self.context.used_captures.insert(slot);
+                let BindingOwner::Closure(id) = self.context.owner else {
+                    return Err(invalid("invalid capture metadata"));
+                };
+                *self.context.module.callables[id.0]
+                    .capture_order
+                    .borrow()
+                    .get(slot)
+                    .ok_or_else(|| invalid("invalid capture metadata"))?
+            };
+            if previous.is_some_and(|previous| key <= previous) {
                 return Err(invalid("invalid capture metadata"));
             }
-            previous = Some(local.index.raw());
+            previous = Some(key);
+            capture_order.push(key);
         }
+        *plan.capture_order.borrow_mut() = capture_order;
         let mut previous = None;
         for &dependency in &closure.dependencies {
             if previous.is_some_and(|id| dependency.0 <= id)
                 || dependency.0 >= closure.id.0
                 || !self.context.callable_available(dependency)
-                || self
-                    .context
-                    .module
-                    .callables
-                    .get(dependency.0)
-                    .is_none_or(|p| !p.declaration.captures.is_empty())
+                || self.context.module.callables.get(dependency.0).is_none()
             {
                 return Err(invalid("invalid callable dependency"));
             }
             previous = Some(dependency.0);
             self.use_dependency(dependency);
         }
-        if !closure.captures.is_empty() {
+        if plan.needs_context {
             let env = self
                 .context
                 .storage
@@ -457,18 +476,31 @@ impl<'a> BodyEmitter<'a> {
                 .get(&closure.id)
                 .copied()
                 .ok_or_else(|| invalid("invalid capture metadata"))?;
-            self.allocate(abi::environment_size(closure.captures.len())?, env);
+            self.allocate(plan.environment_size, env);
             for (index, capture) in closure.captures.iter().enumerate() {
                 self.local_get(env);
-                let cell = self
-                    .context
-                    .storage
-                    .cells
-                    .get(&capture.variable)
-                    .copied()
-                    .ok_or_else(|| invalid("invalid capture metadata"))?;
-                self.local_get(cell);
+                if capture.owner == self.context.owner {
+                    let cell = self
+                        .context
+                        .storage
+                        .cells
+                        .get(&capture.variable)
+                        .copied()
+                        .ok_or_else(|| invalid("invalid capture metadata"))?;
+                    self.local_get(cell);
+                } else {
+                    let slot = self.inherited_capture(capture, closure.span)?;
+                    self.local_get(LocalIndex::new(0));
+                    self.instruction(&Instruction::I32Load(abi::environment_slot(slot)?));
+                }
                 self.instruction(&Instruction::I32Store(abi::environment_slot(index)?));
+            }
+            for dependency in &closure.dependencies {
+                if let Some(&slot) = plan.dependency_slots.get(dependency) {
+                    self.local_get(env);
+                    self.callable_environment(*dependency, closure.span)?;
+                    self.instruction(&Instruction::I32Store(abi::environment_slot(slot)?));
+                }
             }
         }
         plan.lexical_prefix.set(Some(self.context.lexical_prefix));
@@ -488,14 +520,36 @@ impl<'a> BodyEmitter<'a> {
             .callables
             .get(id.0)
             .ok_or_else(|| closures::invalid("invalid callable call", span))?;
-        if !self.context.callable_available(id)
-            || (!plan.declaration.captures.is_empty()
-                && plan.declaration.owner != self.context.owner)
-        {
+        if !self.context.callable_available(id) {
             return Err(closures::invalid("invalid callable call", span));
         }
         self.use_dependency(id);
         Ok(plan)
+    }
+
+    fn inherited_capture(
+        &self,
+        capture: &crate::typed_ast::TypedCapture,
+        span: Span,
+    ) -> Result<usize, CodegenError> {
+        let invalid = || closures::invalid("invalid capture metadata", span);
+        let BindingOwner::Closure(id) = self.context.owner else {
+            return Err(invalid());
+        };
+        let slot = *self
+            .context
+            .capture_slots
+            .get(&(capture.owner, capture.variable))
+            .ok_or_else(invalid)?;
+        if self.context.module.callables[id.0]
+            .declaration
+            .captures
+            .get(slot)
+            != Some(capture)
+        {
+            return Err(invalid());
+        }
+        Ok(slot)
     }
 
     fn allocate(&mut self, size: u32, destination: LocalIndex) {
@@ -560,10 +614,7 @@ impl<'a> BodyEmitter<'a> {
                     .get(&(*owner, *id))
                     .ok_or_else(invalid)?;
                 let capture = closure.captures.get(slot).ok_or_else(invalid)?;
-                if capture.ty == Type::Void
-                    || expr.ty != ExprResult::from(capture.ty)
-                    || capture.owner != closure.owner
-                {
+                if capture.ty == Type::Void || expr.ty != ExprResult::from(capture.ty) {
                     return Err(invalid());
                 }
                 self.context.used_captures.insert(slot);
@@ -592,14 +643,25 @@ impl<'a> BodyEmitter<'a> {
     }
 
     pub fn callable_environment(&mut self, id: CallableId, span: Span) -> Result<(), CodegenError> {
-        let local = self
-            .context
-            .storage
-            .environments
-            .get(&id)
-            .copied()
-            .ok_or_else(|| closures::invalid("invalid callable call", span))?;
-        self.local_get(local);
+        if let Some(local) = self.context.storage.environments.get(&id).copied() {
+            self.local_get(local);
+        } else {
+            let BindingOwner::Closure(owner) = self.context.owner else {
+                return Err(closures::invalid("invalid callable call", span));
+            };
+            let slot = self.context.module.callables[owner.0]
+                .dependency_slots
+                .get(&id)
+                .copied()
+                .ok_or_else(|| {
+                    closures::invalid(
+                        "invalid callable dependency",
+                        self.context.module.callables[owner.0].declaration.span,
+                    )
+                })?;
+            self.local_get(LocalIndex::new(0));
+            self.instruction(&Instruction::I32Load(abi::environment_slot(slot)?));
+        }
         Ok(())
     }
 

@@ -1,5 +1,5 @@
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
     convert::Infallible,
     ops::ControlFlow,
@@ -99,10 +99,15 @@ impl LexicalPrefix {
 
 pub(super) struct CallablePlan<'a> {
     pub declaration: &'a TypedClosure,
+    pub dependency_slots: HashMap<CallableId, usize>,
+    pub needs_context: bool,
+    pub environment_size: u32,
     pub type_index: TypeIndex,
     pub function_index: FunctionIndex,
     // None means the creator has not checked this declaration yet.
     pub lexical_prefix: Cell<Option<LexicalPrefix>>,
+    // Original owner/declaration order, established by the checked creator.
+    pub capture_order: RefCell<Vec<(usize, u32)>>,
 }
 
 pub(super) fn discover(program: &TypedProgram) -> Result<Vec<&TypedClosure>, CodegenError> {
@@ -165,14 +170,16 @@ impl Storage {
         owner: BodyOwner<'_>,
         locals: &LocalLayout,
         first: u32,
+        plans: &[CallablePlan<'_>],
     ) -> Result<Self, CodegenError> {
-        struct Find {
+        struct Find<'a, 'b> {
+            plans: &'a [CallablePlan<'b>],
             bindings: HashSet<VariableId>,
             callables: Vec<CallableId>,
             owner: BindingOwner,
         }
 
-        impl Visitor<'_> for Find {
+        impl Visitor<'_> for Find<'_, '_> {
             type Break = Infallible;
 
             fn visit_closure_bodies(&self) -> bool {
@@ -181,7 +188,7 @@ impl Storage {
 
             fn enter_statement(&mut self, statement: &TypedStatement) -> ControlFlow<Self::Break> {
                 if let TypedStatementKind::Closure(c) = &statement.kind {
-                    if !c.captures.is_empty() {
+                    if self.plans[c.id.0].needs_context {
                         self.callables.push(c.id);
                     }
                     for capture in &c.captures {
@@ -195,6 +202,7 @@ impl Storage {
         }
 
         let mut find = Find {
+            plans,
             bindings: Default::default(),
             callables: vec![],
             owner: owner.owner(),

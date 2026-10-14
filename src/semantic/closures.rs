@@ -5,13 +5,11 @@ pub(super) struct CallableBinding {
     id: CallableId,
     params: Vec<Type>,
     return_type: Type,
-    owner: BindingOwner,
-    requires_context: bool,
 }
 
 pub(super) struct CaptureContext {
-    creator: BindingOwner,
-    captures: HashMap<VariableId, TypedCapture>,
+    callable: CallableId,
+    captures: HashMap<(BindingOwner, VariableId), TypedCapture>,
 }
 
 #[derive(Clone, Copy)]
@@ -49,27 +47,30 @@ impl SemanticAnalyzer {
             }),
             Some(LexicalBinding::Value(binding)) if binding.owner != self.owner => {
                 let binding = *binding;
-                let capture = self
-                    .capture_contexts
-                    .last_mut()
-                    .expect("outer access is in a closure");
-                let reason = if binding.owner != Some(capture.creator) {
-                    Some("nested capture forwarding is not supported in this subset")
-                } else if binding.mutability == BindingMutability::ReadOnly {
-                    Some("capturing for bindings is not supported in this subset")
-                } else {
-                    None
-                };
-                if let Some(reason) = reason {
-                    return Err(SemanticError::InvalidClosure { reason, span });
+                if binding.mutability == BindingMutability::ReadOnly {
+                    return Err(SemanticError::InvalidClosure {
+                        reason: "capturing for bindings is not supported in this subset",
+                        span,
+                    });
                 }
 
-                capture.captures.entry(binding.id).or_insert(TypedCapture {
-                    owner: capture.creator,
-                    variable: binding.id,
-                    ty: binding.ty,
-                    mutability: CaptureMutability::Mutable,
-                });
+                let owner = binding.owner.expect("captured bindings have an owner");
+                // Every intervening helper must forward the original cell, but
+                // its owning helper accesses its own binding as an Identifier.
+                for context in self.capture_contexts.iter_mut().rev() {
+                    if owner == BindingOwner::Closure(context.callable) {
+                        break;
+                    }
+                    context
+                        .captures
+                        .entry((owner, binding.id))
+                        .or_insert(TypedCapture {
+                            owner,
+                            variable: binding.id,
+                            ty: binding.ty,
+                            mutability: CaptureMutability::Mutable,
+                        });
+                }
                 Ok(())
             }
             _ => Ok(()),
@@ -111,8 +112,6 @@ impl SemanticAnalyzer {
                 id: closure.id,
                 params: closure.params.iter().map(|param| param.ty).collect(),
                 return_type: closure.return_type,
-                owner: closure.owner,
-                requires_context: !closure.captures.is_empty(),
             }),
         );
         Ok(())
@@ -125,12 +124,6 @@ impl SemanticAnalyzer {
         span: Span,
         context: ReturnContext,
     ) -> Result<(TypedExpr, Flow), SemanticError> {
-        if callable.requires_context && self.owner != Some(callable.owner) {
-            return Err(SemanticError::InvalidClosure {
-                reason: "context-requiring callable dependencies are not supported in this subset",
-                span,
-            });
-        }
         if let Some(arg) = args.iter().find(|arg| arg.name.is_some()) {
             return Err(SemanticError::NamedArgumentsNotSupported {
                 name: "<closure>".into(),
@@ -188,7 +181,7 @@ impl SemanticAnalyzer {
         self.owner = Some(BindingOwner::Closure(id));
         self.dependencies.push((id, Vec::new()));
         self.capture_contexts.push(CaptureContext {
-            creator: owner,
+            callable: id,
             captures: HashMap::new(),
         });
 
@@ -220,7 +213,13 @@ impl SemanticAnalyzer {
             .collect::<Vec<_>>();
         // Semantic variable IDs follow declaration order (including parameters).
         // The backend independently derives order for mutable, possibly sparse IDs.
-        captures.sort_unstable_by_key(|capture| capture.variable.0);
+        captures.sort_unstable_by_key(|capture| {
+            let owner = match capture.owner {
+                BindingOwner::Function(id) => (0, id.0),
+                BindingOwner::Closure(id) => (1, id.0),
+            };
+            (owner, capture.variable.0)
+        });
         self.owner = Some(owner);
         self.next_variable_id = next_variable;
         self.next_loop_id = next_loop;

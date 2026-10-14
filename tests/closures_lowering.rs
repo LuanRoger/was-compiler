@@ -1380,6 +1380,441 @@ fn public_typed_callable_compiles_to_unexported_direct_helper_without_memory() {
 }
 
 #[test]
+fn ancestor_capture_is_forwarded_without_allocating_another_cell() {
+    let owner = BindingOwner::Function(FunctionId(0));
+    let capture = TypedCapture {
+        owner,
+        variable: VariableId(71),
+        ty: Type::Number,
+        mutability: CaptureMutability::Mutable,
+    };
+    let mut inner = closure(
+        1,
+        BindingOwner::Closure(CallableId(0)),
+        TypedClosureBody::Expression(Box::new(TypedExpr {
+            kind: TypedExprKind::Captured {
+                owner,
+                id: VariableId(71),
+                name: "value".into(),
+            },
+            ty: Type::Number.into(),
+        })),
+        Type::Number,
+    );
+    inner.captures.push(capture.clone());
+    let mut outer = closure(
+        0,
+        owner,
+        block(
+            vec![statement(TypedStatementKind::Closure(inner))],
+            Some(lexical(1, vec![], Type::Number)),
+        ),
+        Type::Number,
+    );
+    outer.captures.push(capture);
+    let mut p = program(vec![
+        statement(TypedStatementKind::Closure(outer)),
+        statement(TypedStatementKind::Return(Some(lexical(
+            0,
+            vec![],
+            Type::Number,
+        )))),
+    ]);
+    p.functions[0].params.push(TypedParam {
+        id: VariableId(71),
+        name: "value".into(),
+        ty: Type::Number,
+        span: span(),
+    });
+    let bytes = Compiler::new().compile(&p).unwrap();
+    let outer_ops = operators(&bytes, 8);
+    assert_eq!(
+        outer_ops
+            .iter()
+            .filter(|op| matches!(op, Operator::Call { function_index: 1 }))
+            .count(),
+        1
+    );
+    assert!(outer_ops.windows(2).any(|ops| matches!(ops, [Operator::LocalGet { local_index: 0 }, Operator::I32Load { memarg }] if memarg.offset == 0)));
+    assert!(
+        outer_ops
+            .iter()
+            .any(|op| matches!(op, Operator::Call { function_index: 9 }))
+    );
+    let inner_ops = operators(&bytes, 9);
+    assert!(matches!(
+        inner_ops[0],
+        Operator::LocalGet { local_index: 0 }
+    ));
+    assert!(matches!(inner_ops[1], Operator::I32Load { memarg } if memarg.offset == 0));
+    assert!(matches!(inner_ops[2], Operator::F64Load { .. }));
+}
+
+fn transitive_context_fixture() -> TypedProgram {
+    let root = BindingOwner::Function(FunctionId(0));
+    let middle = BindingOwner::Closure(CallableId(2));
+    let captured = |owner| TypedExpr {
+        kind: TypedExprKind::Captured {
+            owner,
+            id: VariableId(91),
+            name: "value".into(),
+        },
+        ty: Type::Number.into(),
+    };
+    let metadata = |owner| TypedCapture {
+        owner,
+        variable: VariableId(91),
+        ty: Type::Number,
+        mutability: CaptureMutability::Mutable,
+    };
+    let free = closure(
+        0,
+        root,
+        TypedClosureBody::Expression(Box::new(number("1"))),
+        Type::Number,
+    );
+    let mut first = closure(
+        1,
+        root,
+        TypedClosureBody::Expression(Box::new(captured(root))),
+        Type::Number,
+    );
+    first.captures = vec![metadata(root)];
+    let mut inner = closure(
+        3,
+        middle,
+        block(
+            vec![
+                statement(TypedStatementKind::Expression(lexical(
+                    0,
+                    vec![],
+                    Type::Number,
+                ))),
+                statement(TypedStatementKind::Expression(lexical(
+                    1,
+                    vec![],
+                    Type::Number,
+                ))),
+                statement(TypedStatementKind::Expression(captured(root))),
+                statement(TypedStatementKind::Expression(TypedExpr {
+                    kind: TypedExprKind::Captured {
+                        owner: middle,
+                        id: VariableId(7),
+                        name: "own_local".into(),
+                    },
+                    ty: Type::Number.into(),
+                })),
+            ],
+            Some(captured(middle)),
+        ),
+        Type::Number,
+    );
+    inner.captures = vec![
+        metadata(root),
+        metadata(middle),
+        TypedCapture {
+            owner: middle,
+            variable: VariableId(7),
+            ty: Type::Number,
+            mutability: CaptureMutability::Mutable,
+        },
+    ];
+    inner.dependencies = vec![CallableId(0), CallableId(1)];
+    let mut second = closure(
+        2,
+        root,
+        block(
+            vec![
+                statement(TypedStatementKind::Let {
+                    id: VariableId(7),
+                    name: "own_local".into(),
+                    ty: Type::Number,
+                    value: number("3"),
+                }),
+                statement(TypedStatementKind::Closure(inner)),
+            ],
+            Some(lexical(3, vec![], Type::Number)),
+        ),
+        Type::Number,
+    );
+    second.params.push(TypedParam {
+        id: VariableId(91),
+        name: "own".into(),
+        ty: Type::Number,
+        span: span(),
+    });
+    second.captures = vec![metadata(root)];
+    second.dependencies = vec![CallableId(0), CallableId(1)];
+    let mut leaf = closure(
+        5,
+        BindingOwner::Closure(CallableId(4)),
+        TypedClosureBody::Expression(Box::new(lexical(2, vec![number("5")], Type::Number))),
+        Type::Number,
+    );
+    leaf.dependencies = vec![CallableId(2)];
+    let mut wrapper = closure(
+        4,
+        root,
+        block(
+            vec![statement(TypedStatementKind::Closure(leaf))],
+            Some(lexical(5, vec![], Type::Number)),
+        ),
+        Type::Number,
+    );
+    wrapper.dependencies = vec![CallableId(2)];
+    let mut p = program(vec![
+        statement(TypedStatementKind::Closure(free)),
+        statement(TypedStatementKind::Closure(first)),
+        statement(TypedStatementKind::Closure(second)),
+        statement(TypedStatementKind::Closure(wrapper)),
+        statement(TypedStatementKind::Return(Some(lexical(
+            4,
+            vec![],
+            Type::Number,
+        )))),
+    ]);
+    p.functions[0].params.push(TypedParam {
+        id: VariableId(91),
+        name: "root".into(),
+        ty: Type::Number,
+        span: span(),
+    });
+    p
+}
+
+#[test]
+fn transitive_contexts_keep_capture_slots_before_live_dependency_pointers() {
+    let bytes = Compiler::new()
+        .compile(&transitive_context_fixture())
+        .unwrap();
+    let count_alloc = |index| {
+        operators(&bytes, index)
+            .iter()
+            .filter(|op| matches!(op, Operator::Call { function_index: 1 }))
+            .count()
+    };
+    assert_eq!(count_alloc(0), 4); // One root cell and three nonempty declarations.
+    assert_eq!(count_alloc(10), 3); // Own parameter/local cells and the nested environment.
+    assert_eq!(count_alloc(11), 0);
+    assert_eq!(count_alloc(12), 1); // Forward the existing second environment to the leaf.
+    assert_eq!(count_alloc(13), 0);
+    let stores: Vec<_> = operators(&bytes, 10)
+        .iter()
+        .filter_map(|op| match op {
+            Operator::I32Store { memarg } => Some(memarg.offset),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(stores, [0, 8, 16, 24]);
+    let inner = operators(&bytes, 11);
+    assert!(inner.windows(3).any(|ops| matches!(ops,
+        [Operator::LocalGet { local_index: 0 }, Operator::I32Load { memarg }, Operator::Call { function_index: 9 }] if memarg.offset == 24)));
+    assert!(
+        inner
+            .iter()
+            .any(|op| matches!(op, Operator::Call { function_index: 8 }))
+    );
+    let leaf = operators(&bytes, 13);
+    assert!(matches!(leaf[0], Operator::LocalGet { local_index: 0 }));
+    assert!(matches!(leaf[1], Operator::I32Load { memarg } if memarg.offset == 0));
+    assert!(
+        leaf.iter()
+            .any(|op| matches!(op, Operator::Call { function_index: 10 }))
+    );
+    let mut types = vec![];
+    let mut functions = vec![];
+    for payload in Parser::new(0).parse_all(&bytes) {
+        match payload.unwrap() {
+            Payload::TypeSection(section) => {
+                types.extend(section.into_iter_err_on_gc_types().map(Result::unwrap))
+            }
+            Payload::FunctionSection(section) => {
+                functions.extend(section.into_iter().map(Result::unwrap))
+            }
+            Payload::TableSection(_) => panic!("lexical calls must remain direct"),
+            _ => {}
+        }
+    }
+    for (index, params) in [
+        (8, vec![]),
+        (9, vec![wasmparser::ValType::I32]),
+        (10, vec![wasmparser::ValType::I32, wasmparser::ValType::F64]),
+        (11, vec![wasmparser::ValType::I32]),
+        (12, vec![wasmparser::ValType::I32]),
+        (13, vec![wasmparser::ValType::I32]),
+    ] {
+        assert_eq!(types[functions[index] as usize].params(), params);
+    }
+}
+
+#[test]
+fn transitive_requirements_reject_missing_extra_noncanonical_and_wrong_context_metadata() {
+    let fixture = transitive_context_fixture();
+    for mutation in 0..9 {
+        let mut forged = fixture.clone();
+        let TypedStatementKind::Closure(second) = &mut forged.functions[0].body[2].kind else {
+            panic!()
+        };
+        let origin = second.span;
+        let TypedClosureBody::Block(body) = &mut second.body else {
+            panic!()
+        };
+        let TypedStatementKind::Closure(inner) = &mut body.statements[1].kind else {
+            panic!()
+        };
+        let reason = match mutation {
+            0 => {
+                second.captures.clear();
+                "invalid capture metadata"
+            }
+            1 => {
+                inner.captures.swap(0, 1);
+                "invalid capture metadata"
+            }
+            2 => {
+                inner.captures.push(inner.captures[1].clone());
+                "invalid capture metadata"
+            }
+            3 => {
+                inner.captures[0].ty = Type::Bool;
+                "invalid capture metadata"
+            }
+            4 => {
+                inner.captures[0].owner = BindingOwner::Closure(CallableId(1));
+                "invalid capture metadata"
+            }
+            5 => {
+                second.dependencies.clear();
+                "invalid callable dependency"
+            }
+            6 => {
+                inner.dependencies.reverse();
+                "invalid callable dependency"
+            }
+            7 => {
+                inner.dependencies.push(CallableId(1));
+                "invalid callable dependency"
+            }
+            8 => {
+                inner.dependencies.push(CallableId(2));
+                "invalid callable dependency"
+            }
+            _ => unreachable!(),
+        };
+        assert_invalid(&forged, reason, origin);
+    }
+    let mut extra = fixture.clone();
+    extra.functions[0].params.push(TypedParam {
+        id: VariableId(7),
+        name: "unused".into(),
+        ty: Type::Bool,
+        span: span(),
+    });
+    let TypedStatementKind::Closure(second) = &mut extra.functions[0].body[2].kind else {
+        panic!()
+    };
+    second.captures.push(TypedCapture {
+        owner: second.owner,
+        variable: VariableId(7),
+        ty: Type::Bool,
+        mutability: CaptureMutability::Mutable,
+    });
+    assert_invalid(&extra, "invalid capture metadata", span());
+
+    // The callable still exists and needs context, but its declaration is no longer visible.
+    let mut hidden = fixture.clone();
+    let first = hidden.functions[0].body.remove(1);
+    hidden.functions[0].body.insert(
+        1,
+        statement(TypedStatementKind::If {
+            cond: Box::new(TypedExpr {
+                kind: TypedExprKind::Bool(true),
+                ty: Type::Bool.into(),
+            }),
+            then: vec![first],
+            else_: None,
+        }),
+    );
+    assert_invalid(&hidden, "invalid callable dependency", span());
+}
+
+#[test]
+fn ancestor_forwarding_preserves_every_concrete_type_through_three_intermediates() {
+    for ty in [
+        Type::Number,
+        Type::Bool,
+        Type::String,
+        Type::NumberArray,
+        Type::Range,
+    ] {
+        let owner = BindingOwner::Function(FunctionId(0));
+        let capture = TypedCapture {
+            owner,
+            variable: VariableId(73),
+            ty,
+            mutability: CaptureMutability::Mutable,
+        };
+        let mut child = closure(
+            3,
+            BindingOwner::Closure(CallableId(2)),
+            TypedClosureBody::Expression(Box::new(TypedExpr {
+                kind: TypedExprKind::Captured {
+                    owner,
+                    id: VariableId(73),
+                    name: "root".into(),
+                },
+                ty: ty.into(),
+            })),
+            ty,
+        );
+        child.captures.push(capture.clone());
+        for id in (0..3).rev() {
+            let mut parent = closure(
+                id,
+                if id == 0 {
+                    owner
+                } else {
+                    BindingOwner::Closure(CallableId(id - 1))
+                },
+                block(
+                    vec![statement(TypedStatementKind::Closure(child))],
+                    Some(lexical(id + 1, vec![], ty)),
+                ),
+                ty,
+            );
+            parent.captures.push(capture.clone());
+            child = parent;
+        }
+        let mut p = program(vec![
+            statement(TypedStatementKind::Closure(child)),
+            statement(TypedStatementKind::Expression(lexical(0, vec![], ty))),
+            statement(TypedStatementKind::Return(Some(number("1")))),
+        ]);
+        p.functions[0].params.push(TypedParam {
+            id: VariableId(73),
+            name: "root".into(),
+            ty,
+            span: span(),
+        });
+        let mut compiler = Compiler::new();
+        compiler.set_exports(was_compiler::ExportOptions::None);
+        let bytes = compiler.compile(&p).unwrap();
+        Validator::new().validate_all(&bytes).unwrap();
+        // Range entry validation adds two runtime helpers; the other types use seven memory helpers.
+        let first_helper = if ty == Type::Range { 10 } else { 8 };
+        for index in first_helper..first_helper + 3 {
+            assert_eq!(
+                operators(&bytes, index)
+                    .iter()
+                    .filter(|op| matches!(op, Operator::Call { function_index: 1 }))
+                    .count(),
+                1
+            );
+        }
+    }
+}
+
+#[test]
 fn captured_parameter_uses_shared_cell_and_hidden_environment() {
     let owner = BindingOwner::Function(FunctionId(0));
     let mut c = closure(
@@ -1756,7 +2191,7 @@ fn captures_reject_out_of_scope_uninitialized_iteration_and_synthetic_originals(
 }
 
 #[test]
-fn missing_capture_entries_and_deferred_contexts_fail_safely_at_typed_input_seam() {
+fn missing_capture_entries_fail_and_context_dependencies_forward_live_environments() {
     let compiler = Compiler::new();
     let mut missing = compiler
         .analyze("fn main() -> number { let f = () => 1; return f(); }")
@@ -1799,8 +2234,11 @@ fn missing_capture_entries_and_deferred_contexts_fail_safely_at_typed_input_seam
     };
     b.dependencies.push(CallableId(0));
     b.body = TypedClosureBody::Expression(Box::new(lexical(0, vec![], Type::Number)));
-    let origin = b.span;
-    assert_invalid(&dependency, "invalid callable dependency", origin);
+    let bytes = compiler.compile(&dependency).unwrap();
+    let b_ops = operators(&bytes, 9);
+    assert!(matches!(b_ops[0], Operator::LocalGet { local_index: 0 }));
+    assert!(matches!(b_ops[1], Operator::I32Load { memarg } if memarg.offset == 0));
+    assert!(matches!(b_ops[2], Operator::Call { function_index: 8 }));
 }
 fn c_body_span(program: &TypedProgram) -> Span {
     let TypedStatementKind::Closure(c) = &program.functions[0].body[0].kind else {

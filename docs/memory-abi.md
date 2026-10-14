@@ -6,14 +6,16 @@ and registered host-function parameters/results. Language types remain distinct
 in semantic analysis even though both lower to `i32`; descriptors have no runtime
 type tag. Hosts must supply the type declared in their registration.
 
-## Local callable subsets (#29–#31)
+## Local callable subsets (#29–#32)
 
 Context-free helpers use direct calls with only explicit parameters. Their declarations
 allocate no environment or cells and do not execute helper bodies. Ordinary
 strings/arrays/ranges in helper bodies or signatures still activate the existing
 helpers and entry validation. #30 adds shared captures of immediate-creator
 parameters and ordinary lets of every concrete type; #31 adds captured numeric
-compounds without changing this storage layout. Full WP11 release remains
+compounds without changing this storage layout. #32 adds nested original-cell
+forwarding and earlier live callable-context dependency slots;
+[validation passed](local-callable-interface.md#issue-32-validation-2026-10-14). Full WP11 release remains
 deferred. See [the subset interface and public migration](local-callable-interface.md).
 See [#30 storage/runtime validation](local-callable-interface.md#issue-30-validation-2026-10-14)
 for historical shared-storage evidence before #31; [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14).
@@ -22,7 +24,8 @@ Historical #29 results do not cover shared storage.
 ### Private closure storage (#30)
 
 This is a backend-private layout, not a public host descriptor or callable ABI.
-Capturing helpers receive a hidden first `i32` environment pointer and still use
+Helpers requiring captures or callable contexts receive a hidden first `i32`
+environment pointer and still use
 direct calls; helpers remain unexported. Context-free helpers omit that pointer.
 No table, indirect call, environment header or universal callable descriptor is added.
 
@@ -30,9 +33,14 @@ No table, indirect call, environment header or universal callable descriptor is 
 | --- | --- | --- |
 | Original binding cell | Eight-byte aligned, eight bytes | `f64` at offset 0 for `number`; `i32` at offset 0 for bool values and string/array/range handles |
 | Capture environment slot | Eight-byte aligned, eight bytes | `i32` address of the original shared cell at offset 0 |
+| Callable-context dependency slot (#32) | Eight-byte aligned, eight bytes | `i32` pointer to the earlier callable's original live environment at offset 0 |
 
-An environment has one slot per unique capture in canonical original owner/declaration
-order (parameters before lets), not numeric variable-ID order for forged typed input.
+An environment starts with one slot per unique capture in canonical original
+owner/declaration order (parameters before lets), not numeric variable-ID order for
+forged typed input. #32 appends slots only for context-requiring dependencies, in
+canonical source-preorder callable-ID order. Context-free dependencies retain lexical
+permissions but occupy no slots. Context requirements propagate through earlier
+dependencies, so a helper without value captures can still need an environment.
 Slot offsets are `8 * slot_index`; sizes/offsets use checked arithmetic. The unused
 four bytes of an `i32` cell/slot are not a host-readable field or tag. Uniform
 slots trade space for simple deterministic alignment instead of packed four-byte
@@ -47,7 +55,10 @@ Creator and helper accesses use the same cell, so reassignment does not snapshot
 handles or values. Existing indexed array checks and alias semantics are unchanged.
 
 A nonempty environment allocates **only when its closure declaration executes**,
-then stores the original cell addresses without executing the body. A skipped
+then stores original cell addresses followed by original dependency environment
+pointers, without executing the body. Intermediate helpers forward existing cell
+addresses, not values or new cells; dependency forwarding neither copies nor
+reconstructs the earlier environment. A skipped
 declaration allocates no environment; a context-free declaration allocates none.
 Each recursive or host-reentrant creator invocation uses fresh storage, while
 closures sharing one live original binding share its cell.
@@ -69,10 +80,12 @@ ordinary indexed assignments also preserve the pre-RHS checked address. RHS
 rebinding or memory growth does not retarget writes. Descriptor/bounds checks
 precede RHS evaluation. No new storage layout or public ABI is introduced.
 
-Nested forwarding, context-requiring callable dependencies, capture of `for` bindings, and full WP11
-release remain deferred. A nested helper can capture its immediate creator's own
-parameters/ordinary lets. No transitive callable-context slots or iteration cells
-are implemented by this subset.
+#32 retains original owner-qualified binding identities through every intermediate
+helper and forwards earlier context-requiring callable environments transitively.
+Checked lowering verifies complete, unique, canonical capture/dependency metadata,
+lexical availability, original types/mutability and initialization, including forged
+sparse IDs. Capture of `for` bindings and full WP11 release remain deferred; no
+iteration cells are implemented.
 
 ## Descriptor layout
 

@@ -347,19 +347,19 @@ fn captured_compounds_check_invalid_types_targets_and_skipped_children() {
 }
 
 #[test]
-fn staged_capture_limits_are_explicit() {
+fn for_capture_limit_remains_explicit_through_nested_helpers() {
     for (source, expected) in [
         (
             "fn main() { for x in 1..2 { let f = () => x; } }",
             "capturing for bindings is not supported in this subset",
         ),
         (
-            "fn main(x: number) { let f = () => { let g = () => x; }; }",
-            "nested capture forwarding is not supported in this subset",
+            "fn main() { for x in [1] { let f = () => { let g = () => x; }; } }",
+            "capturing for bindings is not supported in this subset",
         ),
         (
-            "fn main(x: number) { let f = () => x; let g = () => f(); }",
-            "context-requiring callable dependencies are not supported in this subset",
+            "fn main() { for x in [1] { let f = () => { let g = () => { x += 1; }; }; } }",
+            "capturing for bindings is not supported in this subset",
         ),
     ] {
         assert!(
@@ -376,6 +376,205 @@ fn staged_capture_limits_are_explicit() {
     Compiler::new()
         .analyze("fn main(x: number) { let f = (x: number) => x; let g = () => { let x = 2; x }; }")
         .unwrap();
+}
+
+#[test]
+fn nested_captures_forward_original_bindings_without_capturing_creator_owned_locals() {
+    use was_compiler::typed_ast::{
+        BindingOwner, CallableId, CaptureMutability, FunctionId, TypedCapture, TypedClosureBody,
+        TypedExprKind, VariableId,
+    };
+
+    let source = "fn main(x: number) { let outer = (y: bool) => { let middle = () => { let inner = () => { y; x += 1; x }; inner() }; middle() }; }";
+    let compiler = Compiler::new();
+    let program = compiler.analyze(source).unwrap();
+    let outer = closure(&program, 0, 0);
+    let TypedClosureBody::Block(body) = &outer.body else {
+        panic!("block")
+    };
+    let TypedStatementKind::Closure(middle) = &body.statements[0].kind else {
+        panic!("closure")
+    };
+    let TypedClosureBody::Block(body) = &middle.body else {
+        panic!("block")
+    };
+    let TypedStatementKind::Closure(inner) = &body.statements[0].kind else {
+        panic!("closure")
+    };
+    let original = TypedCapture {
+        owner: BindingOwner::Function(FunctionId(0)),
+        variable: VariableId(0),
+        ty: Type::Number,
+        mutability: CaptureMutability::Mutable,
+    };
+    let creator_parameter = TypedCapture {
+        owner: BindingOwner::Closure(CallableId(0)),
+        variable: VariableId(0),
+        ty: Type::Bool,
+        mutability: CaptureMutability::Mutable,
+    };
+    assert_eq!(outer.captures, vec![original.clone()]);
+    assert_eq!(
+        middle.captures,
+        vec![original.clone(), creator_parameter.clone()]
+    );
+    assert_eq!(inner.captures, vec![original, creator_parameter]);
+    let TypedClosureBody::Block(body) = &inner.body else {
+        panic!("block")
+    };
+    assert!(matches!(
+        body.tail.as_ref().unwrap().kind,
+        TypedExprKind::Captured {
+            owner: BindingOwner::Function(FunctionId(0)),
+            id: VariableId(0),
+            ..
+        }
+    ));
+    assert_eq!(compiler.analyze(source).unwrap(), program);
+}
+
+#[test]
+fn capturing_callable_dependencies_forward_live_context_without_value_reads() {
+    use was_compiler::typed_ast::{CallableId, TypedClosureBody};
+
+    let source = "fn main(x: number) { let base = () => x; let free = () => 2; let root = () => { let middle = () => { let inner = () => free() + base() + free() + base(); inner() }; middle() }; let relay = () => root(); relay(); }";
+    let compiler = Compiler::new();
+    let program = compiler.analyze(source).unwrap();
+    let root = closure(&program, 0, 2);
+    let TypedClosureBody::Block(body) = &root.body else {
+        panic!("block")
+    };
+    let TypedStatementKind::Closure(middle) = &body.statements[0].kind else {
+        panic!("closure")
+    };
+    let TypedClosureBody::Block(body) = &middle.body else {
+        panic!("block")
+    };
+    let TypedStatementKind::Closure(inner) = &body.statements[0].kind else {
+        panic!("closure")
+    };
+    for helper in [root, middle, inner] {
+        assert!(helper.captures.is_empty());
+        assert_eq!(helper.dependencies, vec![CallableId(0), CallableId(1)]);
+        assert_eq!(helper.return_type, Type::Number);
+    }
+    let relay = closure(&program, 0, 3);
+    assert!(relay.captures.is_empty());
+    assert_eq!(relay.dependencies, vec![CallableId(2)]);
+    assert_eq!(compiler.analyze(source).unwrap(), program);
+}
+
+#[test]
+fn nested_capture_types_shadowing_and_skipped_places_preserve_original_owners() {
+    use was_compiler::typed_ast::{
+        BindingOwner, CallableId, CaptureMutability, FunctionId, TypedClosureBody, TypedExprKind,
+        VariableId,
+    };
+
+    for (value, replacement, ty) in [
+        ("1", "2", Type::Number),
+        ("true", "false", Type::Bool),
+        ("\"first\"", "\"second\"", Type::String),
+        ("[1]", "[2]", Type::NumberArray),
+        ("1..2", "3..4", Type::Range),
+    ] {
+        let source = format!(
+            "fn main() {{ let x = {value}; let outer = () => {{ let x = x; let middle = () => {{ let inner = () => {{ if false {{ x = {replacement}; }} x }}; inner() }}; middle() }}; }}"
+        );
+        let program = Compiler::new().analyze(&source).unwrap();
+        let outer = closure(&program, 0, 1);
+        assert_eq!(outer.captures.len(), 1);
+        assert_eq!(
+            outer.captures[0].owner,
+            BindingOwner::Function(FunctionId(0))
+        );
+        let TypedClosureBody::Block(body) = &outer.body else {
+            panic!("block")
+        };
+        let TypedStatementKind::Let { value, .. } = &body.statements[0].kind else {
+            panic!("let")
+        };
+        assert!(matches!(
+            value.kind,
+            TypedExprKind::Captured {
+                owner: BindingOwner::Function(FunctionId(0)),
+                id: VariableId(0),
+                ..
+            }
+        ));
+        let TypedStatementKind::Closure(middle) = &body.statements[1].kind else {
+            panic!("closure")
+        };
+        let TypedClosureBody::Block(body) = &middle.body else {
+            panic!("block")
+        };
+        let TypedStatementKind::Closure(inner) = &body.statements[0].kind else {
+            panic!("closure")
+        };
+        for helper in [middle, inner] {
+            assert_eq!(helper.captures.len(), 1);
+            let capture = &helper.captures[0];
+            assert_eq!(capture.owner, BindingOwner::Closure(CallableId(0)));
+            assert_eq!(capture.variable, VariableId(0));
+            assert_eq!(capture.ty, ty);
+            assert_eq!(capture.mutability, CaptureMutability::Mutable);
+            assert_eq!(helper.return_type, ty);
+        }
+    }
+    for source in [
+        "fn main(x: number) { let outer = () => { let inner = () => { x = true; }; }; }",
+        "fn main(x: number[]) { let outer = () => { let inner = () => { x[0] += false; }; }; }",
+    ] {
+        assert!(matches!(
+            semantic_error(source),
+            SemanticError::TypeMismatch { .. }
+        ));
+    }
+    assert!(matches!(
+        semantic_error("fn main() { let outer = () => { let inner = () => missing; }; let missing = 1; }"),
+        SemanticError::UndefinedVariable { name, .. } if name == "missing"
+    ));
+}
+
+#[test]
+fn nested_capturing_dependencies_stop_at_their_creator_and_keep_initializer_visibility() {
+    use was_compiler::typed_ast::{CallableId, TypedClosureBody, TypedExprKind};
+
+    let source = "fn main(x: number) { let outer = () => { let base = () => x; let middle = () => { let base = () => base(); base() }; middle() }; }";
+    let program = Compiler::new().analyze(source).unwrap();
+    let outer = closure(&program, 0, 0);
+    assert_eq!(outer.captures.len(), 1);
+    assert!(outer.dependencies.is_empty());
+    let TypedClosureBody::Block(body) = &outer.body else {
+        panic!("block")
+    };
+    let TypedStatementKind::Closure(base) = &body.statements[0].kind else {
+        panic!("closure")
+    };
+    assert_eq!(base.captures, outer.captures);
+    let TypedStatementKind::Closure(middle) = &body.statements[1].kind else {
+        panic!("closure")
+    };
+    assert!(middle.captures.is_empty());
+    assert_eq!(middle.dependencies, vec![CallableId(1)]);
+    let TypedClosureBody::Block(body) = &middle.body else {
+        panic!("block")
+    };
+    let TypedStatementKind::Closure(inner) = &body.statements[0].kind else {
+        panic!("closure")
+    };
+    assert!(inner.captures.is_empty());
+    assert_eq!(inner.dependencies, vec![CallableId(1)]);
+    let TypedClosureBody::Expression(call) = &inner.body else {
+        panic!("expression")
+    };
+    assert!(matches!(
+        call.kind,
+        TypedExprKind::LexicalCall {
+            callable: CallableId(1),
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -776,9 +975,9 @@ fn transparent_lambda_parentheses_and_utf8_trivia_preserve_focused_spans() {
 #[test]
 fn analysis_and_diagnostics_are_identical_at_all_optimization_levels() {
     use was_compiler::{CompilerOptions, OptimizationLevel};
-    let source = "fn main() { let factor = 2; let f = (x: number) => x * factor; return f(21); }";
+    let source = "fn main() { let factor = 2; let f = (x: number) => x * factor; let outer = () => { let inner = () => factor + f(21); inner() }; return outer(); }";
     let expected = Compiler::new().analyze(source).unwrap();
-    let invalid = "fn main() { let x = 1; let f = () => { let g = () => x; }; }";
+    let invalid = "fn main() { for x in [1] { let f = () => { let g = () => x; }; } }";
     let expected_error = Compiler::new().analyze(invalid).unwrap_err();
     for optimization_level in [
         OptimizationLevel::None,
