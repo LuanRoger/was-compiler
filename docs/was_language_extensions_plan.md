@@ -990,6 +990,11 @@ and historical subset runs are not substitutes for that release evidence.
 
 ### WP11 — Local-only shared-binding closures/direct helpers (spec §10)
 
+The [WP11 design interview](wp11-local-closures-development.md) records accepted
+scope, inference, identity, storage, diagnostic, and validation decisions. Final
+shared understanding was confirmed on 2026-10-14; WP11 remains proposed and this
+record does not authorize implementation or establish release evidence.
+
 **Implemented #29 subset:** Capture-free local declarations and lexical positional
 calls use dedicated owned typed declarations, program-wide callable IDs and
 owner-qualified capture interfaces. Context-free helpers are checked/cached through

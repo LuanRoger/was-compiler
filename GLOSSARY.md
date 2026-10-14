@@ -1,7 +1,7 @@
 # WAS language
 
-Terms for the language's defaults, contracts, numeric patterns, and pipelines. Proposed extensions
-remain distinct from implemented language support.
+Terms for the language's defaults, contracts, numeric patterns, pipelines, and local
+closures. Proposed extensions remain distinct from implemented language support.
 
 ## Language
 
@@ -34,3 +34,18 @@ argument before any written arguments; omitted remaining arguments use defaults.
 **Final Void stage**:
 The last invocation in a named-only pipeline whose declared result is void,
 permitted only where the pipeline's result is discarded.
+
+**Local callable binding**:
+A lexical name for a closure that can be invoked directly but cannot be aliased,
+reassigned, passed, returned, or otherwise used as a value. Proposed in WP11.
+_Avoid_: Function-valued local, first-class function
+
+**Shared-binding capture**:
+A closure's reference to an original lexical binding, preserving its type and
+mutability and observing reassignment from either side. Proposed in WP11.
+_Avoid_: Snapshot capture, capture by value
+
+**Lexical callable dependency**:
+A closure's dependence on an earlier visible local callable for direct invocation,
+including the original callable's live context. It is not a callable alias or value
+capture. Proposed in WP11.
