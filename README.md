@@ -156,14 +156,15 @@ defaults, and final Void stages with discarded results (#27). Implementation is
 complete; [release gates passed](docs/was_language_extensions_plan.md#wp10-release-validation)
 on 2026-10-14, including current-source rebuilt-browser and full ignored runtime coverage.
 WP11's local callable subsets are implemented: capture-free declarations/calls
-(#29) and immediate-creator shared parameter/let captures (#30). Nested forwarding,
-context-requiring callable dependencies, captured compound places and captured
-`for` bindings remain deferred, as does full WP11 release.
+(#29), immediate-creator shared parameter/let captures (#30), and captured numeric
+compounds (#31). Nested forwarding, context-requiring callable dependencies and
+captured `for` bindings remain deferred, as does full WP11 release.
 [#30 subset validation passed](docs/local-callable-interface.md#issue-30-validation-2026-10-14),
-including rebuilt-browser and full ignored runtime coverage. WP12 placeholders and
+including rebuilt-browser and full ignored runtime coverage for #30, before #31.
+[#31 validation passed](docs/local-callable-interface.md#issue-31-validation-2026-10-14). WP12 placeholders and
 WP13 optimization are separately scoped.
 
-### Local callables and shared captures (WP11 subsets, #29–#30)
+### Local callables and shared captures (WP11 subsets, #29–#31)
 
 ```text
 fn main() -> number {
@@ -187,9 +188,11 @@ Closures may share their immediate creator's parameters and ordinary lets of typ
 visible to the other; ordinary indexed array writes retain alias semantics. A
 nested closure may capture its immediate creator's own bindings, but forwarding
 ancestor captures and calling an external context-requiring local callable from a
-helper remain deferred. Compound writes involving captured bindings (including
-creator-side promoted bindings) and capture of `for` bindings are also deferred.
-Use ordinary assignment for supported captured mutation.
+helper remain deferred, as does capture of `for` bindings. #31 supports `+=`, `-=`,
+`*=`, `/=`, and `%=` on captured numbers and captured numeric-array elements,
+including creator-side promoted bindings. Updates preserve the original checked
+place and old value across RHS effects; ordinary indexed assignment also retains
+its pre-RHS checked address.
 
 Callables cannot be aliased, reassigned, annotated with a value type, passed,
 returned or used as values. Immediate invocation, closure defaults/contracts/result

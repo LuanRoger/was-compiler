@@ -82,10 +82,10 @@ including named/default binding and final-Void discard support (#27); raw pipeli
 retain source spans and stage dependency syntax.
 [Release gates passed](was_language_extensions_plan.md#wp10-release-validation)
 on 2026-10-14. WP11 implements capture-free local callables (#29) and
-immediate-creator shared parameter/let captures (#30), with
-[#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14).
-Nested forwarding, context-requiring dependencies, captured
-compounds/for bindings and full WP11 release remain deferred. WP12 and WP13 are
+immediate-creator shared parameter/let captures (#30), plus captured numeric
+compounds (#31). [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14)
+before #31; [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14). Nested forwarding, context-requiring
+dependencies, captured `for` bindings and full WP11 release remain deferred. WP12 and WP13 are
 separately scoped. See [the local callable interface](local-callable-interface.md). See
 [the #14 inference contract](result-inference-development.md#issue-14-acyclic-chains-and-diamonds). See the
 [interface gate](named-call-interface.md) and [handoff](wp6-wp7-development.md).
@@ -590,8 +590,12 @@ traps, memory growth, numerical special values, and optimization/export parity.
 
 See the [extension specification](was_language_extensions_spec.md) and
 [implementation plan](was_language_extensions_plan.md) for later work packages;
-Closure-dependent ordinary captured assignment and array-binding rebinding belong
-to WP11's #30 subset, not this milestone; captured compound places remain deferred.
+closure-dependent ordinary captured assignment and array-binding rebinding belong
+to WP11's #30 subset, not this milestone. #31 adds all five captured numeric
+compounds through the same checked place path, including creator-side promoted
+bindings: scalar cell address/old `f64` stay on the stack; indexed address/old value
+use existing scratch. Ordinary indexed assignment retains its pre-RHS checked
+address. These writes preserve the original place across RHS effects.
 
 ## Implemented language extension: while loop transfers (WP2)
 
@@ -828,10 +832,11 @@ are complete; WP8 contracts and their runtime/browser release gates are also com
 WP9 frontend/backend are integrated with [release gates passed](was_language_extensions_plan.md#wp9-release-validation);
 WP10 named-only pipelines, including named/default and final-Void discard support,
 are implemented (#27), with [release validation passed](was_language_extensions_plan.md#wp10-release-validation).
-WP11's #29/#30 subsets implement local callables and immediate-creator shared
-parameter/let captures; broader captures, full WP11 release and WP12 remain deferred.
-[#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14).
-WP13 requires separate authorization.
+WP11's #29–#31 subsets implement local callables, immediate-creator shared
+parameter/let captures and captured numeric compounds; broader captures, full
+WP11 release and WP12 remain deferred.
+[#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14)
+before #31; [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14). WP13 requires separate authorization.
 External range signatures, range equality, and allocation-free range optimization
 remain out of scope.
 
@@ -867,8 +872,10 @@ including current-source rebuilt-browser and full ignored runtime coverage. See
 [WP8's frozen contracts and suite responsibilities](was_language_extensions_plan.md#wp8--whitelist-contracts-spec-13)
 and [spec §13](was_language_extensions_spec.md#13-feature-specification-function-preconditionscontracts).
 WP9 match is implemented as described below; WP10 named-only pipelines are
-implemented with [#27 release validation passed](was_language_extensions_plan.md#wp10-release-validation). WP11–WP12 closures/placeholders
-remain proposed. Optional refinement/check elimination belongs to
+implemented with [#27 release validation passed](was_language_extensions_plan.md#wp10-release-validation).
+WP11's #29–#31 subsets are implemented;
+[#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14).
+Full WP11 release and WP12 placeholders remain deferred. Optional refinement/check elimination belongs to
 separately authorized future optimization.
 
 ## Implemented language extension: match statements/values (WP9)
@@ -959,8 +966,9 @@ include-ignored suite. Focused suites passed with 23 frontend, 25 lowering,
 bindings. The plan's
 [#25](was_language_extensions_plan.md#issue-25-subset-validation-2026-10-14) and
 [#26](was_language_extensions_plan.md#issue-26-subset-validation-2026-10-14) records
-are historical subset validation, not final-Void release evidence. WP11–WP12 remain
-proposed; WP13 requires separate authorization.
+are historical subset validation, not final-Void release evidence. WP11's #29–#31
+subsets are implemented; [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14).
+Full WP11 release and WP12 remain deferred, and WP13 requires separate authorization.
 
 ## Remaining work
 

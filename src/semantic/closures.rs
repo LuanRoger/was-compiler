@@ -63,7 +63,7 @@ impl SemanticAnalyzer {
                 if let Some(reason) = reason {
                     return Err(SemanticError::InvalidClosure { reason, span });
                 }
-                self.captured_bindings.insert((capture.creator, binding.id));
+
                 capture.captures.entry(binding.id).or_insert(TypedCapture {
                     owner: capture.creator,
                     variable: binding.id,

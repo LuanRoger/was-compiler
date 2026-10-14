@@ -6,16 +6,18 @@ and registered host-function parameters/results. Language types remain distinct
 in semantic analysis even though both lower to `i32`; descriptors have no runtime
 type tag. Hosts must supply the type declared in their registration.
 
-## Local callable subsets (#29–#30)
+## Local callable subsets (#29–#31)
 
 Context-free helpers use direct calls with only explicit parameters. Their declarations
 allocate no environment or cells and do not execute helper bodies. Ordinary
 strings/arrays/ranges in helper bodies or signatures still activate the existing
 helpers and entry validation. #30 adds shared captures of immediate-creator
-parameters and ordinary lets of every concrete type; full WP11 release remains
+parameters and ordinary lets of every concrete type; #31 adds captured numeric
+compounds without changing this storage layout. Full WP11 release remains
 deferred. See [the subset interface and public migration](local-callable-interface.md).
 See [#30 storage/runtime validation](local-callable-interface.md#issue-30-validation-2026-10-14)
-for current subset evidence; historical #29 results do not cover shared storage.
+for historical shared-storage evidence before #31; [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14).
+Historical #29 results do not cover shared storage.
 
 ### Private closure storage (#30)
 
@@ -59,8 +61,15 @@ JavaScript views after any guest call or host allocation that may grow memory.
 Existing descriptor metadata/UTF-8/immutability obligations and explicit marshaling
 remain unchanged; private storage does not isolate hosts able to corrupt guest memory.
 
-Nested forwarding, context-requiring callable dependencies, captured compound places
-(including creator-side promoted bindings), capture of `for` bindings, and full WP11
+#31 uses the existing checked place path for all five numeric compounds on captured
+bindings and creator-side promoted bindings. Scalar compounds keep the original
+cell address and old `f64` on the operand stack across RHS effects. Indexed
+compounds save the checked element address and old value in existing scratch;
+ordinary indexed assignments also preserve the pre-RHS checked address. RHS
+rebinding or memory growth does not retarget writes. Descriptor/bounds checks
+precede RHS evaluation. No new storage layout or public ABI is introduced.
+
+Nested forwarding, context-requiring callable dependencies, capture of `for` bindings, and full WP11
 release remain deferred. A nested helper can capture its immediate creator's own
 parameters/ordinary lets. No transitive callable-context slots or iteration cells
 are implemented by this subset.

@@ -60,9 +60,7 @@ fn deeply_nested_context_free_declarations_preserve_results_owners_and_dependenc
 }
 
 #[test]
-fn nested_inference_compound_checks_preserve_first_error_and_repeated_analysis() {
-    use was_compiler::tokens::Span;
-
+fn nested_inference_compound_checks_preserve_captures_and_repeated_analysis() {
     let compiler = Compiler::new();
     let mut body = "{ let x = 1; x += 2; x *= 3; let capture = () => x; capture() }".to_owned();
     for level in (0..12).rev() {
@@ -74,34 +72,16 @@ fn nested_inference_compound_checks_preserve_first_error_and_repeated_analysis()
     }
     let source =
         format!("fn main() {{ let x = 0; x += 7; let root = () => {body}; return root(); }}");
-    let first = source.find("x += 2;").unwrap();
-    let expected = SemanticError::InvalidClosure {
-        reason: "compound assignment to captured bindings is not supported in this subset",
-        span: Span::new(first, first + "x += 2;".len()),
-    };
-    let valid = source.replace("x += 2; x *= 3;", "x = x + 2; x = x * 3;");
-    let expected_program = compiler.analyze(&valid).unwrap();
+    let expected_program = compiler.analyze(&source).unwrap();
     assert_eq!(expected_program.functions[0].return_type, Type::Number);
 
     // A capture found before nested inference must survive every helper visit.
     let earlier = source.replacen("let x = 0;", "let x = 0; let capture = () => x;", 1);
-    let early_span = earlier.find("x += 7;").unwrap();
+    let earlier_program = compiler.analyze(&earlier).unwrap();
+    assert_eq!(closure(&earlier_program, 0, 1).captures.len(), 1);
     for _ in 0..3 {
-        assert_eq!(compiler.analyze(&valid).unwrap(), expected_program);
-        let CompileError::Semantic(actual) = compiler.analyze(&source).unwrap_err() else {
-            panic!("expected semantic error");
-        };
-        assert_eq!(actual, expected);
-        let CompileError::Semantic(actual) = compiler.analyze(&earlier).unwrap_err() else {
-            panic!("expected semantic error");
-        };
-        assert_eq!(
-            actual,
-            SemanticError::InvalidClosure {
-                reason: "compound assignment to captured bindings is not supported in this subset",
-                span: Span::new(early_span, early_span + "x += 7;".len()),
-            }
-        );
+        assert_eq!(compiler.analyze(&source).unwrap(), expected_program);
+        assert_eq!(compiler.analyze(&earlier).unwrap(), earlier_program);
     }
 }
 
@@ -293,12 +273,82 @@ fn immediate_creator_values_are_captured_even_when_skipped_or_nested() {
 }
 
 #[test]
+fn captured_compounds_keep_numeric_types_and_original_binding_provenance() {
+    use was_compiler::typed_ast::{
+        BindingOwner, FunctionId, TypedClosureBody, TypedExprKind, VariableId,
+    };
+
+    for op in ["+=", "-=", "*=", "/=", "%="] {
+        for (initial, target, ty) in [("8", "x", Type::Number), ("[8]", "x[0]", Type::NumberArray)]
+        {
+            let source = format!(
+                "fn main() {{ let x = {initial}; {target} {op} 2; let update = () => {{ {target} {op} 3; }}; {target} {op} 4; update(); }}"
+            );
+            let program = Compiler::new().analyze(&source).unwrap();
+            let update = closure(&program, 0, 2);
+            assert_eq!(update.captures.len(), 1);
+            assert_eq!(update.captures[0].ty, ty);
+            let TypedClosureBody::Block(body) = &update.body else {
+                panic!("block");
+            };
+            let TypedStatementKind::CompoundAssignment { target, .. } = &body.statements[0].kind
+            else {
+                panic!("compound");
+            };
+            let base = match &target.kind {
+                TypedExprKind::Index { expr, .. } => expr.as_ref(),
+                _ => target,
+            };
+            assert!(matches!(
+                base.kind,
+                TypedExprKind::Captured {
+                    owner: BindingOwner::Function(FunctionId(0)),
+                    id: VariableId(0),
+                    ..
+                }
+            ));
+        }
+    }
+    for source in [
+        "fn main(x: number) { let update = () => { x += 2; }; update(); }",
+        "fn main(x: number) { let update = () => { return; x %= 2; }; }",
+        "fn main() { let x = 1; let update = () => false && { x *= 2; true }; }",
+        "fn main() { let x = 1; let update = () => { let x = x; x += 2; x }; }",
+    ] {
+        Compiler::new().analyze(source).unwrap();
+    }
+}
+
+#[test]
+fn captured_compounds_check_invalid_types_targets_and_skipped_children() {
+    for source in [
+        "fn main(x: bool) { let f = () => { x += 2; }; }",
+        "fn main(x: string) { let f = () => { x *= 2; }; }",
+        "fn main(x: range) { let f = () => { x %= 2; }; }",
+        "fn main(x: number[]) { let f = () => { x -= 2; }; }",
+        "fn main(x: number) { let f = () => { x /= true; }; }",
+        "fn main(x: number[]) { let f = () => { x[0] += true; }; }",
+        "fn main(x: number[]) { let f = () => { x[false] += 1; }; }",
+        "fn main(x: number) { let f = () => { return; x += true; }; }",
+        "fn main(x: number) { let f = () => false && { x += true; true }; }",
+    ] {
+        assert!(
+            matches!(semantic_error(source), SemanticError::TypeMismatch { .. }),
+            "{source}"
+        );
+    }
+    for source in [
+        "fn main() { for x in [1] { let f = () => { x += 2; }; } }",
+        "fn main() { for x in [1] { let f = () => 1; x += 2; } }",
+        "fn main() { let f = () => 1; f += 2; }",
+    ] {
+        assert!(Compiler::new().analyze(source).is_err(), "{source}");
+    }
+}
+
+#[test]
 fn staged_capture_limits_are_explicit() {
     for (source, expected) in [
-        (
-            "fn main() { let x = 1; let f = () => { x += 2; }; }",
-            "compound assignment to captured bindings is not supported in this subset",
-        ),
         (
             "fn main() { for x in 1..2 { let f = () => x; } }",
             "capturing for bindings is not supported in this subset",
@@ -310,18 +360,6 @@ fn staged_capture_limits_are_explicit() {
         (
             "fn main(x: number) { let f = () => x; let g = () => f(); }",
             "context-requiring callable dependencies are not supported in this subset",
-        ),
-        (
-            "fn main() { let x = [1]; let f = () => { x[0] += 2; }; }",
-            "compound assignment to captured bindings is not supported in this subset",
-        ),
-        (
-            "fn main() { let x = 1; x += 2; let f = () => x; }",
-            "compound assignment to captured bindings is not supported in this subset",
-        ),
-        (
-            "fn main() { let x = [1]; let f = () => x; x[0] += 2; }",
-            "compound assignment to captured bindings is not supported in this subset",
         ),
     ] {
         assert!(

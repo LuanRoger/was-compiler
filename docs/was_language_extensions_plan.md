@@ -1,6 +1,6 @@
 # WAS language extensions implementation plan
 
-**Status:** WP1–WP9 implemented; WP5, WP6 (#13), WP7 (#16), and WP8 release gates passed (exact evidence in §5). WP9 frontend/backend are integrated and [release gates passed](#wp9-release-validation). WP10 named-only pipelines, including positional/named/default binding and final-Void discard support (#27), are implemented with [release gates passed](#wp10-release-validation). WP11's local callable (#29) and immediate-creator shared parameter/let capture (#30) subsets are implemented; [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14), broader captures/full WP11 release and WP12 remain deferred. WP13 requires separate authorization.
+**Status:** WP1–WP9 implemented; WP5, WP6 (#13), WP7 (#16), and WP8 release gates passed (exact evidence in §5). WP9 frontend/backend are integrated and [release gates passed](#wp9-release-validation). WP10 named-only pipelines, including positional/named/default binding and final-Void discard support (#27), are implemented with [release gates passed](#wp10-release-validation). WP11's local callable (#29), immediate-creator shared parameter/let capture (#30), and captured numeric compound (#31) subsets are implemented; [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14); [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14), broader captures/full WP11 release and WP12 remain deferred. WP13 requires separate authorization.
 **Baseline:** Extension specification v0.3.
 
 Follow the [agent guide](../AGENTS.md), [extension specification](was_language_extensions_spec.md),
@@ -67,7 +67,7 @@ support; all WP5 release gates passed as recorded in §5. WP6 named/default para
 and WP7 acyclic result inference are implemented with release gates passed (#13/#16).
 WP8 whitelist contracts are implemented, with
 [release gates passed](#wp8-release-validation). WP9 match statements/values are
-implemented with frontend/backend integrated and [release gates passed](#wp9-release-validation). WP10 named-only pipelines are implemented with [release gates passed](#wp10-release-validation). WP11's local callable (#29) and immediate-creator shared parameter/let capture (#30) subsets are implemented; [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14), broader captures/full WP11 release and WP12 remain deferred, and WP13 requires separate authorization.
+implemented with frontend/backend integrated and [release gates passed](#wp9-release-validation). WP10 named-only pipelines are implemented with [release gates passed](#wp10-release-validation). WP11's local callable (#29), immediate-creator shared parameter/let capture (#30), and captured numeric compound (#31) subsets are implemented; [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14); [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14), broader captures/full WP11 release and WP12 remain deferred, and WP13 requires separate authorization.
 `requires`, `match`, and standalone `_` are reserved for source/host-language names,
 not arbitrary nonempty host module/field names. `_temp` remains valid; `by` stays
 contextual. WP9 does not implement ignored bindings or placeholder expressions.
@@ -238,8 +238,8 @@ This historical first-wave handoff required final design confirmation before WP6
 and WP7 implementation. Those packages and their release gates are now complete;
 WP8 is implemented with release gates passed; WP9 frontend/backend are now
 integrated with [release gates passed](#wp9-release-validation). WP10 is implemented
-with [release gates passed](#wp10-release-validation). WP11's #29/#30 subsets are
-implemented; broader captures/full WP11 release and WP12 remain deferred, and WP13
+with [release gates passed](#wp10-release-validation). WP11's #29–#31 subsets are
+implemented; #31 adds captured numeric compounds; [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14); broader captures/full WP11 release and WP12 remain deferred, and WP13
 remains separately authorized. The module paths below
 record original write-scope assignments, not current module inventory or a reason
 to create empty scaffolding.
@@ -277,7 +277,10 @@ occurrence before traversing children. Local updates keep the old value on the
 operand stack. Target/bounds checks and old-value reads precede RHS effects;
 writes use the original place. There is no scratch reuse or change to legacy
 array-slot order/encoding. WP11's #30 subset adds ordinary captured assignment;
-captured compound places remain deferred.
+#31 adds all five captured numeric compounds through this checked place path,
+including creator-side promoted bindings. Scalar cell address/old `f64` remain on
+the stack; indexed address/old value use existing scratch. Ordinary indexed
+assignment retains its pre-RHS checked element address. [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14).
 `%=` delegates to the unchanged exact helper and triggers its statement discovery
 hook even without binary `%`, in hidden, unreachable or runtime-skipped bodies.
 
@@ -718,7 +721,8 @@ rebuilt-browser and include-ignored runs recorded in §5, not default Cargo succ
 metadata and proof-based check elimination require separate design/authorization;
 none is part of WP8. WP9 match is implemented with [release gates passed](#wp9-release-validation);
 WP10 named-only pipelines are implemented with [release gates passed](#wp10-release-validation);
-WP11's #29/#30 local callable/shared parameter/let capture subsets are implemented;
+WP11's #29–#31 local callable/shared parameter/let capture and captured numeric
+compound subsets are implemented; [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14);
 broader captures/full WP11 release and WP12 placeholders remain deferred.
 
 ### WP9 — `match` statements/values (spec §8): implemented
@@ -997,7 +1001,7 @@ and historical subset runs are not substitutes for that release evidence.
 The [WP11 design interview](wp11-local-closures-development.md) records accepted
 scope, inference, identity, storage, diagnostic, and validation decisions. Final
 shared understanding was confirmed on 2026-10-14. The interview itself does not
-authorize implementation or establish release evidence. #29/#30 implement the
+authorize implementation or establish release evidence. #29–#31 implement the
 subsets below; the remaining full WP11 contract and release remain deferred.
 
 **Implemented #29 subset:** Capture-free local declarations and lexical positional
@@ -1030,18 +1034,26 @@ uses uniform eight-byte cells/slots and monotonic allocation, with possible memo
 growth/traps and no rollback/reclamation/heap rewind. Hosts refresh views after
 possible growth; persistent returned/retained handles keep existing ownership.
 
+**Implemented #31 subset ([validation passed](local-callable-interface.md#issue-31-validation-2026-10-14)):** All five numeric compound operators
+support captured scalar/indexed places and creator-side promoted bindings, including
+before the capturing declaration. Reuse the existing checked place path: preserve
+the original scalar cell address and old `f64` on the stack, or the checked element
+address and old value in existing scratch, before RHS effects. Ordinary indexed
+assignments also retain their pre-RHS checked address. Preserve numeric/mutability
+checks, trap order and exact `%=` behavior; no new storage layout or public ABI.
+
 Nested helpers may capture their immediate creator's own bindings and be called
 by that creator. Explicitly defer ancestor forwarding, context-requiring callable
-dependencies owned elsewhere, captured compound places (also creator-side promoted
-bindings before/after capture), and captured `for` bindings; preserve the
+dependencies owned elsewhere and captured `for` bindings; preserve the
 [stable subset reasons](local-callable-interface.md#implemented-shared-capture-subset-30).
 Full WP11 release remains deferred. [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14)
 after review fixes, including current-source rebuilt-browser and full ignored
 runtime coverage. That record includes exact commands/results and the re-reviewed
-owner-qualified lookup/ordered bookkeeping fixes; it is not a parent WP11 release claim.
+owner-qualified lookup/ordered bookkeeping fixes; it predates #31 and is not
+captured-compound validation or a parent WP11 release claim.
 
 The remaining paragraphs describe the **full WP11 target and exit**, including
-features deliberately outside #30; they are not claims of current support.
+features deliberately outside #29–#31; they are not claims of current support.
 
 **Entry:** WP10; approve dedicated callable/capture metadata and allocation policy.
 Parse explicitly typed lambda parameters with expression/block bodies; infer result
@@ -1070,7 +1082,7 @@ plan them deterministically in source discovery order after existing runtime hel
 without changing user IDs/import order. Extend checked layout/body lowering to helper
 bodies and capture accesses; do not trust public capture types, owners or offsets.
 
-**Full WP11 exit tests (not satisfied by #30):** extend
+**Full WP11 exit tests (not satisfied by #29–#31):** extend
 `tests/closures_frontend.rs`, `tests/closures_lowering.rs`,
 `tests/closures_runtime.rs` and `tests/closures_adapters.rs`; all escape/alias restrictions,
 read-only captured writes, cross-lambda transfers, forged helper/capture IDs/types,
@@ -1197,11 +1209,11 @@ The focused include-ignored run and rebuilt-browser/full ignored gates supply
 runtime evidence; ordinary default Cargo success alone does not. Ignored defaults,
 optimization-level parity and sequential compiler planning remain unchanged.
 WP10 is now implemented with [release gates passed](#wp10-release-validation);
-WP11's #29/#30 subsets are implemented, while broader captures/full WP11 release
-and WP12 remain deferred; WP13 optimization requires separate authorization.
+WP11's #29–#31 subsets are implemented, including captured numeric compounds;
+[#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14), while broader captures/full WP11 release and WP12 remain deferred; WP13 optimization requires separate authorization.
 Earlier WP5–WP9 release records retain their historical scope and counts; see
 [the separate #30 evidence](local-callable-interface.md#issue-30-validation-2026-10-14)
-for shared-capture validation.
+for shared-storage validation before #31, not captured compounds.
 
 ### WP8 release validation
 

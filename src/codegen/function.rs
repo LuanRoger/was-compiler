@@ -525,17 +525,6 @@ impl<'a> BodyEmitter<'a> {
         Ok(())
     }
 
-    pub fn is_shared(&self, expression: &TypedExpr) -> bool {
-        match &expression.kind {
-            crate::typed_ast::TypedExprKind::Captured { .. } => true,
-            crate::typed_ast::TypedExprKind::Identifier { id, .. } => {
-                self.context.storage.cells.contains_key(id)
-            }
-            crate::typed_ast::TypedExprKind::Index { expr, .. } => self.is_shared(expr),
-            _ => false,
-        }
-    }
-
     pub fn cell_address(
         &mut self,
         expr: &TypedExpr,

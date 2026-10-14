@@ -1,4 +1,4 @@
-# Local callable interface — issues #29–#30
+# Local callable interface — issues #29–#31
 
 ## Frozen public interface and implementation ownership
 
@@ -6,11 +6,14 @@ Issue #29 implements capture-free local callable declarations and positional
 lexical invocation. Issue #30 adds shared captures of immediate-creator parameters
 and ordinary lets of every concrete type: `number`, `bool`, `string`, `number[]`,
 and `range`. Captures refer to original shared bindings, never snapshots.
+Issue #31 adds all five numeric compound operators on captured places, including
+creator-side promoted bindings.
 The parent [issue #28](https://github.com/LuanRoger/was-compiler/issues/28)
 defines the full contract. Nested forwarding, context-requiring callable
-dependencies, captured compound places, captured `for` bindings and full WP11
-release remain deferred. [#30 subset validation passed](#issue-30-validation-2026-10-14);
-the historical #29 evidence below predates this capture subset.
+dependencies, captured `for` bindings and full WP11 release remain deferred.
+[#30 subset validation passed](#issue-30-validation-2026-10-14); that record predates
+#31 and does not validate captured compounds. The historical #29 evidence below
+predates shared capture storage.
 
 The confirmed test seams are `Compiler::analyze`, `Compiler::compile_source`,
 `Compiler::compile` on mutable public typed input, and the existing CLI adapter.
@@ -69,12 +72,7 @@ The staged semantic `InvalidClosure` reasons are stable:
 | --- | --- |
 | Capture owned by an ancestor other than the immediate creator | `nested capture forwarding is not supported in this subset` |
 | A helper depends on a context-requiring callable owned elsewhere | `context-requiring callable dependencies are not supported in this subset` |
-| Compound assignment to a captured variable or indexed captured array base | `compound assignment to captured bindings is not supported in this subset` |
 | Capture of a `for` iteration binding | `capturing for bindings is not supported in this subset` |
-
-Compound rejection also covers creator-side promoted bindings, including compounds
-before the capturing declaration. Use ordinary assignment, such as `x = x + 1;`,
-within this subset. Ordinary unrelated compounds remain supported.
 
 Captured parameter cells allocate eagerly in formal order after all parameter
 validation and ordered contracts; captured let cells allocate only after completing
@@ -88,6 +86,67 @@ See [the private layout and lifetime contract](memory-abi.md#private-closure-sto
 for uniform eight-byte cells/slots, allocation traps, monotonic growth and host view
 refresh obligations. None of this adds a public callable ABI or changes explicit
 string/array marshaling or external range restrictions.
+
+## Implemented captured numeric compounds (#31)
+
+`+=`, `-=`, `*=`, `/=`, and `%=` support captured `number` bindings and elements
+of captured `number[]` bindings, as well as creator-side promoted bindings before
+or after the capturing declaration. The former semantic captured-compound guards
+are removed; ordinary numeric type, mutability and checked-backend rules remain.
+Whole-array compounds and compounds on nonnumeric bindings remain invalid.
+
+Lowering uses the existing checked place path in `src/codegen/place.rs`. Resolve
+the target once and read its old value before evaluating the RHS. A promoted
+scalar retains its original cell address and old `f64` on the operand stack.
+An indexed compound saves the original checked element address and old value in
+the existing `i32`/`f64` scratch slots. RHS mutation, array-binding rebinding, calls
+or memory growth do not retarget the write or replace the saved old value. Bounds
+and descriptor failures trap before RHS effects. Ordinary indexed assignment also
+preserves its checked pre-RHS element address, without a compound old-value read.
+`%=` uses the existing exact floating remainder helper.
+
+No new AST form, scratch policy, cell/environment layout or public ABI is added.
+Ancestor forwarding, context-requiring callable dependencies, captured `for`
+bindings and full WP11 release remain deferred. [#31 validation passed](#issue-31-validation-2026-10-14).
+The #29/#30 records below retain their historical scope.
+
+## Issue #31 validation (2026-10-14)
+
+The integrated captured-place subset passed the following offline checks. Node.js
+v24.12.0, wasm-pack 0.15.0, the Wasm target and cached dependencies were available;
+no dependencies or tooling were installed. Browser bindings were rebuilt from
+current source before the final browser and include-ignored runs.
+
+| Exact command (repository root) | Result |
+| --- | --- |
+| `cargo check --offline --all-targets` | Passed |
+| `cargo test --offline --test closures_frontend --test closures_lowering --test closures_runtime --test closures_adapters -- --include-ignored` | Passed: 29 frontend, 40 lowering, 15 runtime and 4 adapter tests |
+| `wasm-pack build browser --target web --out-dir ../pkg --out-name was_compiler --mode no-install --no-opt --offline` | Passed; rebuilt current-source browser package |
+| `node tests/browser.cjs pkg` | Passed: 25 cases |
+| `cargo test --offline` | Passed complete default suite |
+| `cargo test --offline -- --include-ignored` | Passed complete suite including ignored runtime/browser cases |
+| `cargo clippy --offline --all-targets -- -D warnings` | Passed |
+| `cargo clippy --offline -p was-compiler-browser --target wasm32-unknown-unknown --lib -- -D warnings` | Passed |
+| `git --no-pager diff --check` | Passed |
+
+Red-first frontend and forged-input tests demonstrated the former subset rejection
+before implementation. Coverage now includes all five captured scalar/indexed
+compounds, creator-side promotion before declarations, saved places and old values
+through RHS mutation/rebinding, aliases, descriptor/bounds traps before RHS events,
+independent IEEE-754 expectations, and abrupt RHS transfers. Decoded instruction
+and scratch assertions supplement `wasmparser::Validator`; bounded execution checks
+observable effects at all four optimization levels. CLI bytes/WAT match the core.
+Runtime/browser cases retain their ignored-by-default policy.
+
+The first integrated run exposed two test-fixture errors, not compiler defects:
+a CLI expectation omitted a later scalar reset, and a transfer case used an
+out-of-bounds array index. Both were corrected using independent source arithmetic
+and intended event order before the successful final runs.
+
+Both Standards and Spec reviews compared the uncommitted implementation with
+starting HEAD `c7af8b16bd4a6cbc2172501c95626745e5833e27` and reported no actionable
+findings. This validates #31's captured-place slice, not the deferred parent #28
+or full WP11 release.
 
 ## Issue #30 validation (2026-10-14)
 
@@ -127,8 +186,10 @@ first-error order and repeated analysis. Both fixes were re-reviewed with no
 remaining findings; final body checks remain intact without AST cloning.
 
 This validates only #30's immediate-creator parameter/ordinary-let capture subset.
-Nested forwarding, context-requiring callable dependencies, captured compound
-places and captured `for` bindings remain deferred, as does full WP11 release.
+At that checkpoint, nested forwarding, context-requiring callable dependencies,
+captured compound places and captured `for` bindings remained deferred, as did
+full WP11 release. #31 subsequently implements captured numeric compounds; this
+record does not validate that extension.
 No parent #28 release or broader WP11 acceptance claim follows from these results.
 The historical #29 evidence below retains its original scope and counts.
 
@@ -185,4 +246,4 @@ default-suite attempt timed out; the final bounded broader runs above succeeded.
 These runs covered #29 before shared capture storage was implemented. They do not
 validate #30's cells/environments or establish full WP11 parent acceptance gates.
 See the separate [#30 validation record](#issue-30-validation-2026-10-14) for the
-current shared-capture subset.
+#30 shared-capture subset, before #31 captured compounds.

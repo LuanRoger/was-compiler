@@ -43,6 +43,22 @@ fn operations() -> number {
 }
 "#;
 const SCALAR: &str = "fn main() -> number { let f = () => 7; let g = () => { let h = () => f(); h() }; return g(); }";
+const CAPTURED_COMPOUNDS: &str = r#"
+fn main() -> number {
+    let n = 20;
+    let array = [20];
+    let alias = array;
+    let rhs = () => {
+        mark(2); n = 100; alias[0] = 200; array = [80]; 3
+    };
+    n += rhs(); mark(n);
+    let original = array;
+    array[mark(0)] %= rhs(); mark(original[0]);
+    let update = () => { n -= { n = 300; mark(4) }; };
+    update();
+    return n + alias[0] + original[0] + array[0];
+}
+"#;
 
 fn compiler() -> Compiler {
     let mut compiler = Compiler::new();
@@ -222,6 +238,7 @@ fn cli_closure_wasm_and_wat_match_library_at_all_levels_and_export_selections() 
             ],
         ),
         (SCALAR, vec![vec!["main"], vec![]]),
+        (CAPTURED_COMPOUNDS, vec![vec!["main"], vec![]]),
     ] {
         fs::write(scratch.0.join("program.was"), source).unwrap();
         for names in selections {
@@ -279,6 +296,63 @@ fn cli_closure_wasm_and_wat_match_library_at_all_levels_and_export_selections() 
                 }
             }
         }
+    }
+}
+
+#[test]
+#[ignore = "requires Node.js on PATH"]
+fn cli_captured_compounds_preserve_rhs_effects_and_match_core_execution() {
+    let scratch = Scratch::new();
+    fs::write(scratch.0.join("program.was"), CAPTURED_COMPOUNDS).unwrap();
+    let mut native = compiler();
+    native.set_exports(ExportOptions::Only(vec!["main".into()]));
+    for (flag, level) in LEVELS {
+        native.set_optimization_level(level);
+        let expected = native.compile_source(CAPTURED_COMPOUNDS).unwrap();
+        let output = scratch.cli(&[
+            "program.was",
+            flag,
+            "--emit",
+            "wasm",
+            "-o",
+            "out.wasm",
+            "--host",
+            "mark=env.mark(number)->number",
+            "--export",
+            "main",
+        ]);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stdout.is_empty());
+        assert!(output.stderr.is_empty());
+        let bytes = fs::read(scratch.0.join("out.wasm")).unwrap();
+        assert_eq!(bytes, expected);
+        let script = r#"
+            const assert = require('node:assert/strict');
+            const bytes = require('node:fs').readFileSync(0);
+            const events = [];
+            const e = new WebAssembly.Instance(new WebAssembly.Module(bytes), {
+                env: {mark(n) { events.push(n); return n; }}
+            }).exports;
+            for (let i = 0; i < 2; i++) {
+                // The second rhs() resets n to 100; update stores 100 - 4 = 96.
+                assert.equal(e.main(), 378);
+                assert.deepEqual(events.splice(0), [2,23,0,2,2,4]);
+            }
+        "#;
+        let output = test_process::output(
+            Command::new("node").args(["-e", script]),
+            Some(&bytes),
+            Duration::from_secs(30),
+        );
+        assert!(
+            output.status.success(),
+            "{level:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }
 

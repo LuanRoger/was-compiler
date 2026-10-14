@@ -1,11 +1,11 @@
 # WAS Language Extensions — Unified Design and Implementation Specification
 
-**Status:** Design baseline with the 13 approved decisions and implementation clarifications (WP1–WP5 implementation complete: compound assignments, while transfers, block/if values, internal Never, statement/value loops, and range construction/internal calls, numeric membership, and range/array statement for; issue #6 adapter/interaction support implemented, all WP5 release gates passed (exact evidence in plan §5), WP6 named/default parameters are implemented and #13 release validation passed; WP7 acyclic result inference and named/default integration are implemented and #16 release validation passed; WP8 whitelist contracts are implemented and release gates passed (exact evidence in plan §5); WP9 match statements/values are implemented with frontend/backend integrated and [release gates passed](was_language_extensions_plan.md#wp9-release-validation); WP10 named-only pipelines are implemented, including positional/named/default binding and final-Void discard support (#27), with [release gates passed](was_language_extensions_plan.md#wp10-release-validation) on 2026-10-14; WP11's local callable (#29) and immediate-creator shared parameter/let capture (#30) subsets are implemented; [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14), broader captures/full WP11 release remain deferred, WP12 remains proposed and WP13 requires separate authorization)
+**Status:** Design baseline with the 13 approved decisions and implementation clarifications (WP1–WP5 implementation complete: compound assignments, while transfers, block/if values, internal Never, statement/value loops, and range construction/internal calls, numeric membership, and range/array statement for; issue #6 adapter/interaction support implemented, all WP5 release gates passed (exact evidence in plan §5), WP6 named/default parameters are implemented and #13 release validation passed; WP7 acyclic result inference and named/default integration are implemented and #16 release validation passed; WP8 whitelist contracts are implemented and release gates passed (exact evidence in plan §5); WP9 match statements/values are implemented with frontend/backend integrated and [release gates passed](was_language_extensions_plan.md#wp9-release-validation); WP10 named-only pipelines are implemented, including positional/named/default binding and final-Void discard support (#27), with [release gates passed](was_language_extensions_plan.md#wp10-release-validation) on 2026-10-14; WP11's local callable (#29), immediate-creator shared parameter/let capture (#30), and captured numeric compound (#31) subsets are implemented; [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14); [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14), broader captures/full WP11 release remain deferred, WP12 remains proposed and WP13 requires separate authorization)
 **Version:** 0.3 — 9 October 2026 (implementation clarification update)  
 **Target:** Core WebAssembly, initially the MVP-compatible instruction set already used by `was-compiler`, with optional optimizations gated by Wasm features.  
 **Repository:** https://github.com/LuanRoger/was-compiler
 
-> **Normative language.** **MUST**, **SHOULD**, and **MAY** describe requirements, strong recommendations, and optional implementation choices. This document establishes a coherent semantic model, distinguishing implemented support from proposed extensions. Decisions tagged **Open decision** need confirmation before being frozen as language guarantees. Compound assignments (§4/WP1), bare `while` transfers (§7/WP2), block/if values with internal Never (§§3.2, 8.1/WP3), and statement/value loops (§7/WP4) are implemented. Range construction, internal calls, exact numeric membership (§5/WP5), and range/array statement `for` (§6/issues #4–#5) are also implemented, with adapter/interaction support under issue #6; all WP5 release gates passed (exact evidence in plan §5). WP6 user-function named/mixed-prefix calls and trailing pure defaults (§14/issues #10/#12) are implemented, and [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation). WP7 acyclic result inference (§9) and its named/default integration are implemented, and [#16 release validation passed](was_language_extensions_plan.md#issue-16-wp7-release-validation). Every recursive component member requires an explicit result in this initial release. WP8 whitelist contracts (§13) are implemented and [release gates passed](was_language_extensions_plan.md#wp8-release-validation), including rebuilt-browser and full ignored runtime coverage. WP9 match statements/values (§8.2–§8.3) are implemented with frontend/backend integrated and [release gates passed](was_language_extensions_plan.md#wp9-release-validation). WP10 named-only pipelines (§12) implement positional/named/default stage binding and final Void stages with discarded results (#27); implementation is complete and [release gates passed](was_language_extensions_plan.md#wp10-release-validation), including current-source rebuilt-browser and full ignored runtime coverage. WP11 local callables (#29) and immediate-creator shared parameter/let captures (#30) are implemented; nested forwarding, context-requiring dependencies, captured compounds/for bindings and full WP11 release remain deferred. [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14); broader capture and WP12 placeholder examples remain proposed `.was` syntax.
+> **Normative language.** **MUST**, **SHOULD**, and **MAY** describe requirements, strong recommendations, and optional implementation choices. This document establishes a coherent semantic model, distinguishing implemented support from proposed extensions. Decisions tagged **Open decision** need confirmation before being frozen as language guarantees. Compound assignments (§4/WP1), bare `while` transfers (§7/WP2), block/if values with internal Never (§§3.2, 8.1/WP3), and statement/value loops (§7/WP4) are implemented. Range construction, internal calls, exact numeric membership (§5/WP5), and range/array statement `for` (§6/issues #4–#5) are also implemented, with adapter/interaction support under issue #6; all WP5 release gates passed (exact evidence in plan §5). WP6 user-function named/mixed-prefix calls and trailing pure defaults (§14/issues #10/#12) are implemented, and [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation). WP7 acyclic result inference (§9) and its named/default integration are implemented, and [#16 release validation passed](was_language_extensions_plan.md#issue-16-wp7-release-validation). Every recursive component member requires an explicit result in this initial release. WP8 whitelist contracts (§13) are implemented and [release gates passed](was_language_extensions_plan.md#wp8-release-validation), including rebuilt-browser and full ignored runtime coverage. WP9 match statements/values (§8.2–§8.3) are implemented with frontend/backend integrated and [release gates passed](was_language_extensions_plan.md#wp9-release-validation). WP10 named-only pipelines (§12) implement positional/named/default stage binding and final Void stages with discarded results (#27); implementation is complete and [release gates passed](was_language_extensions_plan.md#wp10-release-validation), including current-source rebuilt-browser and full ignored runtime coverage. WP11 local callables (#29), immediate-creator shared parameter/let captures (#30), and captured numeric compounds (#31) are implemented; nested forwarding, context-requiring dependencies, captured `for` bindings and full WP11 release remain deferred. [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14); #30 evidence predates it. [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14); broader capture and WP12 placeholder examples remain proposed `.was` syntax.
 
 The [concrete implementation plan](was_language_extensions_plan.md) maps this
 specification to ordered work packages, repository files, acceptance tests, and
@@ -16,7 +16,7 @@ and bare `while` transfers (§7/WP2), followed by block/if values and internal N
 (§§3.2, 8.1/WP3) and statement/value loops (§7/WP4), are implemented;
 WP5's construction/internal-call, numeric membership, range-for, and array-for checkpoints are implemented;
 issue #6 completes adapter/interaction implementation and all release gates passed.
-Exact evidence is recorded in [plan §5](was_language_extensions_plan.md#5-documentation-and-validation-workflow). WP6 named/default parameters are implemented on main, and [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation). WP7 acyclic result inference and combined-feature integration are implemented, with [#16 release validation](was_language_extensions_plan.md#issue-16-wp7-release-validation). WP8 whitelist contracts are implemented, with [release gates passed](was_language_extensions_plan.md#wp8-release-validation). WP9 match statements/values are implemented with [release gates passed](was_language_extensions_plan.md#wp9-release-validation). WP10 named-only pipelines are implemented with named/default binding and final-Void discard support (#27); [release validation passed](was_language_extensions_plan.md#wp10-release-validation); WP11's local callable (#29) and immediate-creator shared parameter/let capture (#30) subsets are implemented, while broader captures/full WP11 release and WP12 remain deferred; [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14); WP13 requires separate authorization.
+Exact evidence is recorded in [plan §5](was_language_extensions_plan.md#5-documentation-and-validation-workflow). WP6 named/default parameters are implemented on main, and [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation). WP7 acyclic result inference and combined-feature integration are implemented, with [#16 release validation](was_language_extensions_plan.md#issue-16-wp7-release-validation). WP8 whitelist contracts are implemented, with [release gates passed](was_language_extensions_plan.md#wp8-release-validation). WP9 match statements/values are implemented with [release gates passed](was_language_extensions_plan.md#wp9-release-validation). WP10 named-only pipelines are implemented with named/default binding and final-Void discard support (#27); [release validation passed](was_language_extensions_plan.md#wp10-release-validation); WP11's local callable (#29), immediate-creator shared parameter/let capture (#30), and captured numeric compound (#31) subsets are implemented, while broader captures/full WP11 release and WP12 remain deferred; [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14); [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14); WP13 requires separate authorization.
 
 ## 1. Goals and non-goals
 
@@ -195,7 +195,12 @@ to source syntax rather than generated scaffolding.
 and indexed places, with frontend, checked-backend, and integration tests. WP3
 block effects now test scalar RHS mutation and array-binding rebinding while
 preserving the original place and old value. #30 supports ordinary captured
-assignment; compound places involving captured bindings remain deferred.
+assignment; #31 adds all five numeric compounds on captured places and creator-side
+promoted bindings through the existing checked place path. Scalar compounds retain
+the original cell address and old `f64` on the stack; indexed compounds save the
+checked element address and old value in existing scratch before RHS effects.
+Ordinary indexed assignments also retain their pre-RHS checked element address.
+Numeric/mutability checks, trap order and exact `%=` behavior remain unchanged.
 
 ### 4.1 Syntax
 
@@ -834,7 +839,8 @@ component member, even anchored recursion and across annotated barriers. No recu
 constraint solver is implemented. [Public raw-AST migration](named-call-interface.md#public-ast-migration)
 uses `Function.return_type: Option<Type>`; typed signatures remain concrete/full-arity.
 Anonymous local callables (#29) and immediate-creator shared parameter/let captures
-(#30) are implemented. Broader captures/full WP11 release and optimization remain deferred.
+(#30), plus captured numeric compounds (#31), are implemented. Broader captures/full
+WP11 release and optimization remain deferred; [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14).
 
 ### 9.1 Syntax
 
@@ -912,16 +918,17 @@ Return inference is complete **before module type section emission**. It does no
 
 ## 10. Feature specification: anonymous functions and local closures
 
-**Implemented subsets (#29–#30):** explicitly typed positional/zero-argument local
+**Implemented subsets (#29–#31):** explicitly typed positional/zero-argument local
 callables, expression/tail-valued block/Void bodies, transparent initializer
 parentheses, direct lexical calls including earlier context-free dependencies,
 and shared captures of immediate-creator parameters/ordinary lets of all concrete
 types. #30 supports ordinary assignment and indexed array mutation through original
-shared bindings. Nested helpers may capture their immediate creator's own bindings.
-Ancestor forwarding, context-requiring callable dependencies, captured compound
-places (including creator-side promoted bindings), captured `for` bindings and
-full WP11 release remain deferred. [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14);
-the historical #29 record does not validate shared storage. The authoritative parent
+shared bindings. #31 adds all five numeric compounds on captured scalar/indexed
+places and creator-side promoted bindings, including before capturing declarations,
+with the checked-place rules in §4. Nested helpers may capture their immediate
+creator's own bindings. Ancestor forwarding, context-requiring callable dependencies,
+captured `for` bindings and full WP11 release remain deferred. [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14). [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14);
+that evidence predates #31. The historical #29 record does not validate shared storage. The authoritative parent
 [issue #28](https://github.com/LuanRoger/was-compiler/issues/28) fixes the full
 contract; deferred portions below describe that target, not implemented support.
 See [the concrete public migration and stable subset reasons](local-callable-interface.md).
@@ -966,8 +973,9 @@ Rejected in v1: `fn apply(f: fn(number) -> number)`, `return multiply;`, `return
 
 ### 10.2 Confirmed shared-binding capture semantics
 
-#30 implements the rules below for immediate-creator parameters/ordinary lets.
-Ancestor forwarding, captured compound places and `for` captures are future scope;
+#30 implements shared immediate-creator parameter/ordinary-let captures; #31 adds
+captured numeric compounds. Ancestor forwarding, context-requiring callable
+dependencies and `for` captures are future scope;
 references to those cases describe the accepted full WP11 contract only.
 
 **Decision: captures observe and can mutate the original lexical binding.** This overrides the former capture-by-value proposal.
@@ -979,11 +987,12 @@ references to those cases describe the accepted full WP11 contract only.
   closure can capture its immediate creator's own bindings; forwarding an ancestor
   binding through intervening helpers remains deferred.
 - Captures preserve the resolved binding's type **and mutability**. Mutable
-  parameters/lets may be reassigned, with effects visible in outer code. #30 rejects
-  compound places involving captures, including creator-side promoted bindings;
-  use `count = count + 1;`. Full WP11 proposes captured compounds and capture of
-  read-only `for` bindings while retaining their write restriction; neither is
-  implemented by #30. No implicit Rust-style immutable `let` semantics are introduced.
+  parameters/lets may be reassigned, with effects visible in outer code. #31 supports
+  all five numeric compounds on captured scalar/indexed places and creator-side
+  promoted bindings, preserving the original checked place and old value before
+  RHS effects. Capture of read-only `for` bindings remains deferred under full WP11,
+  retaining their write restriction. No implicit Rust-style immutable `let`
+  semantics are introduced.
 - Closures MUST NOT escape their enclosing **function invocation** in this release;
   that restriction does not weaken permitted shared mutation or lexical visibility.
 - A closure has its own function-control boundary: `return` exits its body;
@@ -1057,10 +1066,10 @@ Semantic `InvalidClosure` uses stable reasons for placement (`a closure must ini
 value use (`a local callable binding cannot be used as a value; invoke it directly or use a named function`),
 reassignment (`a local callable binding cannot be reassigned`), and annotation
 (`a local callable binding cannot have a value type annotation`).
-The #30 staged reasons are `nested capture forwarding is not supported in this subset`,
-`context-requiring callable dependencies are not supported in this subset`,
-`compound assignment to captured bindings is not supported in this subset`, and
-`capturing for bindings is not supported in this subset`.
+The remaining staged reasons are `nested capture forwarding is not supported in this subset`,
+`context-requiring callable dependencies are not supported in this subset`, and
+`capturing for bindings is not supported in this subset`. #31 removes the former
+captured-compound rejection; ordinary numeric/mutability checks remain.
 `CannotInferClosureResult` displays `cannot infer a concrete closure result` without
 suggesting unsupported annotations. Backend `InvalidClosure` categories are
 `invalid callable identity`, `invalid closure ownership`, `invalid capture metadata`,
@@ -1597,9 +1606,9 @@ requires separate authorization and measured, independently validated changes.
 WP9 match syntax is implemented with [release gates passed](was_language_extensions_plan.md#wp9-release-validation);
 WP10 named-only pipeline syntax is implemented with
 [release gates passed](was_language_extensions_plan.md#wp10-release-validation).
-WP11's local callable (#29) and immediate-creator shared parameter/let capture
-(#30) subsets are implemented; broader captures, full WP11 release and WP12
-placeholders remain deferred. [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14).
+WP11's local callable (#29), immediate-creator shared parameter/let capture
+(#30), and captured numeric compound (#31) subsets are implemented; broader captures,
+full WP11 release and WP12 placeholders remain deferred. [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14); [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14).
 
 | Optimization | Feature(s) | Preconditions / warning |
 |---|---|---|

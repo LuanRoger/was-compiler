@@ -411,6 +411,297 @@ fn shared_cells_preserve_all_types_rebinding_aliases_and_original_shadowed_bindi
 
 #[test]
 #[ignore = "requires Node.js on PATH"]
+fn captured_scalar_compounds_save_old_values_and_write_the_original_shared_cell() {
+    for (operator, initial, rhs, first, second) in [
+        ("+=", 20, 3, 23.0, 26.0),
+        ("-=", 20, 3, 17.0, 14.0),
+        ("*=", 20, 3, 60.0, 180.0),
+        ("/=", 20, 4, 5.0, 1.25),
+        ("%=", 20, 6, 2.0, 2.0),
+    ] {
+        let source = format!(
+            r#"
+            fn main(n: number, operand: number) -> number {{
+                let rhs = () => {{ mark(2); n = 100; operand }};
+                mark(1); n {operator} rhs(); mark(n);
+                let update = () => {{
+                    n {operator} {{ mark(3); n = 200; operand }};
+                    n
+                }};
+                mark(update());
+                return n;
+            }}
+            fn before(n: number, operand: number) -> number {{
+                n {operator} {{ mark(4); n = 300; operand }};
+                let read = () => n;
+                return read();
+            }}
+            "#
+        );
+        run(
+            &source,
+            &["main", "before"],
+            &format!(
+                r#"
+                assert.equal(e.main({initial}, {rhs}), {second});
+                assert.deepEqual(events.splice(0), [1,2,{first},3,{second}]);
+                assert.equal(e.before({initial}, {rhs}), {first});
+                assert.deepEqual(events.splice(0), [4]);
+                "#
+            ),
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires Node.js on PATH"]
+fn captured_indexed_places_keep_original_handles_addresses_and_old_elements_across_rhs_effects() {
+    for (operator, operand, expected) in [
+        ("=", 3, 3.0),
+        ("+=", 3, 23.0),
+        ("-=", 3, 17.0),
+        ("*=", 3, 60.0),
+        ("/=", 4, 5.0),
+        ("%=", 6, 2.0),
+    ] {
+        let source = format!(
+            r#"
+            fn main(operand: number) -> number[] {{
+                let array = [20, 21];
+                let alias = array;
+                let index = () => {{ mark(1); array = [60]; 0 }};
+                let rhs = () => {{
+                    mark(2); alias[0] = 100; array[0] = 101;
+                    array = [80]; operand
+                }};
+                array[index()] {operator} rhs();
+                mark(alias[0]); mark(array[0]);
+                return alias;
+            }}
+            fn helper(array: number[], operand: number) -> number[] {{
+                let alias = array;
+                let update = () => {{
+                    array[{{ mark(1); array = [60]; 0 }}] {operator} {{
+                        mark(2); alias[0] = 100; array[0] = 101;
+                        array = [80]; operand
+                    }};
+                    mark(array[0]); alias
+                }};
+                return update();
+            }}
+            fn make() -> number[] {{ return [20, 21]; }}
+            "#
+        );
+        run(
+            &source,
+            &["main", "helper", "make"],
+            &format!(
+                r#"
+                const first = e.main({operand});
+                assert.deepEqual(contents(first), [{expected},21]);
+                assert.deepEqual(events.splice(0), [1,2,{expected},80]);
+                const original = e.make();
+                assert.equal(e.helper(original, {operand}), original);
+                assert.deepEqual(contents(original), [{expected},21]);
+                assert.deepEqual(events.splice(0), [1,2,80]);
+                assert.deepEqual(contents(first), [{expected},21]);
+                "#
+            ),
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires Node.js on PATH"]
+fn captured_indexed_places_trap_on_invalid_descriptors_and_bounds_before_rhs_events() {
+    for operator in ["=", "+=", "-=", "*=", "/=", "%="] {
+        let source = format!(
+            r#"
+            fn make() -> number[] {{ return [20, 21]; }}
+            fn fail(array: number[], index: number, inside: bool) -> number {{
+                let update = () => {{
+                    mark(0); array[mark(index)] {operator} mark(9);
+                }};
+                if inside {{ update(); }} else {{
+                    mark(0); array[mark(index)] {operator} mark(9);
+                }}
+                return 0;
+            }}
+            "#
+        );
+        run(
+            &source,
+            &["make", "fail"],
+            r#"
+            for (const inside of [0,1]) {
+                for (const index of [-1, 0.5, 2, NaN, Infinity, -Infinity]) {
+                    const h = e.make();
+                    assert.throws(() => e.fail(h, index, inside), WebAssembly.RuntimeError);
+                    assert.deepEqual(events.splice(0), [0,index]);
+                    assert.deepEqual(contents(h), [20,21]);
+                }
+                for (const malformed of ['null', 'unaligned', 'overrun']) {
+                    const h = e.make();
+                    onMark = n => {
+                        if (n !== 0) return;
+                        const view = new DataView(e.memory.buffer);
+                        if (malformed === 'null') view.setUint32(h, 0, true);
+                        if (malformed === 'unaligned') view.setUint32(h, 9, true);
+                        if (malformed === 'overrun') view.setUint32(h + 4, 0xffffffff, true);
+                    };
+                    assert.throws(() => e.fail(h, 1, inside), WebAssembly.RuntimeError);
+                    assert.deepEqual(events.splice(0), [0,1]);
+                    onMark = () => {};
+                }
+                const h = e.make();
+                assert.equal(e.fail(h, -0, inside), 0);
+                assert.deepEqual(events.splice(0), [0,-0,9]);
+            }
+            "#,
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires Node.js on PATH"]
+fn captured_compounds_preserve_independent_ieee754_results_for_cells_and_elements() {
+    for (column, operator) in ["+=", "-=", "*=", "/=", "%="].into_iter().enumerate() {
+        let source = format!(
+            r#"
+            fn scalar(n: number, d: number) -> number {{
+                let rhs = () => {{ mark(1); n = 99; d }};
+                n {operator} rhs();
+                let read = () => n;
+                return read();
+            }}
+            fn scalar_helper(n: number, d: number) -> number {{
+                let update = () => {{ n {operator} {{ mark(1); n = 99; d }}; n }};
+                return update();
+            }}
+            fn element(n: number, d: number) -> number {{
+                let array = [n];
+                let alias = array;
+                let rhs = () => {{ mark(1); alias[0] = 99; array = [88]; d }};
+                array[0] {operator} rhs();
+                return alias[0];
+            }}
+            fn element_helper(n: number, d: number) -> number {{
+                let array = [n];
+                let alias = array;
+                let update = () => {{
+                    array[0] {operator} {{ mark(1); alias[0] = 99; array = [88]; d }};
+                }};
+                update(); return alias[0];
+            }}
+            "#
+        );
+        run(
+            &source,
+            &["scalar", "scalar_helper", "element", "element_helper"],
+            &format!(
+                r#"
+                // Literal expectations, not a copy of the guest remainder algorithm.
+                const cases = [
+                    [20, 6, [26,14,120,3.3333333333333335,2]],
+                    [5.5, 2, [7.5,3.5,11,2.75,1.5]],
+                    [-5.5, 2, [-3.5,-7.5,-11,-2.75,-1.5]],
+                    [-0, 3, [3,-3,-0,-0,-0]],
+                    [0, -3, [-3,3,-0,-0,0]],
+                    [7, 0, [7,7,0,Infinity,NaN]],
+                    [7, -0, [7,7,-0,-Infinity,NaN]],
+                    [NaN, 2, [NaN,NaN,NaN,NaN,NaN]],
+                    [2, NaN, [NaN,NaN,NaN,NaN,NaN]],
+                    [Infinity, 2, [Infinity,Infinity,Infinity,Infinity,NaN]],
+                    [-Infinity, 2, [-Infinity,-Infinity,-Infinity,-Infinity,NaN]],
+                    [7, Infinity, [Infinity,-Infinity,Infinity,0,7]],
+                    [-7, Infinity, [Infinity,-Infinity,-Infinity,-0,-7]],
+                    [Infinity, Infinity, [Infinity,NaN,Infinity,NaN,NaN]],
+                    [Number.MIN_VALUE, 2, [2,-2,1e-323,0,Number.MIN_VALUE]],
+                    [-Number.MIN_VALUE, 2, [2,-2,-1e-323,-0,-Number.MIN_VALUE]],
+                    [Number.MAX_VALUE, 2, [Number.MAX_VALUE,Number.MAX_VALUE,Infinity,8.988465674311579e307,0]],
+                    [1, Number.MIN_VALUE, [1,1,Number.MIN_VALUE,Infinity,0]],
+                ];
+                for (const name of ['scalar','scalar_helper','element','element_helper']) {{
+                    for (const [n,d,expected] of cases) {{
+                        const actual = e[name](n,d);
+                        assert.ok(Object.is(actual, expected[{column}]),
+                            `${{name}}(${{n}},${{d}}): ${{actual}}`);
+                        assert.deepEqual(events.splice(0), [1]);
+                    }}
+                }}
+                "#
+            ),
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires Node.js on PATH"]
+fn captured_compound_rhs_transfers_preserve_stack_prefixes_and_skip_stores() {
+    for operator in ["+=", "-=", "*=", "/=", "%="] {
+        for target in ["n", "array[mark(0)]"] {
+            let source = format!(
+                r#"
+                fn returning() -> number {{
+                    let n = 20; let array = [20];
+                    let read = () => n + array[0];
+                    return 10 + {{ {target} {operator} {{ mark(2); return read(); }}; 0 }};
+                }}
+                fn helper_return() -> number {{
+                    let n = 20; let array = [20];
+                    let update = () => {{
+                        {target} {operator} {{ mark(2); return 40; }};
+                        mark(99); 0
+                    }};
+                    return 10 + update() + n + array[0];
+                }}
+                fn breaking() -> number {{
+                    let n = 20; let array = [20];
+                    let read = () => n + array[0];
+                    return 10 + loop {{
+                        {target} {operator} {{ mark(2); break read(); }};
+                        mark(99);
+                    }};
+                }}
+                fn continuing() -> number {{
+                    let n = 20; let array = [20];
+                    let read = () => n + array[0];
+                    let i = 0;
+                    while i < 2 {{
+                        i += 1;
+                        {target} {operator} {{ mark(2); continue; }};
+                        mark(99);
+                    }}
+                    if false {{
+                        {target} {operator} loop {{}};
+                    }}
+                    return read();
+                }}
+                "#
+            );
+            let prefix = if target == "n" { "" } else { "0," };
+            run(
+                &source,
+                &["returning", "helper_return", "breaking", "continuing"],
+                &format!(
+                    r#"
+                    assert.equal(e.returning(), 40);
+                    assert.deepEqual(events.splice(0), [{prefix}2]);
+                    assert.equal(e.helper_return(), 90);
+                    assert.deepEqual(events.splice(0), [{prefix}2]);
+                    assert.equal(e.breaking(), 50);
+                    assert.deepEqual(events.splice(0), [{prefix}2]);
+                    assert.equal(e.continuing(), 40);
+                    assert.deepEqual(events.splice(0), [{prefix}2,{prefix}2]);
+                    "#
+                ),
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires Node.js on PATH"]
 fn allocation_timing_preserves_parameter_contract_initializer_and_declaration_effects() {
     run(
         r#"

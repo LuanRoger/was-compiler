@@ -139,8 +139,10 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   and final-Void discard support (#27);
     [release gates passed](docs/was_language_extensions_plan.md#wp10-release-validation) on 2026-10-14.
   WP11 implements capture-free local callables (#29) and immediate-creator shared
-  parameter/let captures (#30); [#30 subset validation passed](docs/local-callable-interface.md#issue-30-validation-2026-10-14).
-  Nested forwarding, context-requiring dependencies, captured compounds/for bindings,
+  parameter/let captures (#30), plus captured numeric compounds (#31).
+  [#30 subset validation passed](docs/local-callable-interface.md#issue-30-validation-2026-10-14)
+  before #31; [#31 validation passed](docs/local-callable-interface.md#issue-31-validation-2026-10-14).
+  Nested forwarding, context-requiring dependencies, captured `for` bindings,
   full WP11 release and WP12 remain deferred. WP13
   optimization requires separate authorization.
   Preserve `target/wp7-inference` when cleaning generated output. Before changing defaults, call binding, or
@@ -207,7 +209,7 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
 
 ## Compatibility contracts
 
-### Local callables and shared captures (WP11 subsets, #29–#30)
+### Local callables and shared captures (WP11 subsets, #29–#31)
 
 - Before changing closure syntax, inference, capture ownership/storage, lexical calls,
   helper planning or diagnostics, read [the subset and public migration](docs/local-callable-interface.md)
@@ -229,12 +231,18 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   only when declarations execute. Use the [private uniform eight-byte layout](docs/memory-abi.md#private-closure-storage-30),
   monotonic allocation and hidden first `i32` only for capturing helpers. Allocation
   can grow memory/trap without rollback; hosts refresh views after possible growth.
+- #31 supports all five numeric compounds on captured scalar/indexed places and
+  creator-side promoted bindings, including before the capturing declaration.
+  Use the existing checked place path: retain the scalar cell address and old `f64`
+  on the stack; save indexed element address/old value in existing scratch before
+  RHS effects. Ordinary indexed assignments retain their checked pre-RHS address.
+  Preserve numeric/mutability checks, trap order and exact `%=` behavior.
 - Nested helpers may capture their immediate creator's own bindings. Reject ancestor
-  forwarding, external context-requiring callable dependencies, captured compound
-  places (also creator-side promoted bindings), and captured `for` bindings with
+  forwarding, external context-requiring callable dependencies and captured `for` bindings with
   [stable subset reasons](docs/local-callable-interface.md#implemented-shared-capture-subset-30).
-  Full WP11 release remains deferred; use [#30 evidence](docs/local-callable-interface.md#issue-30-validation-2026-10-14),
-    not historical #29 results, for shared-capture validation.
+  Full WP11 release remains deferred. [#30 evidence](docs/local-callable-interface.md#issue-30-validation-2026-10-14)
+  covers shared storage before #31, not captured compounds; [#31 validation passed](docs/local-callable-interface.md#issue-31-validation-2026-10-14).
+  Historical #29 results cover only capture-free callables.
 - Keep `tests/closures_frontend.rs`, `tests/closures_lowering.rs`,
   `tests/closures_runtime.rs`, and `tests/closures_adapters.rs` at the confirmed
   compiler/typed-input/adapter seams. Runtime cases remain ignored by default.

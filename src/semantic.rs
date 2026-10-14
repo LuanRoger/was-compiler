@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, hash_map::Entry};
+use std::collections::{HashMap, hash_map::Entry};
 
 use thiserror::Error;
 
@@ -306,9 +306,6 @@ pub struct SemanticAnalyzer {
     closure_results: HashMap<usize, Type>,
     dependencies: Vec<(CallableId, Vec<CallableId>)>,
     capture_contexts: Vec<closures::CaptureContext>,
-    captured_bindings: HashSet<(BindingOwner, VariableId)>,
-    compound_places: Vec<(BindingOwner, VariableId, Span)>,
-    seen_compound_places: HashSet<(BindingOwner, VariableId, usize, usize)>,
     next_variable_id: usize,
     loops: Vec<LoopContext>,
     next_loop_id: usize,
@@ -337,9 +334,6 @@ impl SemanticAnalyzer {
         self.closure_results.clear();
         self.dependencies.clear();
         self.capture_contexts.clear();
-        self.captured_bindings.clear();
-        self.compound_places.clear();
-        self.seen_compound_places.clear();
         self.functions.clear();
         self.scopes.clear();
         self.next_variable_id = 0;
@@ -380,9 +374,6 @@ impl SemanticAnalyzer {
         self.closure_results.clear();
         self.dependencies.clear();
         self.capture_contexts.clear();
-        self.captured_bindings.clear();
-        self.compound_places.clear();
-        self.seen_compound_places.clear();
         self.owner = None;
 
         result
@@ -476,9 +467,6 @@ impl SemanticAnalyzer {
         context: ReturnContext,
     ) -> Result<TypedFunction, SemanticError> {
         self.owner = Some(BindingOwner::Function(id));
-        self.captured_bindings.clear();
-        self.compound_places.clear();
-        self.seen_compound_places.clear();
         self.next_variable_id = 0;
         self.next_loop_id = 0;
         self.loops.clear();
@@ -489,18 +477,7 @@ impl SemanticAnalyzer {
         self.scopes.pop();
         self.loops.clear();
 
-        let function = result?;
-        // Promotion is structural: even compounds preceding the capturing
-        // declaration use a shared cell once that binding is captured.
-        for &(owner, variable, span) in &self.compound_places {
-            if self.captured_bindings.contains(&(owner, variable)) {
-                return Err(SemanticError::InvalidClosure {
-                    reason: "compound assignment to captured bindings is not supported in this subset",
-                    span,
-                });
-            }
-        }
-        Ok(function)
+        result
     }
 
     fn analyze_function_body(
@@ -693,32 +670,6 @@ impl SemanticAnalyzer {
             }
 
             StatementKind::CompoundAssignment { target, op, value } => {
-                let base = match target {
-                    Expr::Index { expr, .. } => expr.as_ref(),
-                    target => target,
-                };
-                if let Expr::Identifier(name) = base
-                    && let Some(binding) = self.lookup_variable(name)
-                    && let Some(owner) = binding.owner
-                {
-                    if Some(owner) != self.owner {
-                        self.check_value_binding(name, span, BindingUse::Read)?;
-                        return Err(SemanticError::InvalidClosure {
-                            reason: "compound assignment to captured bindings is not supported in this subset",
-                            span,
-                        });
-                    }
-                    // Inference and final checks revisit bodies. Retain each
-                    // occurrence once, in first-visit diagnostic order.
-                    if self.seen_compound_places.insert((
-                        owner,
-                        binding.id,
-                        span.start(),
-                        span.end(),
-                    )) {
-                        self.compound_places.push((owner, binding.id, span));
-                    }
-                }
                 let (target, target_flow) =
                     self.analyze_assignment_target(target, span, return_type)?;
 

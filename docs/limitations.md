@@ -44,9 +44,10 @@ final-Void discard support (#27);
 [release gates passed](was_language_extensions_plan.md#wp10-release-validation)
 on 2026-10-14, including current-source rebuilt-browser and full ignored runtime coverage.
 WP11 implements capture-free local callables (#29) and immediate-creator shared
-parameter/let captures (#30), with [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14).
-Nested forwarding, context-requiring callable dependencies, captured compounds/for
-bindings and full WP11 release remain deferred. WP12 and WP13 remain separately scoped.
+parameter/let captures (#30), plus captured numeric compounds (#31).
+[#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14)
+before #31; [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14). Nested forwarding, context-requiring callable
+dependencies, captured `for` bindings and full WP11 release remain deferred. WP12 and WP13 remain separately scoped.
 See [the #14 contract](result-inference-development.md#issue-14-acyclic-chains-and-diamonds) and the
 [named/default interface](named-call-interface.md) for migration and the
 [development handoff](wp6-wp7-development.md) for historical worktree evidence.
@@ -76,7 +77,7 @@ The plan's #25/#26 validation records remain historical subset evidence, not
 full-release evidence; [#27 release validation passed](was_language_extensions_plan.md#wp10-release-validation)
 for complete WP10 support.
 
-### Local callable and shared-capture restrictions (#29–#30)
+### Local callable and shared-capture restrictions (#29–#31)
 
 Only lambda-initialized local bindings and direct positional calls are supported.
 Parentheses around initializers are transparent. Callables cannot be used as
@@ -90,10 +91,11 @@ concrete type (`number`, `bool`, `string`, `number[]`, `range`). Captures preser
 original bindings and observe reassignment from either side, including ordinary
 array indexed mutation and array-binding reassignment. Nested helpers may capture
 their immediate creator's own bindings. Ancestor forwarding, dependencies on
-context-requiring callables owned elsewhere, capture of `for` bindings and captured
-compound places remain explicitly rejected. Compounds on creator-side promoted
-bindings are rejected too, even before the capturing declaration; use ordinary
-assignment instead. See [the stable subset reasons](local-callable-interface.md#implemented-shared-capture-subset-30).
+context-requiring callables owned elsewhere and capture of `for` bindings remain
+explicitly rejected. #31 supports all five numeric compound operators on captured
+numbers and numeric-array elements, including creator-side promoted bindings
+before or after the capturing declaration. The original checked place and old
+value survive RHS effects; ordinary indexed assignment retains its pre-RHS address. See [the stable subset reasons](local-callable-interface.md#implemented-shared-capture-subset-30).
 
 Earlier context-free callable dependencies are allowed, including nested
 composition. Declaration-before-use and ordinary lexical shadowing apply, without
@@ -105,7 +107,8 @@ allocation can grow memory or trap without rollback, even when a capturing
 declaration is later skipped (its promoted binding cell can already exist).
 There is no reclamation or heap rewind. See [allocation timing and private layout](memory-abi.md#private-closure-storage-30).
 Full WP11 release remains deferred. The separate [#30 validation record](local-callable-interface.md#issue-30-validation-2026-10-14)
-covers this subset; historical #29 results do not cover shared storage.
+covers shared storage before #31, not captured compounds; historical #29 results
+do not cover shared storage.
 
 Reachable returns join exactly with completing expressions/tails. No-tail normal
 completion requires Void; expression/tail Never-only inference is rejected. A
@@ -214,8 +217,9 @@ target and RHS must have type `number`. They do not produce an expression value,
 concatenate strings, operate on whole arrays, or broaden postfix access. Indexed
 updates check the target once and save its address and old value before RHS
 effects; failure traps before RHS evaluation. `%=` shares exact floating remainder
-behavior with `%`. Compound places involving captured bindings remain deferred;
-#30 supports ordinary captured assignment and indexed array mutation.
+behavior with `%`. #31 extends these rules to captured numeric places and
+creator-side promoted bindings; #30 supplied ordinary captured assignment and
+indexed array mutation.
 
 `break`, `continue`, `loop`, `in`, `for`, and `requires` are reserved source keywords and
 host-language names; rename existing bindings/functions using them. Host module/field names
@@ -313,7 +317,8 @@ and [frozen design interview](was_language_extensions_plan.md#wp9--match-stateme
 describe implemented language support alongside WP10 pipelines with
 [release validation passed](was_language_extensions_plan.md#wp10-release-validation);
 local callables and immediate-creator shared parameter/let captures are implemented
-as the #29/#30 subsets; broader captures, full WP11 release and placeholders remain deferred.
+as the #29/#30 subsets, with captured numeric compounds added by #31; broader
+captures, full WP11 release and placeholders remain deferred.
 
 - Scrutinees that complete must be number/bool/string, not arrays, ranges or Void.
   Patterns are wildcard, exact scalar literals, numeric comparisons and constant

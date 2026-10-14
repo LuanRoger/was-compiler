@@ -1619,7 +1619,7 @@ fn nested_helpers_capture_only_their_immediate_creators_own_bindings() {
 }
 
 #[test]
-fn forged_capture_places_reject_compounds_in_creator_and_helper() {
+fn forged_capture_places_support_all_compounds_in_creator_and_helper() {
     let compiler = Compiler::new();
     for source in [
         "fn main() -> number { let n = 1; let f = () => { n = n + 2; n }; n = n + 3; return f(); }",
@@ -1627,7 +1627,10 @@ fn forged_capture_places_reject_compounds_in_creator_and_helper() {
     ] {
         let original = compiler.analyze(source).unwrap();
         compiler.compile(&original).unwrap();
-        for helper in [false, true] {
+        for (helper, op) in [false, true].into_iter().flat_map(|helper| {
+            use was_compiler::ast::BinaryOp::*;
+            [Add, Subtract, Multiply, Divide, Remainder].map(|op| (helper, op))
+        }) {
             let mut forged = original.clone();
             let statement = if helper {
                 let TypedStatementKind::Closure(c) = &mut forged.functions[0].body[1].kind else {
@@ -1645,28 +1648,29 @@ fn forged_capture_places_reject_compounds_in_creator_and_helper() {
             };
             statement.kind = TypedStatementKind::CompoundAssignment {
                 target: target.clone(),
-                op: was_compiler::ast::BinaryOp::Add,
+                op,
                 value: number("1"),
             };
-            assert_invalid(
-                &forged,
-                "invalid capture metadata",
-                statement_span(&original, helper),
-            );
+            let bytes = compiler.compile(&forged).unwrap();
+            let helper_index = if op == was_compiler::ast::BinaryOp::Remainder {
+                9
+            } else {
+                8
+            };
+            let ops = operators(&bytes, if helper { helper_index } else { 0 });
+            assert!(ops.iter().any(|instruction| {
+                use was_compiler::ast::BinaryOp::*;
+                matches!(
+                    (&op, instruction),
+                    (Add, Operator::F64Add)
+                        | (Subtract, Operator::F64Sub)
+                        | (Multiply, Operator::F64Mul)
+                        | (Divide, Operator::F64Div)
+                        | (Remainder, Operator::Call { function_index: 8 })
+                )
+            }));
         }
     }
-}
-fn statement_span(program: &TypedProgram, helper: bool) -> Span {
-    if !helper {
-        return program.functions[0].body[2].span;
-    }
-    let TypedStatementKind::Closure(c) = &program.functions[0].body[1].kind else {
-        panic!()
-    };
-    let TypedClosureBody::Block(block) = &c.body else {
-        panic!()
-    };
-    block.statements[0].span
 }
 
 #[test]
@@ -1890,6 +1894,478 @@ fn capturing_helpers_validate_and_promote_their_own_parameters_with_hidden_index
         })
         .collect();
     assert_eq!(offsets, [0, 8, 8, 8]);
+}
+
+fn helper_statements(program: &mut TypedProgram) -> &mut Vec<TypedStatement> {
+    let TypedStatementKind::Closure(c) = &mut program.functions[0].body[1].kind else {
+        panic!()
+    };
+    let TypedClosureBody::Block(block) = &mut c.body else {
+        panic!()
+    };
+    &mut block.statements
+}
+
+fn make_compound(statement: &mut TypedStatement, op: was_compiler::ast::BinaryOp) {
+    let TypedStatementKind::Assignment { target, value } = &statement.kind else {
+        panic!()
+    };
+    statement.kind = TypedStatementKind::CompoundAssignment {
+        target: target.clone(),
+        op,
+        value: value.clone(),
+    };
+}
+
+#[test]
+fn captured_scalar_compound_keeps_cell_and_old_value_below_mutating_rhs_without_scratch() {
+    let compiler = Compiler::new();
+    let mut p = compiler.analyze("fn main() -> number { let n = 1; let f = () => { n = { n = 100; 2 }; 0 }; return f(); }").unwrap();
+    make_compound(
+        &mut helper_statements(&mut p)[0],
+        was_compiler::ast::BinaryOp::Add,
+    );
+    let bytes = compiler.compile(&p).unwrap();
+    let ops = operators(&bytes, 8);
+    // The original cell address and f64 are a live stack prefix while the RHS
+    // overwrites that same cell. The final store must not reload either one.
+    assert!(matches!(ops[0], Operator::LocalGet { local_index: 0 }));
+    assert!(matches!(ops[1], Operator::I32Load { memarg } if memarg.offset == 0));
+    assert!(matches!(ops[2], Operator::LocalGet { local_index: 0 }));
+    assert!(matches!(ops[3], Operator::I32Load { memarg } if memarg.offset == 0));
+    assert!(matches!(ops[4], Operator::F64Load { memarg } if memarg.offset == 0));
+    assert!(ops.windows(3).any(|w| matches!(w,
+        [Operator::F64Const { value }, Operator::F64Store { .. }, Operator::F64Const { .. }]
+        if value.bits() == 100f64.to_bits()
+    )));
+    assert!(ops.windows(2).any(|w| matches!(w,
+        [Operator::F64Add, Operator::F64Store { memarg }] if memarg.offset == 0
+    )));
+    let body = Parser::new(0)
+        .parse_all(&bytes)
+        .filter_map(|p| match p.unwrap() {
+            Payload::CodeSectionEntry(body) => Some(body),
+            _ => None,
+        })
+        .nth(8)
+        .unwrap();
+    assert_eq!(body.get_locals_reader().unwrap().get_count(), 0);
+}
+
+#[test]
+fn captured_index_places_save_original_address_and_old_value_before_binding_reassignment() {
+    let compiler = Compiler::new();
+    let source = "fn main() -> number { let a = [1]; let f = () => { a[0] = { a = [100]; 2 }; 0 }; return f(); }";
+    let original = compiler.analyze(source).unwrap();
+    // Ordinary source assignment and forged compound share the same place path.
+    let ordinary = compiler.compile_source(source).unwrap();
+    assert_eq!(ordinary, compiler.compile(&original).unwrap());
+    for compound in [false, true] {
+        let mut p = original.clone();
+        if compound {
+            make_compound(
+                &mut helper_statements(&mut p)[0],
+                was_compiler::ast::BinaryOp::Multiply,
+            );
+        }
+        let bytes = compiler.compile(&p).unwrap();
+        let ops = operators(&bytes, 8);
+        let checked = ops
+            .iter()
+            .position(|op| matches!(op, Operator::Call { function_index: 4 }))
+            .unwrap();
+        assert_eq!(
+            ops.iter()
+                .filter(|op| matches!(op, Operator::Call { function_index: 4 }))
+                .count(),
+            1
+        );
+        let allocation = ops
+            .iter()
+            .position(|op| matches!(op, Operator::Call { function_index: 1 }))
+            .unwrap();
+        assert!(checked < allocation);
+        assert!(matches!(ops[0], Operator::LocalGet { local_index: 0 }));
+        assert!(matches!(ops[1], Operator::I32Load { memarg } if memarg.offset == 0));
+        assert!(matches!(ops[2], Operator::I32Load { memarg } if memarg.offset == 0));
+        if compound {
+            let Operator::LocalSet {
+                local_index: address,
+            } = ops[checked + 1]
+            else {
+                panic!()
+            };
+            let Operator::LocalSet { local_index: old } = ops[checked + 4] else {
+                panic!()
+            };
+            assert!(
+                matches!(ops[checked + 2], Operator::LocalGet { local_index } if local_index == address)
+            );
+            assert!(matches!(ops[checked + 3], Operator::F64Load { memarg } if memarg.offset == 0));
+            assert!(
+                matches!(ops[checked + 5], Operator::LocalGet { local_index } if local_index == address)
+            );
+            assert!(
+                matches!(ops[checked + 6], Operator::LocalGet { local_index } if local_index == old)
+            );
+            assert!(checked + 6 < allocation);
+            assert!(
+                ops.windows(2)
+                    .any(|w| matches!(w, [Operator::F64Mul, Operator::F64Store { .. }]))
+            );
+            let body = Parser::new(0)
+                .parse_all(&bytes)
+                .filter_map(|p| match p.unwrap() {
+                    Payload::CodeSectionEntry(body) => Some(body),
+                    _ => None,
+                })
+                .nth(8)
+                .unwrap();
+            let locals: Vec<_> = body
+                .get_locals_reader()
+                .unwrap()
+                .into_iter()
+                .map(Result::unwrap)
+                .collect();
+            assert_eq!(
+                locals,
+                [
+                    (1, wasmparser::ValType::I32),
+                    (1, wasmparser::ValType::F64),
+                    (1, wasmparser::ValType::I32)
+                ]
+            );
+        }
+        // Rebinding the array cell occurs before the final element write, with
+        // no second address check or handle load after RHS effects.
+        let rebind = ops
+            .iter()
+            .rposition(|op| matches!(op, Operator::I32Store { .. }))
+            .unwrap();
+        let final_write = ops
+            .iter()
+            .rposition(|op| matches!(op, Operator::F64Store { .. }))
+            .unwrap();
+        assert!(allocation < rebind && rebind < final_write);
+        assert!(!ops[rebind + 1..final_write].iter().any(|op| matches!(
+            op,
+            Operator::I32Load { .. } | Operator::F64Load { .. } | Operator::Call { .. }
+        )));
+    }
+}
+
+#[test]
+fn captured_compounds_keep_numeric_place_rhs_operator_and_owner_checks() {
+    use was_compiler::ast::BinaryOp;
+    let compiler = Compiler::new();
+    for initializer in ["true", "\"text\"", "[1]", "0..2"] {
+        let mut p = compiler.analyze(&format!("fn main() -> number {{ let n = {initializer}; let f = () => {{ n = n; 0 }}; return f(); }}")).unwrap();
+        make_compound(&mut helper_statements(&mut p)[0], BinaryOp::Add);
+        let error = compiler.compile(&p).unwrap_err();
+        assert!(
+            matches!(
+                error,
+                CodegenError::TypeMismatch {
+                    expected: Type::Number,
+                    ..
+                }
+            ),
+            "{initializer}: {error:?}"
+        );
+    }
+    for indexed in [false, true] {
+        let (initializer, place) = if indexed { ("[1]", "n[0]") } else { ("1", "n") };
+        let mut original = compiler.analyze(&format!("fn main() -> number {{ let n = {initializer}; let f = () => {{ {place} = 2; 0 }}; return f(); }}")).unwrap();
+        make_compound(&mut helper_statements(&mut original)[0], BinaryOp::Add);
+        compiler.compile(&original).unwrap();
+        for mutation in 0..7 {
+            let mut p = original.clone();
+            let statement = &mut helper_statements(&mut p)[0];
+            let origin = statement.span;
+            let TypedStatementKind::CompoundAssignment { target, op, value } = &mut statement.kind
+            else {
+                panic!()
+            };
+            match mutation {
+                0 => *op = BinaryOp::Equal,
+                1 => {
+                    *value = TypedExpr {
+                        kind: TypedExprKind::Bool(false),
+                        ty: Type::Bool.into(),
+                    }
+                }
+                2 => *target = number("1"),
+                3..=5 => {
+                    let base = if let TypedExprKind::Index { expr, .. } = &mut target.kind {
+                        expr.as_mut()
+                    } else {
+                        target
+                    };
+                    let TypedExprKind::Captured { owner, id, .. } = &mut base.kind else {
+                        panic!()
+                    };
+                    match mutation {
+                        3 => *owner = BindingOwner::Closure(CallableId(0)),
+                        4 => *id = VariableId(9999),
+                        _ => base.ty = Type::Bool.into(),
+                    }
+                }
+                _ if indexed => {
+                    let TypedExprKind::Index { index, .. } = &mut target.kind else {
+                        panic!()
+                    };
+                    **index = TypedExpr {
+                        kind: TypedExprKind::Bool(false),
+                        ty: Type::Bool.into(),
+                    };
+                }
+                _ => target.ty = ExprResult::Never,
+            }
+            let error = compiler.compile(&p).unwrap_err();
+            assert_eq!(error.span(), Some(origin));
+            match mutation {
+                0 => assert!(matches!(error, CodegenError::UnsupportedOperator { .. })),
+                1 => assert!(matches!(
+                    error,
+                    CodegenError::TypeMismatch {
+                        expected: Type::Number,
+                        found: Type::Bool,
+                        ..
+                    }
+                )),
+                2 => assert!(matches!(
+                    error,
+                    CodegenError::InvalidAssignmentTarget { .. }
+                )),
+                3 | 4 => assert!(matches!(
+                    error,
+                    CodegenError::InvalidClosure {
+                        reason: "invalid capture metadata",
+                        ..
+                    }
+                )),
+                _ => assert!(matches!(
+                    error,
+                    CodegenError::InvalidClosure { .. }
+                        | CodegenError::TypeMismatch { .. }
+                        | CodegenError::ExprResultMismatch { .. }
+                )),
+            }
+        }
+    }
+}
+
+#[test]
+fn sparse_captured_compounds_distinguish_original_owner_from_same_id_helper_parameter() {
+    let owner = BindingOwner::Function(FunctionId(0));
+    let id = VariableId(7001);
+    let captured = TypedExpr {
+        kind: TypedExprKind::Captured {
+            owner,
+            id,
+            name: "outer".into(),
+        },
+        ty: Type::Number.into(),
+    };
+    let own = TypedExpr {
+        kind: TypedExprKind::Identifier {
+            id,
+            name: "inner".into(),
+        },
+        ty: Type::Number.into(),
+    };
+    let param = TypedParam {
+        id,
+        name: "inner".into(),
+        ty: Type::Number,
+        span: span(),
+    };
+    let mut c = closure(
+        0,
+        owner,
+        block(
+            vec![statement(TypedStatementKind::CompoundAssignment {
+                target: captured,
+                op: was_compiler::ast::BinaryOp::Subtract,
+                value: own.clone(),
+            })],
+            Some(own.clone()),
+        ),
+        Type::Number,
+    );
+    c.params.push(param.clone());
+    c.captures.push(TypedCapture {
+        owner,
+        variable: id,
+        ty: Type::Number,
+        mutability: CaptureMutability::Mutable,
+    });
+    let mut p = program(vec![
+        // Promotion is structural: this compound precedes the declaration.
+        statement(TypedStatementKind::CompoundAssignment {
+            target: own,
+            op: was_compiler::ast::BinaryOp::Add,
+            value: number("3"),
+        }),
+        statement(TypedStatementKind::Closure(c)),
+        statement(TypedStatementKind::Return(Some(lexical(
+            0,
+            vec![number("2")],
+            Type::Number,
+        )))),
+    ]);
+    p.functions[0].params.push(param);
+    let bytes = Compiler::new().compile(&p).unwrap();
+    let helper = operators(&bytes, 8);
+    assert!(helper.windows(3).any(|w| matches!(
+        w,
+        [
+            Operator::LocalGet { local_index: 1 },
+            Operator::F64Sub,
+            Operator::F64Store { .. }
+        ]
+    )));
+    let creator = operators(&bytes, 0);
+    assert!(creator.windows(4).any(|w| matches!(w,
+        [Operator::LocalGet { local_index: a }, Operator::LocalGet { local_index: b }, Operator::F64Load { .. }, Operator::F64Const { .. }] if a == b
+    )));
+    let mut forged = p;
+    let TypedStatementKind::Closure(c) = &mut forged.functions[0].body[1].kind else {
+        panic!()
+    };
+    let TypedClosureBody::Block(block) = &mut c.body else {
+        panic!()
+    };
+    let TypedStatementKind::CompoundAssignment { target, .. } = &mut block.statements[0].kind
+    else {
+        panic!()
+    };
+    let TypedExprKind::Captured { owner, .. } = &mut target.kind else {
+        panic!()
+    };
+    *owner = BindingOwner::Closure(CallableId(0));
+    assert_invalid(&forged, "invalid capture metadata", span());
+}
+
+#[test]
+fn captured_compounds_preserve_helper_local_transfers_divergence_and_skipped_checks() {
+    use was_compiler::ast::BinaryOp;
+    let compiler = Compiler::new();
+    for (initializer, place) in [("1", "n"), ("[1]", "n[0]")] {
+        for rhs in ["{ return 7; }", "loop {}", "{ loop { break; } 2 }"] {
+            let mut p = compiler.analyze(&format!("fn main() -> number {{ let n = {initializer}; let f = () => {{ if false {{ return 7; }} {place} = {rhs}; 0 }}; return f(); }}")).unwrap();
+            make_compound(&mut helper_statements(&mut p)[1], BinaryOp::Remainder);
+            let bytes = compiler.compile(&p).unwrap();
+            // Remainder discovery must still append its helper before callables,
+            // even when the RHS never supplies the second operand.
+            let ops = operators(&bytes, 9);
+            assert!(
+                ops.iter()
+                    .any(|op| matches!(op, Operator::Call { function_index: 8 }))
+            );
+        }
+        for transfer in ["break", "continue"] {
+            let mut p = compiler.analyze(&format!("fn main() -> number {{ let n = {initializer}; let f = () => {{ if false {{ return 7; }} loop {{ {place} = {{ {transfer}; }}; }} 0 }}; return f(); }}")).unwrap();
+            let TypedStatementKind::Loop { body, .. } = &mut helper_statements(&mut p)[1].kind
+            else {
+                panic!()
+            };
+            make_compound(&mut body[0], BinaryOp::Add);
+            let bytes = compiler.compile(&p).unwrap();
+            let ops = operators(&bytes, 8);
+            let expected = if transfer == "break" { 2 } else { 1 };
+            assert!(ops.iter().any(
+                |op| matches!(op, Operator::Br { relative_depth } if *relative_depth == expected)
+            ));
+        }
+        let mut p = compiler.analyze(&format!("fn main() -> number {{ let n = {initializer}; let f = () => {{ return 7; {place} = 2; }}; return f(); }}")).unwrap();
+        make_compound(&mut helper_statements(&mut p)[1], BinaryOp::Add);
+        let TypedStatementKind::CompoundAssignment { value, .. } =
+            &mut helper_statements(&mut p)[1].kind
+        else {
+            panic!()
+        };
+        *value = TypedExpr {
+            kind: TypedExprKind::Bool(false),
+            ty: Type::Bool.into(),
+        };
+        assert!(matches!(
+            compiler.compile(&p),
+            Err(CodegenError::TypeMismatch {
+                expected: Type::Number,
+                found: Type::Bool,
+                ..
+            })
+        ));
+    }
+}
+
+#[test]
+fn captured_compounds_reject_every_nonnumeric_rhs_category_and_check_divergent_indices() {
+    use was_compiler::ast::BinaryOp;
+    let compiler = Compiler::new();
+    for (initializer, place) in [("1", "n"), ("[1]", "n[0]")] {
+        let mut original = compiler.analyze(&format!("fn main() -> number {{ let n = {initializer}; let f = () => {{ {place} = 2; 0 }}; return f(); }}")).unwrap();
+        make_compound(&mut helper_statements(&mut original)[0], BinaryOp::Add);
+        for ty in [
+            Type::Bool,
+            Type::String,
+            Type::NumberArray,
+            Type::Range,
+            Type::Void,
+        ] {
+            let mut p = original.clone();
+            let TypedStatementKind::CompoundAssignment { value, .. } =
+                &mut helper_statements(&mut p)[0].kind
+            else {
+                panic!()
+            };
+            // Public annotations are untrusted, including impossible storage categories.
+            value.ty = ty.into();
+            let error = compiler.compile(&p).unwrap_err();
+            assert!(
+                matches!(
+                    error,
+                    CodegenError::TypeMismatch {
+                        expected: Type::Number,
+                        ..
+                    } | CodegenError::ExprResultMismatch { .. }
+                ),
+                "{ty:?}: {error:?}"
+            );
+        }
+    }
+    let mut p = compiler.analyze("fn main() -> number { let n = [1]; let f = () => { n[{ return 7; }] = 2; 0 }; return f(); }").unwrap();
+    make_compound(&mut helper_statements(&mut p)[0], BinaryOp::Add);
+    let bytes = compiler.compile(&p).unwrap();
+    let ops = operators(&bytes, 8);
+    let returned = ops
+        .iter()
+        .position(|op| matches!(op, Operator::Return))
+        .unwrap();
+    let checked = ops
+        .iter()
+        .position(|op| matches!(op, Operator::Call { function_index: 4 }))
+        .unwrap();
+    assert!(returned < checked);
+    let TypedStatementKind::CompoundAssignment { value, .. } =
+        &mut helper_statements(&mut p)[0].kind
+    else {
+        panic!()
+    };
+    // A noncompleting index must not skip RHS checking.
+    *value = TypedExpr {
+        kind: TypedExprKind::Bool(false),
+        ty: Type::Bool.into(),
+    };
+    assert!(matches!(
+        compiler.compile(&p),
+        Err(CodegenError::TypeMismatch {
+            expected: Type::Number,
+            found: Type::Bool,
+            ..
+        })
+    ));
 }
 
 #[test]

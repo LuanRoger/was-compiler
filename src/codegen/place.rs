@@ -109,9 +109,6 @@ pub(super) fn emit_compound_assignment(
     body: &mut BodyEmitter<'_>,
     span: Span,
 ) -> Result<Flow, CodegenError> {
-    if body.is_shared(target) {
-        return Err(super::closures::invalid("invalid capture metadata", span));
-    }
     let instruction = expression::arithmetic_instruction(op, body).map_err(|operator| {
         CodegenError::UnsupportedOperator {
             function: body.name().into(),
@@ -125,7 +122,14 @@ pub(super) fn emit_compound_assignment(
     expect_operand(body.name(), Type::Number, value.ty, span)?;
 
     let target_flow = match &place {
-        Place::Cell(_) => unreachable!("shared compound places rejected before place checking"),
+        Place::Cell(ty) => {
+            // Place checking left the original cell address on the stack. Load
+            // through a second address before RHS effects, retaining i32/f64
+            // stack prefixes without adding scratch locals to ordinary places.
+            body.cell_address(target, span)?;
+            body.load_cell(*ty);
+            Flow::FALLTHROUGH
+        }
         Place::Local(index) => {
             // Calls and nested expressions preserve this live f64 stack prefix.
             // No scratch local is needed to retain the pre-RHS value.
