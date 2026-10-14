@@ -1,0 +1,9 @@
+fn div(x: number, y: number) -> number
+    requires y > 0 {
+     return x / y;
+}
+
+fn main() {
+    let result = div(10, 0);
+    return result;
+}

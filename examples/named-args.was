@@ -1,0 +1,9 @@
+fn scale(value: number, factor: number) -> number {
+    return value * factor;
+}
+
+fn main() -> number {
+    let scaled = scale(factor: 2, value: 10);
+
+    return scaled;
+}

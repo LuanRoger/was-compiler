@@ -1,0 +1,8 @@
+fn main() -> number {
+    let from_to = 1..=10;
+    let list: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let counter = 0;
+    for value in from_to { list[counter] = value; counter += 1; }
+
+    return list[0] + list[9];
+}

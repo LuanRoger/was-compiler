@@ -1,0 +1,15 @@
+fn describe(value: number) -> string {
+    return match value {
+        < 0 => "less than 0",
+        0 => "is 0",
+        0..10 => "between 0 and 10",
+        _ => "huge number",
+    };
+}
+
+fn main() -> string {
+    let numb = 10;
+    let description = describe(numb);
+
+    return description;
+}

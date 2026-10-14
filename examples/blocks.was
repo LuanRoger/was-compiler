@@ -1,0 +1,21 @@
+fn is_even(x: number) -> string {
+    return if x % 2 == 0 { "Even" } else { "Not even" };
+}
+
+fn main() -> number {
+    let price = 10;
+    let preco_final = {
+        let tax = 2;
+
+        price * tax
+    };
+
+    let counter = 0;
+    let sum = loop {
+        counter += 1;
+
+        if counter == 10 { break counter; }
+    };
+
+    return sum;
+}
