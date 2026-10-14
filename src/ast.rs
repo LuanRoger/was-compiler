@@ -62,6 +62,12 @@ pub enum Expr {
         inclusive: bool,
     },
 
+    Pipeline {
+        input: Box<Expr>,
+        input_span: Span,
+        stages: Vec<PipelineStage>,
+    },
+
     Call {
         func: String,
         args: Vec<CallArgument>,
@@ -117,6 +123,13 @@ pub enum MatchPatternKind {
 pub struct MatchArm {
     pub pattern: MatchPattern,
     pub body: Expr,
+    pub span: Span,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct PipelineStage {
+    pub name: String,
+    pub args: Vec<CallArgument>,
     pub span: Span,
 }
 

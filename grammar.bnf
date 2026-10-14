@@ -185,7 +185,20 @@
 <expression_statement> ::= <expression> <ws> ";"
 
 
-<expression> ::= <logical_or_expression>
+<expression> ::= <pipeline_expression>
+
+<pipeline_expression> ::= <logical_or_expression>
+                          ( <ws> "|>" <ws> <pipeline_stage> )*
+
+<pipeline_stage> ::= <identifier>
+                     ( <ws> "(" <ws> <argument_list>? <ws> ")" )?
+
+# WP10's implemented subset supplies input to formal 0 of user-defined functions
+# and requires all remaining formals positionally, even when defaults exist.
+# Named stage arguments and every Void stage are rejected. Bare and empty-call
+# stages are equivalent. Pipelines associate left, below logical OR; |>'s bytes
+# must be contiguous. Defaults/contracts reject pipelines before normalization.
+# Parenthesize bare if/match/loop for continuation across statement/tail boundaries.
 
 
 <logical_or_expression> ::= <logical_and_expression>

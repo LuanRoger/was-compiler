@@ -319,6 +319,26 @@ impl<'a, F: FnMut(&'a str, Span) -> Option<&'a Function>> LexicalWalker<'a, F> {
                     self.expr(step, span);
                 }
             }
+            Expr::Pipeline {
+                input,
+                input_span,
+                stages,
+            } => {
+                self.expr(input, *input_span);
+                for stage in stages {
+                    if !self
+                        .scopes
+                        .iter()
+                        .rev()
+                        .any(|scope| scope.contains(stage.name.as_str()))
+                    {
+                        (self.call)(&stage.name, stage.span);
+                    }
+                    for arg in &stage.args {
+                        self.expr(&arg.value, arg.span);
+                    }
+                }
+            }
             Expr::Call { func, args } => {
                 let declaration = if self
                     .scopes

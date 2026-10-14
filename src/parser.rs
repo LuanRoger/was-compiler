@@ -3,8 +3,8 @@ use thiserror::Error;
 use crate::{
     ast::{
         BinaryOp, Block, CallArgument, ContractExpression, DefaultExpression, Expr, Function,
-        MatchArm, MatchPattern, MatchPatternKind, Param, Program, Statement, StatementKind, Type,
-        UnaryOp, ValueBlock,
+        MatchArm, MatchPattern, MatchPatternKind, Param, PipelineStage, Program, Statement,
+        StatementKind, Type, UnaryOp, ValueBlock,
     },
     tokens::{Span, Token, TokenKind},
 };
@@ -682,7 +682,36 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
     }
 
     fn parse_expression(&mut self) -> Result<Expr, ParseError> {
-        self.parse_binary(1)
+        let start = self.current_span().start();
+        let input = self.parse_binary(1)?;
+        let input_span = self.span_since(start);
+        let mut stages = Vec::new();
+
+        while self.consume(TokenKind::Pipeline) {
+            let start = self.current_span().start();
+            let name = self.parse_identifier()?;
+            let args = if self.consume(TokenKind::LeftParen) {
+                self.parse_call_arguments()?
+            } else {
+                Vec::new()
+            };
+
+            stages.push(PipelineStage {
+                name,
+                args,
+                span: self.span_since(start),
+            });
+        }
+
+        if stages.is_empty() {
+            Ok(input)
+        } else {
+            Ok(Expr::Pipeline {
+                input: Box::new(input),
+                input_span,
+                stages,
+            })
+        }
     }
 
     fn parse_binary(&mut self, min_precedence: u8) -> Result<Expr, ParseError> {
@@ -1052,6 +1081,7 @@ fn token_name(kind: &TokenKind<'_>) -> &'static str {
 
         TokenKind::AndAnd => "&&",
         TokenKind::OrOr => "||",
+        TokenKind::Pipeline => "|>",
 
         TokenKind::DotDot => "..",
         TokenKind::DotDotEqual => "..=",

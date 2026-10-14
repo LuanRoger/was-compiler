@@ -39,11 +39,23 @@ WP8 whitelist contracts are implemented;
 [release gates passed](was_language_extensions_plan.md#wp8-release-validation),
 including rebuilt-browser and full ignored runtime coverage.
 WP9 match statements/values are implemented with frontend/backend integrated;
-[release gates passed](was_language_extensions_plan.md#wp9-release-validation). WP10–WP12 remain proposed; WP13
+[release gates passed](was_language_extensions_plan.md#wp9-release-validation). WP10's positional value-producing subset is implemented; full WP10 is incomplete.
+WP11–WP12 remain proposed; WP13
 optimization needs separate authorization.
 See [the #14 contract](result-inference-development.md#issue-14-acyclic-chains-and-diamonds) and the
 [named/default interface](named-call-interface.md) for migration and the
 [development handoff](wp6-wp7-development.md) for historical worktree evidence.
+
+### Named-only pipeline restrictions (partial WP10)
+
+`value |> function(args)` injects into formal 0 of a named user function and
+requires every remaining parameter positionally, even when defaults exist. Bare
+and empty-parenthesis stages are equivalent. Named stage arguments, omitted
+parameters/defaults, and every Void stage remain deferred; ordinary calls retain
+named/default support. Host/builtin stages, zero-parameter stages, callable values,
+placeholders and expression callees are rejected. User-function wrappers can call
+hosts. Pipelines remain outside the default/contract whitelist. Parenthesize bare
+if/match/loop constructs for continuation across statement/tail boundaries.
 
 ### Initial result-inference restrictions
 
@@ -240,7 +252,7 @@ browser bindings and the full ignored-test run. Default tests still skip Node ca
 Match statements/values are implemented, with [release gates passed](was_language_extensions_plan.md#wp9-release-validation),
 including current-source rebuilt-browser and full ignored runtime coverage. The [normative match rules](was_language_extensions_spec.md#82-match-expression-syntax)
 and [frozen design interview](was_language_extensions_plan.md#wp9--match-statementsvalues-spec-8-implemented)
-separate this support from proposed pipelines/closures/placeholders.
+separate this support from partial WP10 pipelines and proposed closures/placeholders.
 
 - Scrutinees that complete must be number/bool/string, not arrays, ranges or Void.
   Patterns are wildcard, exact scalar literals, numeric comparisons and constant

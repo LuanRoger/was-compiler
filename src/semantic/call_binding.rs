@@ -1,6 +1,141 @@
 use super::*;
 
 impl SemanticAnalyzer {
+    pub(super) fn analyze_pipeline(
+        &mut self,
+        input: &Expr,
+        input_span: Span,
+        stages: &[PipelineStage],
+        return_type: ReturnContext,
+    ) -> Result<(TypedExpr, Flow), SemanticError> {
+        let (mut value, mut flow) = self.analyze_expr(input, input_span, return_type)?;
+        let mut prefix_span = input_span;
+
+        if stages.is_empty() {
+            return Err(SemanticError::InvalidPipeline {
+                message: "a pipeline requires at least one stage",
+                span: input_span,
+            });
+        }
+
+        for stage in stages {
+            let name = &stage.name;
+            let span = stage.span;
+            if self.lookup_variable(name).is_some() {
+                return Err(SemanticError::NotCallable {
+                    name: name.clone(),
+                    span,
+                });
+            }
+            let signature =
+                self.functions
+                    .get(name)
+                    .ok_or_else(|| SemanticError::UndefinedFunction {
+                        name: name.clone(),
+                        span,
+                    })?;
+            if !matches!(signature.reference, FunctionRef::User(_)) {
+                return Err(SemanticError::InvalidPipeline {
+                    message: "stages must name user-defined functions",
+                    span,
+                });
+            }
+            if signature.params.is_empty() {
+                return Err(SemanticError::InvalidPipeline {
+                    message: "a stage requires an input parameter",
+                    span,
+                });
+            }
+            if let Some(arg) = stage.args.iter().find(|arg| arg.name.is_some()) {
+                return Err(SemanticError::NamedArgumentsNotSupported {
+                    name: name.clone(),
+                    span: arg.span,
+                });
+            }
+            let formal_count = signature.params.len();
+            if stage.args.len() >= formal_count {
+                return Err(SemanticError::TooManyPositionalArguments {
+                    name: name.clone(),
+                    span: stage.args[formal_count - 1].span,
+                });
+            }
+            if stage.args.len() + 1 != formal_count {
+                return Err(SemanticError::MissingArgument {
+                    name: name.clone(),
+                    argument: signature.param_names[stage.args.len() + 1].clone(),
+                    span,
+                });
+            }
+            let reference = signature.reference;
+            let result_type = signature.return_type;
+            let expected = signature.params[0];
+            self.expect_type(expected, value.ty, prefix_span)?;
+            let id = VariableId(self.next_variable_id);
+            self.next_variable_id += 1;
+            let mut bindings = Vec::with_capacity(formal_count);
+            bindings.push(TypedCallBinding {
+                id,
+                ty: expected,
+                value,
+                origin: CallBindingOrigin::PipelineInput,
+                span: prefix_span,
+            });
+
+            for (argument, arg) in stage.args.iter().enumerate() {
+                let expected = self.functions[name].params[argument + 1];
+                let id = VariableId(self.next_variable_id);
+                self.next_variable_id += 1;
+                let (argument_value, argument_flow) =
+                    self.analyze_expr(&arg.value, arg.span, return_type)?;
+                self.expect_type(expected, argument_value.ty, arg.span)?;
+                flow = flow.then(argument_flow);
+                bindings.push(TypedCallBinding {
+                    id,
+                    ty: expected,
+                    value: argument_value,
+                    origin: CallBindingOrigin::Explicit { argument },
+                    span: arg.span,
+                });
+            }
+            if result_type == Type::Void {
+                return Err(SemanticError::InvalidPipeline {
+                    message: "void stages are not supported in this pipeline subset",
+                    span,
+                });
+            }
+            let formal_to_binding = bindings.iter().map(|binding| binding.id).collect();
+            let args = bindings
+                .iter()
+                .enumerate()
+                .map(|(formal, binding)| TypedExpr {
+                    kind: TypedExprKind::Identifier {
+                        id: binding.id,
+                        name: self.functions[name].param_names[formal].clone(),
+                    },
+                    ty: binding.ty.into(),
+                })
+                .collect();
+            value = TypedExpr {
+                kind: TypedExprKind::NormalizedCall(TypedNormalizedCall {
+                    bindings,
+                    formal_to_binding,
+                    call: Box::new(TypedExpr {
+                        kind: TypedExprKind::Call {
+                            func: reference,
+                            name: name.clone(),
+                            args,
+                        },
+                        ty: result_type.into(),
+                    }),
+                }),
+                ty: Self::completion_result(result_type.into(), flow),
+            };
+            prefix_span = Span::new(input_span.start(), span.end());
+        }
+
+        Ok((value, flow))
+    }
+
     pub(super) fn analyze_bound_call(
         &mut self,
         name: &str,

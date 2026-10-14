@@ -108,6 +108,7 @@ impl SemanticAnalyzer {
                     self.check_pure_expression(&arg.value, span, context)?;
                 }
             }
+            Expr::Pipeline { .. } => return Err(invalid("pipelines are not allowed")),
             Expr::Array(_) => return Err(invalid("array construction is not allowed")),
             Expr::Range { .. } => return Err(invalid("range construction is not allowed")),
             Expr::Index { .. } => return Err(invalid("indexing is not allowed")),

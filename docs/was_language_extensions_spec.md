@@ -1,11 +1,11 @@
 # WAS Language Extensions — Unified Design and Implementation Specification
 
-**Status:** Design baseline with the 13 approved decisions and implementation clarifications (WP1–WP5 implementation complete: compound assignments, while transfers, block/if values, internal Never, statement/value loops, and range construction/internal calls, numeric membership, and range/array statement for; issue #6 adapter/interaction support implemented, all WP5 release gates passed (exact evidence in plan §5), WP6 named/default parameters are implemented and #13 release validation passed; WP7 acyclic result inference and named/default integration are implemented and #16 release validation passed; WP8 whitelist contracts are implemented and release gates passed (exact evidence in plan §5); WP9 match statements/values are implemented with frontend/backend integrated and [release gates passed](was_language_extensions_plan.md#wp9-release-validation); WP10–WP12 remain proposed and WP13 requires separate authorization)
+**Status:** Design baseline with the 13 approved decisions and implementation clarifications (WP1–WP5 implementation complete: compound assignments, while transfers, block/if values, internal Never, statement/value loops, and range construction/internal calls, numeric membership, and range/array statement for; issue #6 adapter/interaction support implemented, all WP5 release gates passed (exact evidence in plan §5), WP6 named/default parameters are implemented and #13 release validation passed; WP7 acyclic result inference and named/default integration are implemented and #16 release validation passed; WP8 whitelist contracts are implemented and release gates passed (exact evidence in plan §5); WP9 match statements/values are implemented with frontend/backend integrated and [release gates passed](was_language_extensions_plan.md#wp9-release-validation); WP10's positional value-producing subset (#25) is implemented, full WP10 remains incomplete; WP11–WP12 remain proposed and WP13 requires separate authorization)
 **Version:** 0.3 — 9 October 2026 (implementation clarification update)  
 **Target:** Core WebAssembly, initially the MVP-compatible instruction set already used by `was-compiler`, with optional optimizations gated by Wasm features.  
 **Repository:** https://github.com/LuanRoger/was-compiler
 
-> **Normative language.** **MUST**, **SHOULD**, and **MAY** describe requirements, strong recommendations, and optional implementation choices. This document establishes a coherent semantic model, distinguishing implemented support from proposed extensions. Decisions tagged **Open decision** need confirmation before being frozen as language guarantees. Compound assignments (§4/WP1), bare `while` transfers (§7/WP2), block/if values with internal Never (§§3.2, 8.1/WP3), and statement/value loops (§7/WP4) are implemented. Range construction, internal calls, exact numeric membership (§5/WP5), and range/array statement `for` (§6/issues #4–#5) are also implemented, with adapter/interaction support under issue #6; all WP5 release gates passed (exact evidence in plan §5). WP6 user-function named/mixed-prefix calls and trailing pure defaults (§14/issues #10/#12) are implemented, and [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation). WP7 acyclic result inference (§9) and its named/default integration are implemented, and [#16 release validation passed](was_language_extensions_plan.md#issue-16-wp7-release-validation). Every recursive component member requires an explicit result in this initial release. WP8 whitelist contracts (§13) are implemented and [release gates passed](was_language_extensions_plan.md#wp8-release-validation), including rebuilt-browser and full ignored runtime coverage. WP9 match statements/values (§8.2–§8.3) are implemented with frontend/backend integrated and [release gates passed](was_language_extensions_plan.md#wp9-release-validation). WP10–WP12 pipelines/closures/placeholders and examples using them remain proposed `.was` syntax, not claims about the present compiler.
+> **Normative language.** **MUST**, **SHOULD**, and **MAY** describe requirements, strong recommendations, and optional implementation choices. This document establishes a coherent semantic model, distinguishing implemented support from proposed extensions. Decisions tagged **Open decision** need confirmation before being frozen as language guarantees. Compound assignments (§4/WP1), bare `while` transfers (§7/WP2), block/if values with internal Never (§§3.2, 8.1/WP3), and statement/value loops (§7/WP4) are implemented. Range construction, internal calls, exact numeric membership (§5/WP5), and range/array statement `for` (§6/issues #4–#5) are also implemented, with adapter/interaction support under issue #6; all WP5 release gates passed (exact evidence in plan §5). WP6 user-function named/mixed-prefix calls and trailing pure defaults (§14/issues #10/#12) are implemented, and [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation). WP7 acyclic result inference (§9) and its named/default integration are implemented, and [#16 release validation passed](was_language_extensions_plan.md#issue-16-wp7-release-validation). Every recursive component member requires an explicit result in this initial release. WP8 whitelist contracts (§13) are implemented and [release gates passed](was_language_extensions_plan.md#wp8-release-validation), including rebuilt-browser and full ignored runtime coverage. WP9 match statements/values (§8.2–§8.3) are implemented with frontend/backend integrated and [release gates passed](was_language_extensions_plan.md#wp9-release-validation). WP10 implements the fully supplied positional value-producing named-user subset (#25); named/default stage binding and every final Void stage remain deferred. WP11–WP12 closures/placeholders and examples using them remain proposed `.was` syntax.
 
 The [concrete implementation plan](was_language_extensions_plan.md) maps this
 specification to ordered work packages, repository files, acceptance tests, and
@@ -16,7 +16,7 @@ and bare `while` transfers (§7/WP2), followed by block/if values and internal N
 (§§3.2, 8.1/WP3) and statement/value loops (§7/WP4), are implemented;
 WP5's construction/internal-call, numeric membership, range-for, and array-for checkpoints are implemented;
 issue #6 completes adapter/interaction implementation and all release gates passed.
-Exact evidence is recorded in [plan §5](was_language_extensions_plan.md#5-documentation-and-validation-workflow). WP6 named/default parameters are implemented on main, and [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation). WP7 acyclic result inference and combined-feature integration are implemented, with [#16 release validation](was_language_extensions_plan.md#issue-16-wp7-release-validation). WP8 whitelist contracts are implemented, with [release gates passed](was_language_extensions_plan.md#wp8-release-validation). WP9 match statements/values are implemented with [release gates passed](was_language_extensions_plan.md#wp9-release-validation). WP10–WP12 remain proposed later packages and WP13 requires separate authorization.
+Exact evidence is recorded in [plan §5](was_language_extensions_plan.md#5-documentation-and-validation-workflow). WP6 named/default parameters are implemented on main, and [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation). WP7 acyclic result inference and combined-feature integration are implemented, with [#16 release validation](was_language_extensions_plan.md#issue-16-wp7-release-validation). WP8 whitelist contracts are implemented, with [release gates passed](was_language_extensions_plan.md#wp8-release-validation). WP9 match statements/values are implemented with [release gates passed](was_language_extensions_plan.md#wp9-release-validation). WP10's positional value-producing subset is implemented, with full binding/discard support deferred; WP11–WP12 remain proposed later packages and WP13 requires separate authorization.
 
 ## 1. Goals and non-goals
 
@@ -1012,12 +1012,36 @@ Infer placeholder parameter types from uniquely constraining operations (e.g. `_
 
 ### 12.1 Two staged entry points, one semantic rule
 
+**Implemented subset (#25):** fully supplied positional, value-producing named
+user-function stages work through the core, CLI and browser adapter. Named stage
+arguments, omitted parameters even when defaults exist, and every declared-Void
+stage are explicitly rejected. Bare and empty-parenthesis stages are equivalent;
+input binds to formal 0 with exact types. All concrete types work, including private
+internal ranges under compatible explicit export selection. Host/builtin and
+zero-parameter stages are ineligible. Ordinary calls keep named/default support.
+Pipelines are excluded from defaults/contracts before normalization, including
+skipped operands. Parenthesize whole bare if/match/loop constructs for continuation
+across statement/tail classification boundaries. This is not full WP10 completion.
+The remaining §12 rules describe the approved full target and future closures.
+
+Raw `Expr::Pipeline` retains input and ordered named `PipelineStage` records with
+narrow original UTF-8 spans for stage dependency discovery and diagnostics.
+Typed stages nest existing normalized calls, with unique first `PipelineInput`
+bindings mapped to formal 0; written explicit indices remain zero-based. Injection
+spans cover the preceding prefix; stage errors use stage spans, written expression
+errors argument spans. Checked lowering retains ownership, ID, mapping, type,
+result, scope, default-whitelist and Never-flow checks, including skipped children.
+Input/arguments retain caller control context; parameter validation/contracts
+still run at callee entry, with no ABI change or indirect calls. Source Void-stage
+restrictions are not a whole-source-provenance guarantee for mutable typed trees.
+See [migration](named-call-interface.md#wp10-pipeline-migration-issue-25).
+
 The initial pipeline implementation precedes closures and supports named functions only:
 
 ```
 let result = 10 |> double |> square;
 let result = 10 |> add(5);       // add(10, 5)
-let result = 10 |> clamp(max: 100);
+let result = 10 |> clamp(max: 100); // deferred named-stage slice, not #25
 ```
 
 After local closures (§10) are available, additionally support a known lexical closure binding or an immediately expressed placeholder stage:

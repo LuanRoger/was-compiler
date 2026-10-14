@@ -120,8 +120,17 @@ pub(super) fn emit_normalized(
     let mut bindings = HashMap::with_capacity(sequence.bindings.len());
     let mut explicit_count = 0;
     let mut previous_default = None;
-    for binding in &sequence.bindings {
+    for (position, binding) in sequence.bindings.iter().enumerate() {
         let reason = match binding.origin {
+            CallBindingOrigin::PipelineInput => {
+                if position != 0 {
+                    Some("pipeline input must be the first and only injected binding")
+                } else if sequence.formal_to_binding.first() != Some(&binding.id) {
+                    Some("pipeline input must map to formal zero")
+                } else {
+                    None
+                }
+            }
             CallBindingOrigin::Explicit { argument }
                 if previous_default.is_none() && argument == explicit_count =>
             {

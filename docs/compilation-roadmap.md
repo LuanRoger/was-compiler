@@ -76,8 +76,11 @@ Every recursive component member still needs an annotation in this initial relea
 WP8 whitelist contracts are implemented, with
 [release gates passed](was_language_extensions_plan.md#wp8-release-validation).
 WP9 match statements/values are implemented with frontend/backend integrated;
-[release gates passed](was_language_extensions_plan.md#wp9-release-validation). WP10–WP12 remain proposed; WP13
-requires separate authorization. See
+[release gates passed](was_language_extensions_plan.md#wp9-release-validation).
+WP10's positional value-producing subset (#25) is implemented through nested
+checked normalized calls; raw pipelines retain source spans and stage dependency
+syntax. Named/default stages and final Void remain deferred, so full WP10 is
+incomplete. WP11–WP12 remain proposed; WP13 requires separate authorization. See
 [the #14 inference contract](result-inference-development.md#issue-14-acyclic-chains-and-diamonds). See the
 [interface gate](named-call-interface.md) and [handoff](wp6-wp7-development.md).
 
@@ -801,7 +804,8 @@ records the cross-feature acceptance coverage.
 The default Cargo suite still skips Node cases. WP6/WP7 and their release gates
 are complete; WP8 contracts and their runtime/browser release gates are also complete.
 WP9 frontend/backend are integrated with [release gates passed](was_language_extensions_plan.md#wp9-release-validation);
-WP10–WP12 remain proposed and WP13 requires separate authorization.
+WP10's positional value-producing subset is implemented, with named/default and
+final-Void stages deferred. WP11–WP12 remain proposed and WP13 requires separate authorization.
 External range signatures, range equality, and allocation-free range optimization
 remain out of scope.
 
@@ -836,8 +840,8 @@ Actual coverage: `tests/contracts_frontend.rs`, `tests/contracts_lowering.rs`,
 including current-source rebuilt-browser and full ignored runtime coverage. See
 [WP8's frozen contracts and suite responsibilities](was_language_extensions_plan.md#wp8--whitelist-contracts-spec-13)
 and [spec §13](was_language_extensions_spec.md#13-feature-specification-function-preconditionscontracts).
-WP9 match is implemented as described below; pipelines, closures and placeholders
-remain proposed WP10–WP12. Optional refinement/check elimination belongs to
+WP9 match is implemented as described below; WP10 pipelines have a positional
+value-producing subset. Full WP10 and WP11–WP12 closures/placeholders remain deferred. Optional refinement/check elimination belongs to
 separately authorized future optimization.
 
 ## Implemented language extension: match statements/values (WP9)

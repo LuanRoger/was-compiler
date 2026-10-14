@@ -1,6 +1,6 @@
 # WAS language extensions implementation plan
 
-**Status:** WP1–WP9 implemented; WP5, WP6 (#13), WP7 (#16), and WP8 release gates passed (exact evidence in §5). WP9 frontend/backend are integrated and [release gates passed](#wp9-release-validation). WP10–WP12 remain proposed; WP13 requires separate authorization.
+**Status:** WP1–WP9 implemented; WP5, WP6 (#13), WP7 (#16), and WP8 release gates passed (exact evidence in §5). WP9 frontend/backend are integrated and [release gates passed](#wp9-release-validation). WP10's value-producing positional subset (#25) is implemented; full WP10 remains incomplete. WP11–WP12 remain proposed; WP13 requires separate authorization.
 **Baseline:** Extension specification v0.3.
 
 Follow the [agent guide](../AGENTS.md), [extension specification](was_language_extensions_spec.md),
@@ -813,6 +813,49 @@ release evidence is recorded in [§5](#wp9-release-validation), not inferred fro
 default Cargo success.
 
 ### WP10 — Named-only pipelines (spec §12)
+
+**Issue #25 implemented subset:** left-associative named-user pipelines below OR,
+with input injected into formal 0 and all remaining parameters supplied positionally.
+Bare/empty stages are equivalent. Named stage arguments, omitted parameters (even
+with defaults), and every declared-Void stage are explicitly rejected until later
+slices. Ordinary named/default calls remain unchanged. Every concrete value type,
+including private internal ranges under compatible export selection, is supported.
+Raw stages participate in inference/recursion discovery and whitelist rejection;
+typed stages nest checked normalized direct calls with `PipelineInput` origins.
+Public migration is in [the call interface](named-call-interface.md#wp10-pipeline-migration-issue-25).
+The four `tests/pipelines_{frontend,lowering,runtime,adapters}.rs` suites cover this
+subset at the parent-approved public seams. Node/browser cases remain ignored by
+default. This is not full WP10 release completion. The entry/exit contract below
+describes the full target, including deferred binding/discard rules.
+
+#### Issue #25 subset validation (2026-10-14)
+
+The first source-normalization test failed at the `|>` token before implementation;
+five bounded runtime tests likewise failed at pipeline syntax before integration.
+The approved source/public typed compilation and CLI/current-source browser seams
+are covered by 36 focused tests: 14 frontend, 12 lowering, 5 runtime, 5 adapters.
+Six Node/browser cases remain ignored by default and were run explicitly. Decoded
+assertions establish direct calls, once-only slots, argument/helper order, no
+indirect calls/tables, export eligibility, and owned host snapshots after registry
+mutation. No golden fixture was regenerated or dependency added.
+
+Passed from the repository root with offline builds and installed tooling:
+
+- `cargo check --offline --all-targets`
+- `cargo test --offline --test pipelines_frontend --test pipelines_lowering --test pipelines_runtime --test pipelines_adapters -- --include-ignored`
+- `cargo test --offline`
+- `cargo clippy --offline --all-targets -- -D warnings`
+- `wasm-pack build browser --target web --out-dir ../pkg --out-name was_compiler --mode no-install --no-opt --offline`
+- `node tests/browser.cjs pkg`
+- `cargo test --offline -- --include-ignored` (after the current-source rebuild)
+- `cargo clippy --offline -p was-compiler-browser --target wasm32-unknown-unknown --lib -- -D warnings`
+- Scoped Rust formatting and `git --no-pager diff --check`
+
+Two-axis worktree review found zero hard standards breaches or implementation
+defects. A pipeline snapshot/helper-order coverage gap was filled and follow-up
+spec review found no remaining findings. A low-priority normalized-call finalizer
+duplication observation remains deliberately unchanged. This validates #25's
+subset, not the deferred named/default/final-Void slices or full WP10 release.
 
 **Entry:** WP9, normalized named/default calls from WP6. Add left-associative `|>`
 below logical OR; stage resolves only to named declarations, never an expression

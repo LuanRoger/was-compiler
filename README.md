@@ -150,9 +150,36 @@ and [WP8 status and suites](docs/was_language_extensions_plan.md#wp8--whitelist-
 [WP8 release gates passed](docs/was_language_extensions_plan.md#wp8-release-validation),
 including freshly rebuilt browser bindings and the full ignored runtime suite.
 WP9 match statements/values are implemented with frontend/backend integrated;
-[release gates passed](docs/was_language_extensions_plan.md#wp9-release-validation). Pipelines, closures, and
-placeholders (WP10–WP12) remain proposed; WP13 optimization requires separate
-authorization.
+[release gates passed](docs/was_language_extensions_plan.md#wp9-release-validation).
+WP10's value-producing positional pipeline subset is implemented; named stage
+arguments, omitted parameters/defaults, and final Void stages remain deferred.
+Closures/placeholders (WP11–WP12) remain proposed; WP13 optimization requires
+separate authorization.
+
+### Named-only pipelines (partial WP10)
+
+```text
+fn add(a: number, b: number) { return a + b; }
+fn double(x: number) { return x * 2; }
+fn main() { return 10 |> add(5) |> double; } // 30
+```
+
+`|>` associates left and binds below logical OR. Each stage names a user function:
+input binds to formal 0, and written positional arguments supply every remaining
+formal, with exact types. Bare `value |> double` and `value |> double()` are
+equivalent. Input, arguments, and stages execute once in written order; existing
+parameter validation and contracts run at callee entry. All concrete types work,
+including internal ranges under compatible explicit export selection.
+
+This first subset rejects named stage arguments, omitted parameters even with
+defaults, and every Void stage, including in statement context. Ordinary calls
+retain named/default support. Host functions, builtin `len`, zero-parameter
+functions, callable values, placeholders, and expression callees are ineligible.
+Use user-function wrappers for host effects. Parenthesize whole bare if/match/loop
+constructs to continue with `|>` across statement/tail classification boundaries.
+Pipelines are forbidden in defaults/contracts, including skipped operands.
+See [public migration and checked normalization](docs/named-call-interface.md#wp10-pipeline-migration-issue-25)
+and [partial WP10 scope](docs/was_language_extensions_plan.md#wp10--named-only-pipelines-spec-12).
 
 Local declarations support both `let name = initializer;` and the existing
 `let name: type = initializer;`. Without an annotation, the initializer determines

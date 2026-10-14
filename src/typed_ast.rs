@@ -156,6 +156,7 @@ pub struct TypedCallBinding {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CallBindingOrigin {
+    PipelineInput,
     Explicit { argument: usize },
     Default { formal: usize },
 }

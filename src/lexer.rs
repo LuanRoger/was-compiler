@@ -214,6 +214,9 @@ impl<'a> Lexer<'a> {
                 if self.source_iter.peek().is_some_and(|&&char| char == b'|') {
                     self.advance();
                     self.make_token(TokenKind::OrOr)
+                } else if self.source_iter.peek().is_some_and(|&&char| char == b'>') {
+                    self.advance();
+                    self.make_token(TokenKind::Pipeline)
                 } else {
                     self.make_token(TokenKind::Invalid)
                 }

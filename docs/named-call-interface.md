@@ -26,7 +26,9 @@ WP9 match statements/values are implemented with [release gates passed](was_lang
 including native/current-source rebuilt-browser and full ignored runtime coverage.
 Match retains named/default normalization and raw full-arity ABI; it remains
 outside the shared pure-expression whitelist, including forged typed defaults.
-WP10–WP12 remain proposed, and WP13 requires separate authorization; later packages
+WP10's value-producing positional subset is implemented under #25; named/default
+stage binding and final Void remain deferred. WP11–WP12 remain proposed, and WP13
+requires separate authorization; later packages
 reuse the approved interfaces only after their ordered integration/release gates.
 
 ### Public AST migration
@@ -45,6 +47,34 @@ reuse the approved interfaces only after their ordered integration/release gates
   metadata. Ordinary typed `Call` still takes `Vec<TypedExpr>`. Exhaustive typed
   expression consumers must handle `NormalizedCall(TypedNormalizedCall)` and
   visit its ordered binding values, then its final call.
+
+### WP10 pipeline migration (issue #25)
+
+Raw expression consumers must handle `Expr::Pipeline { input: Box<Expr>,
+input_span: Span, stages: Vec<PipelineStage> }` and visit input then stage arguments.
+`PipelineStage { name: String, args: Vec<CallArgument>, span: Span }` retains the
+written target/arguments. Parser-produced pipelines have at least one stage; bare
+and empty-parenthesis stages have empty argument vectors. Input spans include
+parentheses; stage spans exclude the operator/trivia and include closing parentheses.
+
+Typed consumers add the unit origin `CallBindingOrigin::PipelineInput`; there is
+no typed pipeline node. Each stage becomes an existing `TypedNormalizedCall`, with
+the preceding input/normalized stage stored once as its first binding and mapped
+to formal 0. Written explicit indices remain zero-based, starting after injection.
+Injection spans cover the preceding pipeline prefix. The final call stays direct,
+canonical and full-arity; walker/planning policies retain their existing traversal.
+Checked lowering verifies unique first injection, formal-0 mapping, ownership,
+IDs, scope, exact types/results, Never flow, and existing default-whitelist rules.
+Injection initializers, like explicit initializers, cannot read owned bindings.
+Void is not an injectable value.
+
+#25 implements only fully supplied positional, value-producing user stages.
+Source analysis rejects named stage arguments, every omitted parameter (even a
+default), and every declared-Void result, including after Never. These temporary
+source restrictions do not erase existing normalized-call support for defaults or
+Void direct calls in forged typed input; typed normalization does not retain enough
+source provenance to reconstruct stage discard context. This is not full WP10
+release completion or an ABI change. Ordinary named/default calls stay unchanged.
 
 ### WP8 contract constructor migration
 

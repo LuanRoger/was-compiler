@@ -4,8 +4,8 @@ use thiserror::Error;
 
 use crate::{
     ast::{
-        BinaryOp, Block, CallArgument, Expr, Function, MatchArm, Program, Statement, StatementKind,
-        Type, UnaryOp, ValueBlock,
+        BinaryOp, Block, CallArgument, Expr, Function, MatchArm, PipelineStage, Program, Statement,
+        StatementKind, Type, UnaryOp, ValueBlock,
     },
     flow::Flow,
     host::HostFunctions,
@@ -25,6 +25,9 @@ mod pure_expression;
 
 #[derive(Debug, Error, PartialEq)]
 pub enum SemanticError {
+    #[error("Invalid pipeline: {message} at {span:?}")]
+    InvalidPipeline { message: &'static str, span: Span },
+
     #[error("Invalid match: {message} at {span:?}")]
     InvalidMatch { message: &'static str, span: Span },
 
@@ -186,7 +189,8 @@ pub enum SemanticError {
 impl SemanticError {
     pub fn span(&self) -> Option<Span> {
         match self {
-            Self::InvalidMatch { span, .. }
+            Self::InvalidPipeline { span, .. }
+            | Self::InvalidMatch { span, .. }
             | Self::RecursiveResultAnnotationRequired { span, .. }
             | Self::UnresolvedResultDependency { span, .. }
             | Self::CannotInferFunctionResult { span, .. }
@@ -1202,6 +1206,13 @@ impl SemanticAnalyzer {
                 )
             }
 
+            Expr::Pipeline {
+                input,
+                input_span,
+                stages,
+            } => {
+                return self.analyze_pipeline(input, *input_span, stages, return_type);
+            }
             Expr::Call { func, args } => return self.analyze_call(func, args, span, return_type),
 
             Expr::Array(elements) => {
