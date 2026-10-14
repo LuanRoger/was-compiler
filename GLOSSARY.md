@@ -1,6 +1,6 @@
 # WAS language
 
-Terms for the language's defaults, contracts, and numeric patterns. Proposed extensions
+Terms for the language's defaults, contracts, numeric patterns, and pipelines. Proposed extensions
 remain distinct from implemented language support.
 
 ## Language
@@ -22,3 +22,12 @@ order before its body; a false condition causes a trap.
 A numeric match pattern selecting values between constant bounds, including fractional
 values. It denotes an interval, not the stepped progression of a range value.
 _Avoid_: Range membership pattern, progression pattern
+
+**Named-only pipeline**:
+An ordered chain that supplies its input to the first parameter of each named
+user-function stage; it does not make functions into values. This is proposed WP10
+language support, not an implemented feature.
+
+**Pipeline stage**:
+A function invocation within a pipeline, receiving the preceding input as its first
+argument before any written arguments; omitted remaining arguments use defaults.

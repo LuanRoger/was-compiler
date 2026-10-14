@@ -655,7 +655,9 @@ invalid unused defaults. Existing forged-result/normalization, decoded instructi
 legacy fixture and combined effect suites pass. See [exact release evidence](#issue-16-wp7-release-validation).
 #11's historical commands remain evidence only for that incremental checkpoint.
 
-### WP8 — Whitelist contracts (spec §13)
+<a id="wp8--whitelist-contracts-spec-13"></a>
+
+### WP8 — Whitelist contracts (spec §13): implemented
 
 **Implementation and release validation complete.** Native, freshly rebuilt browser,
 full ignored runtime and Clippy gates passed. See [WP8's separate release evidence](#wp8-release-validation);
@@ -866,6 +868,84 @@ application, placeholder args, callable values or higher-order collection intrin
 **Exit tests:** proposed `tests/pipelines.rs`; precedence/binding/forged normalized
 calls, decoded direct calls/slots, once-only stage effects and default/contract order.
 Include range-returning internal stages under compatible export selection.
+
+**Confirmed design interview decisions (implementation still proposed):**
+
+- Initial stages resolve only to user-defined named functions, not registered hosts
+  or builtin `len`. Preserve ordinary lexical shadowing and `NotCallable` behavior;
+  do not fall back to a function when a local binding shadows its name.
+- Bare `input |> f` and `input |> f()` are equivalent: injection occupies formal 0
+  even when it has a default, and remaining omitted formals use ordinary default
+  rules. Required remaining formals must be supplied; explicitly naming formal 0
+  is a duplicate binding. Zero-parameter functions cannot be stages.
+- A final Void-producing stage is allowed only when its result is discarded.
+  Propagate discard context through discarded block tails, if branches, and
+  statement-match arms; parentheses do not change it. Value-producing contexts,
+  operands, and call arguments receive no discard permission from an outer
+  statement. Reject nonfinal declared-Void stages even after a divergent input.
+- Preserve a dedicated raw pipeline expression with its input and ordered named
+  stage records until semantic analysis. Stages retain their target, written
+  arguments, and narrow origin spans; inference discovery visits stage dependencies,
+  and the shared default/contract whitelist rejects pipeline syntax before erasure.
+  Stage syntax is only a name or a named call, not an expression callee.
+- Normalize typed stages into nested existing `TypedNormalizedCall` sequences.
+  Add `CallBindingOrigin::PipelineInput` instead of treating injection as a written
+  explicit argument. Checked lowering requires this origin to be unique, first,
+  and mapped to formal 0; written explicit indices retain their zero-based meaning.
+  Preserve existing ownership, type, flow, and earlier-formal-read checks. See
+  [the representation decision](adr/0003-normalized-pipeline-injection.md).
+- Preserve bare if/match/loop statement/tail classification. Require parentheses
+  where piping the whole construct would otherwise cross that boundary; add no
+  general postfix chaining or newline-sensitive parsing.
+- Final-Void discard permission is source-semantic validation, not a guarantee of
+  complete source-context reconstruction from forged typed trees. Checked lowering
+  still validates injection, ownership, mapping, concrete types, flow, and user
+  targets; Void cannot serve as an injected value for another stage. Do not add a
+  typed wrapper or public discard-permission flag solely to retain source context.
+- Spans are original UTF-8 byte offsets. Input spans include its whole written
+  expression and parentheses; stage spans cover the name through any closing call
+  parenthesis, excluding `|>` and surrounding trivia. Written arguments keep WP6
+  spans; injected bindings use the preceding pipeline prefix; defaults retain
+  declaration-expression spans. Stage errors use stage spans, explicit argument
+  errors use argument spans, and injected type errors use prefix spans.
+- After existing declaration checking and inference scheduling, check a pipeline's
+  input first, then each stage in written order: resolve target/eligibility, perform
+  WP6 structural binding checks with formal 0 occupied, analyze written arguments,
+  instantiate defaults, and check result/context restrictions. Preserve ordinary
+  call diagnostics. Never does not skip static checks; an earlier static error
+  still terminates analysis.
+- Use `tests/pipelines_frontend.rs`, `tests/pipelines_lowering.rs`,
+  `tests/pipelines_runtime.rs`, and `tests/pipelines_adapters.rs` for separate
+  acceptance/inference/spans/whitelist, forged-tree/decoded-Wasm, bounded effects,
+  and CLI/current-source browser contracts. Runtime/browser cases remain ignored
+  by default. Common offline release gates, rebuilt browser bindings, explicit
+  runtime coverage, optimization-level parity, and range-returning internal stages
+  under compatible export selection remain required.
+- Freeze the public raw shape as `Expr::Pipeline { input: Box<Expr>,
+  input_span: Span, stages: Vec<PipelineStage> }` with
+  `PipelineStage { name: String, args: Vec<CallArgument>, span: Span }`.
+  Parser-produced pipelines have at least one stage; bare and empty-parenthesis
+  stages both have empty arguments. Derive injected-prefix spans from input start
+  through the preceding stage end. The typed change is only the unit origin
+  `CallBindingOrigin::PipelineInput`, without public stage indices or flow/discard
+  annotations. Update exhaustive raw consumers and public migration documentation;
+  retain existing normalized-call walker/planner traversal.
+- Add `SemanticError::InvalidPipeline { message: &'static str, span: Span }`
+  for host/builtin ineligibility, zero-parameter stages, nonfinal declared-Void
+  stages, and final Void stages outside discard context. Reuse existing target,
+  argument-binding, and type errors; malformed syntax stays a parser error, and
+  malformed typed injection uses `CodegenError::InvalidNormalizedCall`. Add
+  exhaustive span extraction and diagnostic message tests without a new error stage.
+
+**Implementation ownership:** diagnostics and coverage form one combined scope,
+including pipeline errors/messages/spans and all four focused test suites. This
+ownership grouping does not merge the test files or weaken their acceptance gates.
+The integration owner retains exclusive ownership of shared AST/parser/semantic
+and stage-error files; the combined scope coordinates shared-file edits through
+that owner rather than introducing overlapping writers.
+
+All interview decisions above are confirmed. Compiler implementation remains
+pending explicit final scope approval; these records are not release evidence.
 
 ### WP11 — Local-only shared-binding closures/direct helpers (spec §10)
 
