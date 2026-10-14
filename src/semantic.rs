@@ -264,7 +264,13 @@ enum BindingMutability {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MatchContext {
     Statement,
+    Value(ExprContext),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExprContext {
     Value,
+    Discard,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -849,7 +855,8 @@ impl SemanticAnalyzer {
             }
 
             StatementKind::Expression(expr) => {
-                let (expr, expr_flow) = self.analyze_expr(expr, span, return_type)?;
+                let (expr, expr_flow) =
+                    self.analyze_expr_in_context(expr, span, return_type, ExprContext::Discard)?;
 
                 flow = expr_flow;
 
@@ -925,6 +932,7 @@ impl SemanticAnalyzer {
         &mut self,
         block: &ValueBlock,
         return_type: ReturnContext,
+        context: ExprContext,
     ) -> Result<(TypedValueBlock, ExprResult, Flow), SemanticError> {
         self.scopes.push(HashMap::new());
 
@@ -932,7 +940,8 @@ impl SemanticAnalyzer {
             let (statements, mut flow) = self.analyze_block(&block.statements, return_type)?;
             let (tail, ty) = match &block.tail {
                 Some(expr) => {
-                    let (expr, tail_flow) = self.analyze_expr(expr, block.span, return_type)?;
+                    let (expr, tail_flow) =
+                        self.analyze_expr_in_context(expr, block.span, return_type, context)?;
 
                     flow = flow.then(tail_flow);
 
@@ -1012,10 +1021,15 @@ impl SemanticAnalyzer {
 
         for arm in arms {
             self.scopes.push(HashMap::new());
-            let result = self.analyze_expr(&arm.body, arm.span, return_type);
+            let arm_context = match context {
+                MatchContext::Statement => ExprContext::Discard,
+                MatchContext::Value(context) => context,
+            };
+            let result =
+                self.analyze_expr_in_context(&arm.body, arm.span, return_type, arm_context);
             self.scopes.pop();
             let (body, flow) = result?;
-            if context == MatchContext::Value {
+            if matches!(context, MatchContext::Value(_)) {
                 result_type = self.join_results(result_type, body.ty, arm.span)?;
             }
             arm_flow = arm_flow.join(flow);
@@ -1027,7 +1041,7 @@ impl SemanticAnalyzer {
         }
         let flow = scrutinee_flow.then(arm_flow);
         let ty = Self::completion_result(
-            if context == MatchContext::Value {
+            if matches!(context, MatchContext::Value(_)) {
                 result_type
             } else {
                 ExprResult::Void
@@ -1042,6 +1056,16 @@ impl SemanticAnalyzer {
         expr: &Expr,
         span: Span,
         return_type: ReturnContext,
+    ) -> Result<(TypedExpr, Flow), SemanticError> {
+        self.analyze_expr_in_context(expr, span, return_type, ExprContext::Value)
+    }
+
+    fn analyze_expr_in_context(
+        &mut self,
+        expr: &Expr,
+        span: Span,
+        return_type: ReturnContext,
+        context: ExprContext,
     ) -> Result<(TypedExpr, Flow), SemanticError> {
         let mut flow = Flow::FALLTHROUGH;
         let (kind, ty) = match expr {
@@ -1086,7 +1110,8 @@ impl SemanticAnalyzer {
             }
 
             Expr::Block(block) => {
-                let (block, ty, block_flow) = self.analyze_value_block(block, return_type)?;
+                let (block, ty, block_flow) =
+                    self.analyze_value_block(block, return_type, context)?;
 
                 flow = block_flow;
 
@@ -1098,9 +1123,11 @@ impl SemanticAnalyzer {
 
                 self.expect_type(Type::Bool, cond.ty, span)?;
 
-                let (then, then_ty, then_flow) = self.analyze_value_block(then, return_type)?;
+                let (then, then_ty, then_flow) =
+                    self.analyze_value_block(then, return_type, context)?;
                 let else_ = else_.as_ref().ok_or(SemanticError::MissingElse { span })?;
-                let (else_, else_ty, else_flow) = self.analyze_value_block(else_, return_type)?;
+                let (else_, else_ty, else_flow) =
+                    self.analyze_value_block(else_, return_type, context)?;
                 let ty = self.join_results(then_ty, else_ty, span)?;
 
                 flow = cond_flow.then(then_flow.join(else_flow));
@@ -1116,8 +1143,13 @@ impl SemanticAnalyzer {
             }
 
             Expr::Match { scrutinee, arms } => {
-                let (scrutinee, arms, ty, match_flow) =
-                    self.analyze_match(scrutinee, arms, span, return_type, MatchContext::Value)?;
+                let (scrutinee, arms, ty, match_flow) = self.analyze_match(
+                    scrutinee,
+                    arms,
+                    span,
+                    return_type,
+                    MatchContext::Value(context),
+                )?;
                 flow = match_flow;
                 (
                     TypedExprKind::Match {
@@ -1211,7 +1243,7 @@ impl SemanticAnalyzer {
                 input_span,
                 stages,
             } => {
-                return self.analyze_pipeline(input, *input_span, stages, return_type);
+                return self.analyze_pipeline(input, *input_span, stages, return_type, context);
             }
             Expr::Call { func, args } => return self.analyze_call(func, args, span, return_type),
 

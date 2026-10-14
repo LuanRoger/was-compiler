@@ -151,18 +151,22 @@ and [WP8 status and suites](docs/was_language_extensions_plan.md#wp8--whitelist-
 including freshly rebuilt browser bindings and the full ignored runtime suite.
 WP9 match statements/values are implemented with frontend/backend integrated;
 [release gates passed](docs/was_language_extensions_plan.md#wp9-release-validation).
-WP10's value-producing pipelines support positional/named arguments and omitted
-trailing defaults (#25/#26); final Void stages and full WP10 release remain deferred.
+WP10 named-only pipelines support positional/named arguments, omitted trailing
+defaults, and final Void stages with discarded results (#27). Implementation is
+complete; [release gates passed](docs/was_language_extensions_plan.md#wp10-release-validation)
+on 2026-10-14, including current-source rebuilt-browser and full ignored runtime coverage.
 Closures/placeholders (WP11–WP12) remain proposed; WP13 optimization requires
 separate authorization.
 
-### Named-only pipelines (partial WP10)
+### Named-only pipelines (WP10 implemented; release gates passed)
 
 ```text
 fn add(a: number, b: number = a) { return a + b; }
 fn double(x: number) { return x * 2; }
 fn main() { return 10 |> add(b: 5) |> double; } // 30
 fn defaults() { return 10 |> add; } // 20
+fn sink(x: number) -> void {}
+fn discarded() { 10 |> add |> sink; } // final Void result is discarded
 ```
 
 `|>` associates left and binds below logical OR. Each stage names a user function:
@@ -174,14 +178,24 @@ Input, written arguments, defaults, and stages execute once; existing parameter
 validation and ordered contracts run before the body. All concrete types work,
 including internal ranges under compatible explicit export selection.
 
-This subset still rejects every Void stage, including in statement context.
-Ordinary calls remain unchanged. Host functions, builtin `len`, zero-parameter
+A final declared-Void stage is allowed only when its result is discarded: directly
+in an expression statement, or through discarded block tails, if branches, and
+match arms. Parentheses are transparent. An outer discard does not permit Void
+pipelines in operands, call arguments, pipeline inputs, initializers, returns, or
+value breaks. Nonfinal declared-Void stages are rejected even after `Never`.
+Expression-form if/match retain their existing structural result joins; discarding
+them does not allow mixed Void/value branches. Ordinary calls and the ABI remain unchanged. Host functions, builtin `len`, zero-parameter
 functions, callable values, placeholders, and expression callees are ineligible.
 Use user-function wrappers for host effects. Parenthesize whole bare if/match/loop
 constructs to continue with `|>` across statement/tail classification boundaries.
 Pipelines are forbidden in defaults/contracts, including skipped operands.
 See [public migration and checked normalization](docs/named-call-interface.md#wp10-pipeline-migration-issue-25)
-and [partial WP10 scope](docs/was_language_extensions_plan.md#wp10--named-only-pipelines-spec-12).
+and [normative WP10 rules](docs/was_language_extensions_spec.md#12-feature-specification-pipeline-operator-).
+[#25](docs/was_language_extensions_plan.md#issue-25-subset-validation-2026-10-14)
+and [#26](docs/was_language_extensions_plan.md#issue-26-subset-validation-2026-10-14)
+validation records remain historical subset evidence, not full-release evidence;
+[#27 release validation](docs/was_language_extensions_plan.md#wp10-release-validation)
+covers complete WP10 support.
 
 Local declarations support both `let name = initializer;` and the existing
 `let name: type = initializer;`. Without an annotation, the initializer determines

@@ -1,5 +1,6 @@
 use was_compiler::{
     CodegenError, Compiler, ExportOptions, OptimizationLevel, Type, codegen,
+    semantic::SemanticError,
     typed_ast::{
         CallBindingOrigin, TypedExpr, TypedExprKind, TypedNormalizedCall, TypedProgram,
         TypedStatementKind,
@@ -969,6 +970,381 @@ fn never_injection_preserves_signature_result_and_checks_unreachable_children() 
     assert!(
         matches!(Compiler::new().compile(&program), Err(CodegenError::InvalidNumberLiteral { span: actual, .. }) if actual == span)
     );
+}
+
+#[test]
+fn final_void_source_emits_once_only_locals_and_a_direct_call_without_drop() {
+    let source = "fn sink(a: number, b: number = a + 1, c: number = b + 2) -> void {}
+        fn main() -> void { ((11 |> sink(c: 33))); }";
+    let mut expected = Compiler::new()
+        .analyze(
+            "fn sink(a: number, b: number = a + 1, c: number = b + 2) -> void {}
+         fn main() -> void { sink(11, c: 33); }",
+        )
+        .unwrap();
+    let TypedStatementKind::Expression(value) = &mut expected.functions[1].body[0].kind else {
+        panic!("expression")
+    };
+    inject(value);
+    let bytes = Compiler::new().compile(&expected).unwrap();
+    Validator::new().validate_all(&bytes).unwrap();
+    let body = Parser::new(0)
+        .parse_all(&bytes)
+        .filter_map(|payload| match payload.unwrap() {
+            Payload::CodeSectionEntry(body) => Some(body),
+            Payload::TableSection(_) | Payload::ElementSection(_) => panic!("no function table"),
+            _ => None,
+        })
+        .nth(1)
+        .unwrap();
+    let locals: Vec<_> = body
+        .get_locals_reader()
+        .unwrap()
+        .into_iter()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(locals, [(1, ValType::F64); 3]);
+    let ops: Vec<_> = body
+        .get_operators_reader()
+        .unwrap()
+        .into_iter()
+        .map(Result::unwrap)
+        .collect();
+    assert!(
+        matches!(ops.as_slice(), [
+        Operator::F64Const { value: input }, Operator::LocalSet { local_index: 0 },
+        Operator::F64Const { value: written }, Operator::LocalSet { local_index: 1 },
+        Operator::LocalGet { local_index: 0 }, Operator::F64Const { value: increment },
+        Operator::F64Add, Operator::LocalSet { local_index: 2 },
+        Operator::LocalGet { local_index: 0 }, Operator::LocalGet { local_index: 2 },
+        Operator::LocalGet { local_index: 1 }, Operator::Call { function_index: 0 }, Operator::End,
+    ] if input.bits() == 11f64.to_bits() && written.bits() == 33f64.to_bits()
+        && increment.bits() == 1f64.to_bits()),
+        "{ops:?}"
+    );
+    for level in [
+        OptimizationLevel::None,
+        OptimizationLevel::Basic,
+        OptimizationLevel::Standard,
+        OptimizationLevel::Aggressive,
+    ] {
+        let mut compiler = Compiler::new();
+        compiler.set_optimization_level(level);
+        assert_eq!(compiler.compile(&expected).unwrap(), bytes);
+        let program = compiler.analyze(source).unwrap();
+        assert_eq!(compiler.compile(&program).unwrap(), bytes);
+        assert_eq!(compiler.compile_source(source).unwrap(), bytes);
+    }
+}
+
+#[test]
+fn final_void_discard_regions_are_empty_and_keep_direct_calls() {
+    let declarations = "fn sink(x: number, y: number = x + 1) -> void {}";
+    for expression in [
+        "{ ((1 |> sink)) }",
+        "(if true { 1 |> sink } else { 2 |> sink() })",
+        "{ if true { { 1 |> sink } } else { 2 |> sink } }",
+        "{ match true { true => { 1 |> sink }, false => { if true { 2 |> sink } else { 3 |> sink } }, } }",
+        "{ match true { true => (1 |> sink), false => 9, }; }",
+    ] {
+        let source = format!("{declarations} fn main() -> void {{ {expression}; }}");
+        let program = Compiler::new()
+            .analyze(&source)
+            .unwrap_or_else(|error| panic!("{expression}: {error}"));
+        let bytes = Compiler::new().compile(&program).unwrap();
+        Validator::new().validate_all(&bytes).unwrap();
+        let body = Parser::new(0)
+            .parse_all(&bytes)
+            .filter_map(|payload| match payload.unwrap() {
+                Payload::CodeSectionEntry(body) => Some(body),
+                _ => None,
+            })
+            .nth(1)
+            .unwrap();
+        let ops: Vec<_> = body
+            .get_operators_reader()
+            .unwrap()
+            .into_iter()
+            .map(Result::unwrap)
+            .collect();
+        let expected_calls = expression.matches("|>").count();
+        assert_eq!(
+            ops.iter()
+                .filter(|op| matches!(op, Operator::Call { function_index: 0 }))
+                .count(),
+            expected_calls,
+            "{expression}"
+        );
+        assert!(
+            !ops.iter()
+                .any(|op| matches!(op, Operator::CallIndirect { .. })),
+            "{expression}"
+        );
+        for op in &ops {
+            if let Operator::Block { blockty } | Operator::If { blockty } = op {
+                assert_eq!(
+                    *blockty,
+                    wasmparser::BlockType::Empty,
+                    "{expression}: {ops:?}"
+                );
+            }
+        }
+        let drops = ops.iter().filter(|op| matches!(op, Operator::Drop)).count();
+        assert_eq!(
+            drops,
+            usize::from(expression.contains("false => 9")),
+            "{expression}: {ops:?}"
+        );
+        for level in [
+            OptimizationLevel::None,
+            OptimizationLevel::Basic,
+            OptimizationLevel::Standard,
+            OptimizationLevel::Aggressive,
+        ] {
+            let mut compiler = Compiler::new();
+            compiler.set_optimization_level(level);
+            assert_eq!(compiler.compile_source(&source).unwrap(), bytes);
+        }
+    }
+}
+
+#[test]
+fn outer_discard_does_not_authorize_void_pipeline_values_or_nonfinal_stages() {
+    for body in [
+        "let x = 1 |> sink;",
+        "let x: number = { 1 |> sink };",
+        "take(1 |> sink);",
+        "(1 |> sink) + 2;",
+        "!(true |> flag);",
+        "(1 |> sink) == (2 |> sink);",
+        "(1 |> sink) |> sink;",
+        "1 |> sink |> sink;",
+        "({ return; 1 } |> sink |> sink);",
+        "({ return; 1 } |> sink) + 2;",
+        "take({ if true { 1 |> sink } else { 2 |> sink } });",
+        "let x = match true { true => { 1 |> sink }, false => { 2 |> sink }, };",
+        "let x = loop { break (1 |> sink); };",
+    ] {
+        let source = format!(
+            "fn sink(x: number) -> void {{}} fn flag(x: bool) -> void {{}}
+            fn take(x: number) -> void {{}} fn main() -> void {{ {body} }}"
+        );
+        assert!(
+            matches!(
+                Compiler::new().analyze(&source),
+                Err(was_compiler::CompileError::Semantic(
+                    SemanticError::InvalidPipeline { .. }
+                ))
+            ),
+            "{body}"
+        );
+    }
+    let source = "fn sink(x: number) -> void {} fn main() -> number { return 1 |> sink; }";
+    assert!(matches!(
+        Compiler::new().analyze(source),
+        Err(was_compiler::CompileError::Semantic(
+            SemanticError::InvalidPipeline { .. }
+        ))
+    ));
+}
+
+#[test]
+fn forged_final_void_reconstructs_never_flow_and_checks_later_bindings() {
+    use was_compiler::typed_ast::{ExprResult, TypedStatement, TypedValueBlock};
+
+    let mut program = Compiler::new()
+        .analyze(
+            "fn sink(a: number, b: number, c: number = a + b) -> void {}
+         fn main() -> void { sink({ return; 1 }, 2); }",
+        )
+        .unwrap();
+    let TypedStatementKind::Expression(value) = &mut program.functions[1].body[0].kind else {
+        panic!("expression")
+    };
+    inject(value);
+    assert_eq!(value.ty, ExprResult::Never);
+    assert_eq!(normalized(value).call.ty, ExprResult::Void);
+    let bytes = Compiler::new().compile(&program).unwrap();
+    Validator::new().validate_all(&bytes).unwrap();
+    let body = Parser::new(0)
+        .parse_all(&bytes)
+        .filter_map(|payload| match payload.unwrap() {
+            Payload::CodeSectionEntry(body) => Some(body),
+            _ => None,
+        })
+        .nth(1)
+        .unwrap();
+    let ops: Vec<_> = body
+        .get_operators_reader()
+        .unwrap()
+        .into_iter()
+        .map(Result::unwrap)
+        .collect();
+    assert!(ops.iter().any(|op| matches!(op, Operator::Return)));
+    assert!(
+        ops.iter()
+            .any(|op| matches!(op, Operator::Call { function_index: 0 }))
+    );
+    assert!(
+        !ops.iter()
+            .any(|op| matches!(op, Operator::LocalSet { local_index: 0 } | Operator::Drop))
+    );
+    for level in [
+        OptimizationLevel::None,
+        OptimizationLevel::Basic,
+        OptimizationLevel::Standard,
+        OptimizationLevel::Aggressive,
+    ] {
+        let mut compiler = Compiler::new();
+        compiler.set_optimization_level(level);
+        assert_eq!(compiler.compile(&program).unwrap(), bytes);
+        let mut forged = program.clone();
+        let TypedStatementKind::Expression(value) = &mut forged.functions[1].body[0].kind else {
+            panic!("expression")
+        };
+        value.ty = ExprResult::Void;
+        assert!(
+            compiler.compile(&forged).is_err(),
+            "{level:?}: forged fallthrough"
+        );
+        let mut forged = program.clone();
+        let TypedStatementKind::Expression(value) = &mut forged.functions[1].body[0].kind else {
+            panic!("expression")
+        };
+        let sequence = normalized(value);
+        sequence.bindings[1].value.kind = TypedExprKind::Number("invalid".into());
+        let span = sequence.bindings[1].span;
+        assert!(
+            matches!(compiler.compile(&forged), Err(CodegenError::InvalidNumberLiteral { span: actual, .. }) if actual == span)
+        );
+    }
+    let TypedStatementKind::Expression(value) = &mut program.functions[1].body[0].kind else {
+        panic!("expression")
+    };
+    let sequence = normalized(value);
+    let span = sequence.bindings[1].span;
+    sequence.bindings[1].origin = CallBindingOrigin::PipelineInput;
+    assert_invalid(
+        &program,
+        "pipeline input must be the first and only injected binding",
+        span,
+    );
+
+    // A typed Void tail needs no source-discard marker, but its category is checked.
+    let mut program = Compiler::new()
+        .analyze("fn sink(a: number, b: number = a) -> void {} fn main() -> void { sink(5); }")
+        .unwrap();
+    let TypedStatementKind::Expression(value) = &mut program.functions[1].body[0].kind else {
+        panic!("expression")
+    };
+    inject(value);
+    let span = program.functions[1].body[0].span;
+    let TypedStatementKind::Expression(value) = &mut program.functions[1].body[0].kind else {
+        panic!("expression")
+    };
+    let tail = value.clone();
+    *value = TypedExpr {
+        kind: TypedExprKind::Block(TypedValueBlock {
+            statements: Vec::<TypedStatement>::new(),
+            tail: Some(Box::new(tail)),
+            span,
+        }),
+        ty: ExprResult::Void,
+    };
+    Validator::new()
+        .validate_all(&Compiler::new().compile(&program).unwrap())
+        .unwrap();
+    value_category_forgery_is_rejected(&program);
+}
+
+fn value_category_forgery_is_rejected(program: &TypedProgram) {
+    let mut forged = program.clone();
+    let TypedStatementKind::Expression(value) = &mut forged.functions[1].body[0].kind else {
+        panic!("expression")
+    };
+    value.ty = Type::Number.into();
+    assert!(Compiler::new().compile(&forged).is_err());
+}
+
+#[test]
+fn forged_final_void_keeps_mapping_ownership_signature_and_default_checks() {
+    use was_compiler::typed_ast::ExprResult;
+
+    for divergent in [false, true] {
+        let input = if divergent { "{ return; 5 }" } else { "5" };
+        let mut baseline = Compiler::new()
+            .analyze(&format!(
+                "fn sink(a: number, b: number, c: number = a + b) -> void {{}}
+             fn main() -> void {{ sink({input}, b: 6); }}",
+            ))
+            .unwrap();
+        let TypedStatementKind::Expression(value) = &mut baseline.functions[1].body[0].kind else {
+            panic!("expression")
+        };
+        inject(value);
+        for case in 0..6 {
+            let mut program = baseline.clone();
+            let span = program.functions[1].body[0].span;
+            let TypedStatementKind::Expression(value) = &mut program.functions[1].body[0].kind
+            else {
+                panic!("expression")
+            };
+            let sequence = normalized(value);
+            let (reason, error_span) = match case {
+                0 => {
+                    sequence.formal_to_binding.swap(0, 1);
+                    (
+                        "pipeline input must map to formal zero",
+                        sequence.bindings[0].span,
+                    )
+                }
+                1 => {
+                    sequence.call.ty = ExprResult::Never;
+                    ("final call result does not match its signature", span)
+                }
+                2 => {
+                    sequence.bindings[1].ty = Type::Bool;
+                    (
+                        "mapped binding and argument types must match the formal",
+                        span,
+                    )
+                }
+                3 => {
+                    sequence.bindings[2].value = TypedExpr {
+                        kind: TypedExprKind::Identifier {
+                            id: sequence.bindings[2].id,
+                            name: "self".into(),
+                        },
+                        ty: Type::Number.into(),
+                    };
+
+                    (
+                        "defaults may only read owned earlier-formal bindings",
+                        sequence.bindings[2].span,
+                    )
+                }
+                4 => {
+                    let TypedExprKind::Call { args, .. } = &mut sequence.call.kind else {
+                        panic!("call")
+                    };
+                    args.swap(0, 1);
+                    (
+                        "final arguments must read owned bindings in formal order",
+                        span,
+                    )
+                }
+                5 => {
+                    let TypedExprKind::Call { name, .. } = &mut sequence.call.kind else {
+                        panic!("call")
+                    };
+                    *name = "wrong".into();
+                    ("final call name does not match its target", span)
+                }
+                _ => unreachable!(),
+            };
+            assert_invalid(&program, reason, error_span);
+        }
+    }
 }
 
 #[test]

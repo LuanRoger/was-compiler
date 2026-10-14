@@ -7,6 +7,7 @@ impl SemanticAnalyzer {
         input_span: Span,
         stages: &[PipelineStage],
         return_type: ReturnContext,
+        context: ExprContext,
     ) -> Result<(TypedExpr, Flow), SemanticError> {
         let (mut value, mut flow) = self.analyze_expr(input, input_span, return_type)?;
         let mut prefix_span = input_span;
@@ -18,7 +19,7 @@ impl SemanticAnalyzer {
             });
         }
 
-        for stage in stages {
+        for (index, stage) in stages.iter().enumerate() {
             let name = &stage.name;
             let span = stage.span;
             if self.lookup_variable(name).is_some() {
@@ -55,10 +56,16 @@ impl SemanticAnalyzer {
                 Some((value, prefix_span, flow)),
             )?;
             if result_type == Type::Void {
-                return Err(SemanticError::InvalidPipeline {
-                    message: "void stages are not supported in this pipeline subset",
-                    span,
-                });
+                let message = if index + 1 != stages.len() {
+                    Some("a nonfinal stage cannot return void")
+                } else if context != ExprContext::Discard {
+                    Some("a final void stage requires a discarded result")
+                } else {
+                    None
+                };
+                if let Some(message) = message {
+                    return Err(SemanticError::InvalidPipeline { message, span });
+                }
             }
             value = stage_value;
             flow = stage_flow;

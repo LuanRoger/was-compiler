@@ -99,6 +99,226 @@ fn run(source: &str, selected: &[&str], assertions: &str) {
 
 #[test]
 #[ignore = "requires Node.js on PATH"]
+fn final_void_discard_contexts_execute_only_selected_nested_tails() {
+    run(
+        r#"
+        fn sink(a: number, b: number = a + 1, c: number = b + 2) -> void
+            requires b == a + 1 requires c > 0 { mark(a); mark(b); mark(c); }
+        fn next(x: number, extra: number = x + 1) -> number { mark(70); return x + extra; }
+                fn chain() -> void { mark(2) |> next() |> sink(c: mark(12)); mark(79); }
+                fn direct() -> void { ((mark(1) |> sink(c: mark(9)))); mark(80); }
+        fn block() -> void { { { mark(2) |> sink } }; mark(81); }
+        fn branches(flag: bool) -> void {
+            (if flag { { mark(3) |> sink() } } else { mark(4) |> sink }); mark(82);
+        }
+        fn arms(flag: bool) -> void {
+            match flag {
+                true => { if flag { { mark(5) |> sink } } else { mark(99) |> sink } },
+                false => { match flag { true => (mark(99) |> sink), false => { mark(6) |> sink }, } },
+            }
+            mark(83);
+        }
+        fn heterogeneous(flag: bool) -> void {
+            match flag { true => ((mark(7) |> sink)), false => mark(8), }
+        }
+        fn unreachable() -> number { return 42; mark(99) |> sink; }
+        "#,
+        &[
+            "chain",
+            "direct",
+            "block",
+            "branches",
+            "arms",
+            "heterogeneous",
+            "unreachable",
+        ],
+        r#"
+        assert.equal(e.chain(), undefined); assert.deepEqual(events.splice(0), [2,70,12,5,6,12,79]);
+                assert.equal(e.direct(), undefined); assert.deepEqual(events.splice(0), [1,9,1,2,9,80]);
+        assert.equal(e.block(), undefined); assert.deepEqual(events.splice(0), [2,2,3,5,81]);
+        assert.equal(e.branches(1), undefined); assert.deepEqual(events.splice(0), [3,3,4,6,82]);
+        assert.equal(e.branches(0), undefined); assert.deepEqual(events.splice(0), [4,4,5,7,82]);
+        assert.equal(e.arms(1), undefined); assert.deepEqual(events.splice(0), [5,5,6,8,83]);
+        assert.equal(e.arms(0), undefined); assert.deepEqual(events.splice(0), [6,6,7,9,83]);
+        assert.equal(e.heterogeneous(1), undefined); assert.deepEqual(events.splice(0), [7,7,8,10]);
+        assert.equal(e.heterogeneous(0), undefined); assert.deepEqual(events.splice(0), [8]);
+        assert.equal(e.unreachable(), 42);
+        "#,
+    );
+}
+
+#[test]
+#[ignore = "requires Node.js on PATH"]
+fn final_void_defaults_and_contracts_observe_captured_handles_and_shared_mutation() {
+    run(
+        r#"
+        fn scalar(a: number, trigger: number, b: number = a + 1, c: number = b + 2)
+            -> void requires a == 7 requires b == 8 requires c == 10 {
+            mark(a); mark(b); mark(c);
+        }
+        fn captured() -> number {
+            let x = 7; x |> scalar(trigger: { x = 9; mark(x) }); return x;
+        }
+        fn sink(xs: number[], expected: number[], trigger: number, copy: number[] = xs,
+                n: number = len(copy), same: bool = copy == expected) -> void
+            requires n == 2 requires same {
+            mark(90); copy[1] = 9; mark(xs[0]);
+        }
+        fn arrays() -> number {
+            let xs = [1, 2]; let alias = xs;
+            xs |> sink(trigger: { alias[0] = 8; xs = [99]; mark(6) }, expected: [8, 2]);
+            mark(alias[1]); mark(xs[0]); return alias[0] + alias[1] + xs[0];
+        }
+        "#,
+        &["captured", "arrays"],
+        r#"
+        assert.equal(e.captured(), 9); assert.deepEqual(events.splice(0), [9,7,8,10]);
+        assert.equal(e.arrays(), 116); assert.deepEqual(events.splice(0), [6,90,8,9,99]);
+        "#,
+    );
+}
+
+#[test]
+#[ignore = "requires Node.js on PATH"]
+fn final_void_transfers_stop_written_arguments_defaults_contracts_and_body() {
+    run(
+        r#"
+        fn sink(xs: number[], a: number, b: number = len(xs)) -> void
+            requires b > 0 { mark(90); }
+        fn input_return() -> number {
+            ({ mark(1); return 7; [] } |> sink(a: mark(99))); mark(99); return 0;
+        }
+        fn argument_return() -> number {
+            [] |> sink(a: { mark(2); return 8; 0 }); mark(99); return 0;
+        }
+        fn stage(x: number) -> number[] { mark(80); return [x]; }
+        fn later_return() -> number {
+            mark(4) |> stage |> sink(a: { mark(5); return 9; 0 }); mark(99); return 0;
+        }
+        fn value_break() -> number {
+            return 10 + loop { [] |> sink(a: { mark(3); break 4; 0 }); break 99; };
+        }
+        fn statement_break() -> number {
+            let n = 0; while n < 3 {
+                n += 1; [] |> sink(a: { mark(n); break; 0 }); mark(99);
+            } return n;
+        }
+        fn continued() -> number {
+            let n = 0; for i in [1, 2, 3] {
+                n += 1; [] |> sink(a: { mark(i); continue; 0 }); mark(99);
+            } return n;
+        }
+        fn input_continue() -> number {
+            let n = 0; for i in 1..=3 {
+                n += 1; ({ mark(i); continue; [] } |> sink(a: mark(99))); mark(99);
+            } return n;
+        }
+        "#,
+        &[
+            "input_return",
+            "argument_return",
+            "later_return",
+            "value_break",
+            "statement_break",
+            "continued",
+            "input_continue",
+        ],
+        r#"
+        assert.equal(e.input_return(), 7); assert.deepEqual(events.splice(0), [1]);
+        assert.equal(e.argument_return(), 8); assert.deepEqual(events.splice(0), [2]);
+        assert.equal(e.later_return(), 9); assert.deepEqual(events.splice(0), [4,80,5]);
+                assert.equal(e.value_break(), 14); assert.deepEqual(events.splice(0), [3]);
+        assert.equal(e.statement_break(), 1); assert.deepEqual(events.splice(0), [1]);
+        assert.equal(e.continued(), 3); assert.deepEqual(events.splice(0), [1,2,3]);
+        assert.equal(e.input_continue(), 3); assert.deepEqual(events.splice(0), [1,2,3]);
+        "#,
+    );
+}
+
+#[test]
+#[ignore = "requires Node.js on PATH"]
+fn final_void_traps_preserve_default_parameter_and_ordered_contract_boundaries() {
+    run(
+        r#"
+        fn fresh() -> number[] { return [1]; }
+        fn literal() -> string { return "void-guard"; }
+        fn sink(xs: number[], a: number, b: number = len(xs)) -> void
+            requires a > 0 requires b > 0 { mark(90); }
+        fn default_trap(xs: number[]) -> void { xs |> sink(a: mark(1)); mark(99); }
+        fn entry_trap(xs: number[]) -> void { xs |> sink(a: mark(2), b: mark(3)); mark(99); }
+        fn false_first(xs: number[], trigger: number, copy: number[] = xs) -> void
+            requires false requires "void-guard" == "void-guard" { mark(91); }
+        fn ordered(xs: number[], first: bool, last: bool = first) -> void
+            requires first requires "void-guard" == "void-guard" requires last { mark(92); }
+        fn invoke_false(xs: number[]) -> void { xs |> false_first(trigger: mark(4)); mark(99); }
+        fn invoke_ordered(xs: number[], first: bool, last: bool) -> void {
+            xs |> ordered(last: { mark(5); last }, first: first); mark(98);
+        }
+        fn body_fail(x: number) -> void { mark(93); let xs = [1]; xs[2]; }
+        fn body_trap() -> void { mark(6) |> body_fail; mark(99); }
+        fn input_trap() -> void { { mark(7); let xs = [1]; xs[2] } |> body_fail; mark(99); }
+        fn argument_trap() -> void {
+            [1] |> sink(a: { mark(8); let xs = [1]; xs[2] }); mark(99);
+        }
+        "#,
+        &[
+            "fresh",
+            "literal",
+            "sink",
+            "default_trap",
+            "entry_trap",
+            "false_first",
+            "ordered",
+            "invoke_false",
+            "invoke_ordered",
+            "body_trap",
+            "input_trap",
+            "argument_trap",
+        ],
+        r#"
+        const h = e.fresh() >>> 0, s = e.literal() >>> 0;
+        function length(handle, n) { new DataView(e.memory.buffer).setUint32(handle + 4, n, true); }
+        function frames(call, expected) {
+            let trace;
+            assert.throws(call, error => {
+                assert.ok(error instanceof WebAssembly.RuntimeError);
+                trace = [...error.stack.matchAll(/wasm-function\[(\d+)\]/g)].map(m => Number(m[1]));
+                assert.ok(trace.length > 0); return true;
+            });
+            assert.deepEqual(events.splice(0), expected); return trace;
+        }
+        onMark = n => { if (n === 1 || n === 2) length(h, 0xffffffff); };
+        const defaultTrace = frames(() => e.default_trap(h), [1]);
+        assert.ok(!defaultTrace.includes(functionIndices.get('sink'))); length(h, 1);
+        const entryTrace = frames(() => e.entry_trap(h), [2,3]);
+        assert.equal(entryTrace[1], functionIndices.get('sink')); length(h, 1);
+        onMark = () => {};
+        assert.equal(e.default_trap(h), undefined); assert.deepEqual(events.splice(0), [1,90,99]);
+        length(s, 0xffffffff);
+        assert.deepEqual(frames(() => e.invoke_false(h), [4]),
+            [functionIndices.get('false_first'), functionIndices.get('invoke_false')]);
+        assert.deepEqual(frames(() => e.invoke_ordered(h, 0, 1), [5]),
+            [functionIndices.get('ordered'), functionIndices.get('invoke_ordered')]);
+        const laterTrace = frames(() => e.invoke_ordered(h, 1, 0), [5]);
+        assert.notEqual(laterTrace[0], functionIndices.get('ordered'));
+        assert.equal(laterTrace.at(-2), functionIndices.get('ordered'));
+        // Even a false first contract must follow validation of every formal.
+        onMark = n => { if (n === 4) length(h, 0xffffffff); };
+        const invalidTrace = frames(() => e.invoke_false(h), [4]);
+        assert.equal(invalidTrace[1], functionIndices.get('false_first')); length(h, 1);
+        onMark = () => {}; length(s, 10);
+        trap(() => e.invoke_ordered(h, 1, 0), [5]);
+        assert.equal(e.invoke_ordered(h, 1, 1), undefined); assert.deepEqual(events.splice(0), [5,92,98]);
+        trap(() => e.sink(0, 1, 1), []);
+        trap(() => e.body_trap(), [6,93]);
+        trap(() => e.input_trap(), [7]);
+        trap(() => e.argument_trap(), [8]);
+        "#,
+    );
+}
+
+#[test]
+#[ignore = "requires Node.js on PATH"]
 fn named_pipeline_arguments_keep_written_order_and_defaults_use_formal_order() {
     run(
         r#"

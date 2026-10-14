@@ -148,8 +148,35 @@ compatibility. Node/browser cases retain their default ignored policy. Match use
 the existing raw ABI and explicit marshaling, with no new host callback or helper
 kind; its scrutinee runs once and only the first matching arm executes. See
 [the frozen match rules](was_language_extensions_spec.md#82-match-expression-syntax).
-WP10–WP12 pipelines/closures/placeholders remain proposed; WP13 optimization
+WP10 named-only pipelines are implemented (#27), with
+[release gates passed](was_language_extensions_plan.md#wp10-release-validation)
+on 2026-10-14. WP11–WP12 closures/placeholders remain proposed; WP13 optimization
 requires separate authorization.
+
+## Named-only pipelines (WP10; release gates passed)
+
+Native compilation supports user-function stages with positional-prefix/named
+arguments and omitted trailing defaults. Input binds formal 0 before written
+arguments and defaults; bare and empty stages are equivalent. Evaluation is once
+only and ordered, followed by callee parameter validation and ordered contracts.
+Host imports and builtin `len` cannot be stages; wrap host effects in a user function.
+
+A final declared-Void stage requires a discarded result: direct expression
+statements and propagated discarded block tails/if branches/match arms, with
+transparent parentheses. Outer discard does not authorize operands, call arguments,
+pipeline inputs or value-producing contexts. Nonfinal declared-Void stages remain
+rejected even after Never; expression if/match structural joins are unchanged.
+See [normative §12](was_language_extensions_spec.md#12-feature-specification-pipeline-operator-).
+
+There is no pipeline runtime API, callback registration shortcut, typed discard
+wrapper or public discard flag. Ordinary binding/defaults, imports, exports and
+explicit marshaling retain the raw full-arity ABI; hosts still supply all registered
+imports, and raw exported invocations do not synthesize defaults. Source-semantic
+discard is not wholly reconstructible from forged typed input; backend injection
+ownership, type and flow checks remain independent. See [migration](named-call-interface.md#wp10-pipeline-migration-issue-25).
+The plan's #25/#26 validation records remain historical subset evidence, not
+full-release evidence. [#27 release validation passed](was_language_extensions_plan.md#wp10-release-validation),
+including current-source rebuilt-browser and full ignored runtime coverage.
 
 ## Export selection in Rust
 

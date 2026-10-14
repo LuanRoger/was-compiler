@@ -333,7 +333,7 @@ fn bare_control_classification_stays_unchanged_and_parentheses_allow_pipelines()
 }
 
 #[test]
-fn stage_eligibility_shadowing_and_subset_restrictions_are_explicit() {
+fn stage_eligibility_shadowing_and_void_restrictions_are_explicit() {
     for (source, message) in [
         (
             "fn f() { return [1] |> len; }",
@@ -344,12 +344,12 @@ fn stage_eligibility_shadowing_and_subset_restrictions_are_explicit() {
             "a stage requires an input parameter",
         ),
         (
-            "fn discard(x: number) {} fn f() { 1 |> discard; }",
-            "void stages are not supported in this pipeline subset",
+            "fn discard(x: number) {} fn f() { let x = 1 |> discard; }",
+            "a final void stage requires a discarded result",
         ),
         (
             "fn discard(x: number) {} fn f() -> number { return (loop {}) |> discard |> missing; }",
-            "void stages are not supported in this pipeline subset",
+            "a nonfinal stage cannot return void",
         ),
     ] {
         let err = error(source);
@@ -391,6 +391,227 @@ fn stage_eligibility_shadowing_and_subset_restrictions_are_explicit() {
             SemanticError::InvalidPipeline { .. }
         ))
     ));
+}
+
+#[test]
+fn final_void_stages_inherit_only_discarded_control_tails() {
+    for body in [
+        "1 |> sink;",
+        "((1 |> sink()));",
+        "{ { 1 |> sink } };",
+        "(if true { 1 |> sink } else { 2 |> sink() });",
+        "if true { 1 |> sink; } else { 2 |> sink; }",
+        "match true { true => (1 |> sink), false => 7, }",
+        "{ match true { true => { 1 |> sink }, false => { 2 |> sink }, } };",
+        "{ if true { { 1 |> sink } } else { 2 |> sink } };",
+        "return; { 1 |> sink };",
+    ] {
+        let source = format!("fn sink(x: number, n: number = x + 1) {{}} fn f() {{ {body} }}");
+        let program = Compiler::new()
+            .analyze(&source)
+            .unwrap_or_else(|err| panic!("{body}: {err}"));
+        Compiler::new().compile(&program).unwrap();
+        assert_eq!(program.functions[1].return_type, Type::Void);
+    }
+}
+
+#[test]
+fn discard_permission_stops_at_values_operands_conditions_and_arguments() {
+    for body in [
+        "let x = { 1 |> sink };",
+        "let x: number = { 1 |> sink };",
+        "return { 1 |> sink };",
+        "take({ 1 |> sink });",
+        "take(if true { 1 |> sink } else { 2 |> sink });",
+        "({ 1 |> sink }) |> take;",
+        "(1 |> sink) + 2;",
+        "-(1 |> sink);",
+        "!(1 |> sink);",
+        "false && ({ 1 |> sink });",
+        "true || ({ 1 |> sink });",
+        "[(1 |> sink)];",
+        "let xs = [1]; xs[(1 |> sink)];",
+        "(1 |> sink)..2;",
+        "1..2 by (1 |> sink);",
+        "1 in (1 |> sink);",
+        "if ({ 1 |> sink }) {}",
+        "while ({ 1 |> sink }) {}",
+        "for x in ({ 1 |> sink }) {}",
+        "match ({ 1 |> sink }) { _ => 0, }",
+        "let x = match true { _ => { 1 |> sink }, };",
+        "let x = loop { break { 1 |> sink }; };",
+        "let xs = [1]; xs[0] = { 1 |> sink };",
+        "let x = 1; x += { 1 |> sink };",
+    ] {
+        let source = format!(
+            "fn sink(x: number) {{}} fn take(x: number) -> number {{ return x; }} fn f() {{ {body} }}"
+        );
+        let stage_start = source.find("|> sink").unwrap() + 3;
+        assert_eq!(
+            error(&source),
+            SemanticError::InvalidPipeline {
+                message: "a final void stage requires a discarded result",
+                span: Span::new(stage_start, stage_start + 4),
+            },
+            "{body}"
+        );
+    }
+}
+
+#[test]
+fn discarded_expression_joins_stay_structural_and_statement_matches_discard_each_arm() {
+    for body in [
+        "(if true { 1 |> sink } else { 2 });",
+        "{ match true { true => (1 |> sink), false => 2, } };",
+        "(match true { true => (1 |> sink), false => 2, });",
+    ] {
+        let source = format!("fn sink(x: number) {{}} fn f() {{ {body} }}");
+        assert!(
+            matches!(
+                error(&source),
+                SemanticError::TypeMismatch {
+                    expected: Type::Void,
+                    found: Type::Number,
+                    ..
+                }
+            ),
+            "{body}"
+        );
+    }
+    Compiler::new()
+        .compile_source(
+            "fn sink(x: number) {} fn f() { match true { true => { 1 |> sink }, false => 2, }; }",
+        )
+        .unwrap();
+    // Ordinary Void calls retain their prior source semantics in value blocks.
+    assert!(matches!(
+        error("fn sink(x: number) {} fn f() { let x = { sink(1) }; }"),
+        SemanticError::InvalidVoidType { name, .. } if name == "x"
+    ));
+    Compiler::new()
+        .compile_source("fn sink(x: number) {} fn f() { (if true { sink(1) } else { sink(2) }); }")
+        .unwrap();
+}
+
+#[test]
+fn void_stage_context_errors_keep_exact_spans_after_never_and_skipped_children() {
+    let declarations =
+        "fn sink(x: number, n: number = x + 1) {} fn id(x: number) -> number { return x; }";
+    for (body, message, stage) in [
+        (
+            "let x = (1) /*é🦀*/ |> sink();",
+            "a final void stage requires a discarded result",
+            "sink()",
+        ),
+        (
+            "let x = ({ return; 1 }) |> sink;",
+            "a final void stage requires a discarded result",
+            "sink",
+        ),
+        (
+            "return; (1 |> sink) + 2;",
+            "a final void stage requires a discarded result",
+            "sink",
+        ),
+        (
+            "false && ({ 1 |> sink });",
+            "a final void stage requires a discarded result",
+            "sink",
+        ),
+        (
+            "(loop {}) |> sink |> id;",
+            "a nonfinal stage cannot return void",
+            "sink",
+        ),
+        (
+            "1 |> sink(n: { return; 2 }) |> id;",
+            "a nonfinal stage cannot return void",
+            "sink(n: { return; 2 })",
+        ),
+        (
+            "({ return; 1 }) |> sink |> missing;",
+            "a nonfinal stage cannot return void",
+            "sink",
+        ),
+    ] {
+        let source = format!("{declarations}\r\n// λ\r\nfn f() {{\r\n\t{body}\r\n}}");
+        let start = source.rfind("|> sink").unwrap() + 3;
+        let expected_span = Span::new(start, start + stage.len());
+        let err = error(&source);
+        assert_eq!(
+            err,
+            SemanticError::InvalidPipeline {
+                message,
+                span: expected_span
+            },
+            "{body}"
+        );
+        assert_eq!(err.span(), Some(expected_span));
+        assert_eq!(
+            err.to_string(),
+            format!("Invalid pipeline: {message} at {expected_span:?}")
+        );
+    }
+    let source = format!("{declarations} fn f() {{ ({{ return; 1 }}) |> sink; }}");
+    let program = Compiler::new().analyze(&source).unwrap();
+    let TypedStatementKind::Expression(value) = &program.functions[2].body[0].kind else {
+        panic!("expression")
+    };
+    assert_eq!(value.ty, ExprResult::Never);
+    let TypedExprKind::NormalizedCall(sequence) = &value.kind else {
+        panic!("normalized call")
+    };
+    assert_eq!(sequence.call.ty, ExprResult::Void);
+    wasmparser::Validator::new()
+        .validate_all(&Compiler::new().compile(&program).unwrap())
+        .unwrap();
+}
+
+#[test]
+fn void_stages_keep_declaration_inference_and_written_error_precedence() {
+    for (source, expected_name) in [
+        (
+            "fn sink(x: number, n: number) {} fn f() { missing |> sink(also_missing); }",
+            "missing",
+        ),
+        (
+            "fn sink(x: number, n: number) {} fn f() { 1 |> sink(missing) |> absent; }",
+            "missing",
+        ),
+        (
+            "fn sink(x: number, n: number) {} fn f() { let x = 1 |> sink(missing); }",
+            "missing",
+        ),
+        (
+            "fn sink(x: number, n: number = missing) {} fn f() { unknown |> sink; }",
+            "missing",
+        ),
+    ] {
+        assert!(
+            matches!(error(source), SemanticError::UndefinedVariable { name, .. } if name == expected_name),
+            "{source}"
+        );
+    }
+    assert!(matches!(
+        error("fn sink(x: number, n: number) {} fn f() { let x = 1 |> sink(bad: unknown); }"),
+        SemanticError::UnknownArgument { .. }
+    ));
+    let source = "fn f() { 1 |> sink; } fn sink(x: number, n: number = x + 1) { x |> action; } fn action(x: number) {}";
+    let program = Compiler::new().analyze(source).unwrap();
+    assert!(
+        program
+            .functions
+            .iter()
+            .all(|function| function.return_type == Type::Void)
+    );
+    Compiler::new().compile(&program).unwrap();
+    assert!(matches!(
+        error("fn f(x: number) { x |> g; } fn g(x: number) { x |> f; }"),
+        SemanticError::RecursiveResultAnnotationRequired { .. }
+    ));
+    Compiler::new().compile_source(
+        "fn f(x: number) -> void { if x > 0 { (x - 1) |> g; } } fn g(x: number) -> void { x |> f; }",
+    ).unwrap();
 }
 
 #[test]

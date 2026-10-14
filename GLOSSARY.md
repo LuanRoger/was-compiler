@@ -30,3 +30,7 @@ user-function stage; it does not make functions into values.
 **Pipeline stage**:
 A function invocation within a pipeline, receiving the preceding input as its first
 argument before any written arguments; omitted remaining arguments use defaults.
+
+**Final Void stage**:
+The last invocation in a named-only pipeline whose declared result is void,
+permitted only where the pipeline's result is discarded.

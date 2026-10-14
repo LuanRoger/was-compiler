@@ -271,8 +271,41 @@ validation. `tests/match_adapters.rs` covers CLI/browser byte and diagnostic par
 ABIs or explicit descriptor marshaling. Runtime/browser tests retain their default
 ignored policy; rebuild bindings after core changes before browser validation.
 See [the frozen match rules](was_language_extensions_spec.md#82-match-expression-syntax).
-Pipelines, closures, and placeholders (WP10–WP12) remain proposed;
+WP10 named-only pipelines are implemented (#27), with
+[release gates passed](was_language_extensions_plan.md#wp10-release-validation)
+on 2026-10-14. WP11–WP12 closures/placeholders remain proposed;
 WP13 optimization requires separate authorization.
+
+## Named-only pipelines (WP10; release gates passed)
+
+The shared core supports named user-function stages with positional-prefix/named
+arguments and omitted trailing defaults. Input occupies formal 0 before written
+arguments/defaults; bare and empty stages are equivalent. Evaluation remains once
+only and ordered, with callee parameter validation and ordered contracts. Host
+imports and builtin `len` are ineligible stages; use user-function wrappers for
+host effects. No new JavaScript API, implicit callback or marshaling is introduced.
+Ordinary calls/defaults and raw full-arity exports remain unchanged; JavaScript
+invocations still supply all machine arguments and do not synthesize defaults.
+
+Final declared-Void stages require discarded results: direct expression statements
+and propagated discarded block tails/if branches/match arms, with transparent
+parentheses. Outer discard does not authorize operands, call arguments, pipeline
+inputs or value-producing contexts. Nonfinal declared Void remains rejected even
+after Never; structural joins for expression if/match are unchanged. Shared
+`InvalidPipeline` diagnostics use stage spans and the messages
+`a nonfinal stage cannot return void` and
+`a final void stage requires a discarded result`.
+
+There is no typed wrapper or public discard flag. Source-semantic discard is not
+wholly reconstructible from forged typed input; backend injection ownership, type
+and flow checks remain independent. See [normative §12](was_language_extensions_spec.md#12-feature-specification-pipeline-operator-)
+and [migration](named-call-interface.md#wp10-pipeline-migration-issue-25).
+WP10 is implemented, and [#27 release validation passed](was_language_extensions_plan.md#wp10-release-validation),
+including a current-source browser rebuild, 25 browser smoke cases and the full
+ignored runtime suite. The plan's #25/#26 records remain historical subset evidence,
+not full-release evidence. Future browser validation still requires freshly rebuilt
+bindings; runtime/browser cases remain ignored by default. Existing generated `pkg/`
+output alone is not current-source evidence.
 
 ## Function preconditions (WP8)
 

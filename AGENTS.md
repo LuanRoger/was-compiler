@@ -134,8 +134,10 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   component member still needs an explicit result in the initial release. WP8 implements
   whitelist `requires` contracts; [release gates passed](docs/was_language_extensions_plan.md#wp8-release-validation).
   WP9 match statements/values are implemented with frontend/backend integrated;
-  [release gates passed](docs/was_language_extensions_plan.md#wp9-release-validation). WP10's value-producing subset (#25/#26) implements positional/named/default
-  stage binding; every final Void stage and full WP10 release remain deferred.
+  [release gates passed](docs/was_language_extensions_plan.md#wp9-release-validation).
+  WP10 named-only pipelines implement positional/named/default stage binding
+  and final-Void discard support (#27);
+    [release gates passed](docs/was_language_extensions_plan.md#wp10-release-validation) on 2026-10-14.
   WP11–WP12 remain proposed; WP13
   optimization requires separate authorization.
   Preserve `target/wp7-inference` when cleaning generated output. Before changing defaults, call binding, or
@@ -202,28 +204,39 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
 
 ## Compatibility contracts
 
-### Named-only pipelines (partial WP10, issues #25/#26)
+### Named-only pipelines (WP10 implemented, #27 release gates passed)
 
-- Before changing pipelines, read [WP10's frozen contract and subset status](docs/was_language_extensions_plan.md#wp10--named-only-pipelines-spec-12)
+- Before changing pipeline binding, discard propagation, diagnostics or lowering,
+  read [the normative rules](docs/was_language_extensions_spec.md#12-feature-specification-pipeline-operator-)
   and [public migration](docs/named-call-interface.md#wp10-pipeline-migration-issue-25).
+  The plan's #25/#26 validation records are historical subset evidence, not #27 release evidence.
 - Raw pipelines retain input/prefix spans and ordered named stages for inference
   dependency discovery, whitelist rejection and narrow diagnostics. Typed stages
   nest existing normalized direct calls; `PipelineInput` must be unique, first,
   mapped to formal 0, and cannot read sequence-owned bindings. Written explicit
   indices still start at zero. Preserve ordinary named/default calls and independent
   structural/planning policies.
-- The current subset reuses ordinary positional-prefix/named/default binding with
+- Stages reuse ordinary positional-prefix/named/default binding with
   formal 0 already occupied, even when defaulted; naming it is a duplicate. Bare
   and empty stages both use remaining defaults. Keep declaration-scope remapping,
   earlier-formal reads, written argument spans and declaration-default spans.
-  Every declared-Void stage remains rejected, including after Never. Preserve caller
-  control context, once-only input/written/default order, parameter validation and
-  ordered contracts. Pipelines stay outside default/contract whitelists. The later
-  discard slice does not land incidentally.
+  Preserve caller control context, once-only input/written/default order, parameter
+  validation and ordered contracts. Pipelines stay outside default/contract whitelists.
+- Final declared-Void stages require a discarded result: direct expression statements
+  and propagated discarded block tails/if branches/match arms; parentheses are transparent.
+  Operands, call arguments, pipeline inputs and value-producing contexts receive no
+  permission from an outer discard. Nonfinal declared Void is rejected even after Never.
+  Preserve structural joins for expression if/match. `InvalidPipeline` messages are
+  `a nonfinal stage cannot return void` and `a final void stage requires a discarded result`.
+- Discard context is source-semantic, with no typed wrapper or public discard flag.
+  It is not wholly reconstructible from forged typed input; retain independent backend
+  injection ownership, type and flow checks. Ordinary calls, defaults and ABI are unchanged.
 - `tests/pipelines_frontend.rs`, `tests/pipelines_lowering.rs`,
   `tests/pipelines_runtime.rs`, and `tests/pipelines_adapters.rs` own source,
   forged-tree/decoded, bounded-effects and native/current-source browser coverage.
-  Keep runtime/browser cases ignored by default; full WP10 remains incomplete.
+  Keep runtime/browser cases ignored by default. WP10 is implemented;
+  [#27 release validation passed](docs/was_language_extensions_plan.md#wp10-release-validation),
+  including current-source rebuilt-browser and full ignored runtime coverage.
 
 These are deliberate semantics, not implementation accidents. Preserve them in
 refactors; specify and test any intentional behavior change explicitly.

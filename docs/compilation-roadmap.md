@@ -77,10 +77,11 @@ WP8 whitelist contracts are implemented, with
 [release gates passed](was_language_extensions_plan.md#wp8-release-validation).
 WP9 match statements/values are implemented with frontend/backend integrated;
 [release gates passed](was_language_extensions_plan.md#wp9-release-validation).
-WP10's positional value-producing subset (#25) is implemented through nested
-checked normalized calls; raw pipelines retain source spans and stage dependency
-syntax. Named/default stages and final Void remain deferred, so full WP10 is
-incomplete. WP11–WP12 remain proposed; WP13 requires separate authorization. See
+WP10 named-only pipelines are implemented through nested checked normalized calls,
+including named/default binding and final-Void discard support (#27); raw pipelines
+retain source spans and stage dependency syntax.
+[Release gates passed](was_language_extensions_plan.md#wp10-release-validation)
+on 2026-10-14. WP11–WP12 remain proposed; WP13 requires separate authorization. See
 [the #14 inference contract](result-inference-development.md#issue-14-acyclic-chains-and-diamonds). See the
 [interface gate](named-call-interface.md) and [handoff](wp6-wp7-development.md).
 
@@ -804,8 +805,8 @@ records the cross-feature acceptance coverage.
 The default Cargo suite still skips Node cases. WP6/WP7 and their release gates
 are complete; WP8 contracts and their runtime/browser release gates are also complete.
 WP9 frontend/backend are integrated with [release gates passed](was_language_extensions_plan.md#wp9-release-validation);
-WP10's positional value-producing subset is implemented, with named/default and
-final-Void stages deferred. WP11–WP12 remain proposed and WP13 requires separate authorization.
+WP10 named-only pipelines, including named/default and final-Void discard support,
+are implemented (#27), with [release validation passed](was_language_extensions_plan.md#wp10-release-validation). WP11–WP12 remain proposed and WP13 requires separate authorization.
 External range signatures, range equality, and allocation-free range optimization
 remain out of scope.
 
@@ -840,8 +841,9 @@ Actual coverage: `tests/contracts_frontend.rs`, `tests/contracts_lowering.rs`,
 including current-source rebuilt-browser and full ignored runtime coverage. See
 [WP8's frozen contracts and suite responsibilities](was_language_extensions_plan.md#wp8--whitelist-contracts-spec-13)
 and [spec §13](was_language_extensions_spec.md#13-feature-specification-function-preconditionscontracts).
-WP9 match is implemented as described below; WP10 pipelines have a positional
-value-producing subset. Full WP10 and WP11–WP12 closures/placeholders remain deferred. Optional refinement/check elimination belongs to
+WP9 match is implemented as described below; WP10 named-only pipelines are
+implemented with [#27 release validation passed](was_language_extensions_plan.md#wp10-release-validation). WP11–WP12 closures/placeholders
+remain proposed. Optional refinement/check elimination belongs to
 separately authorized future optimization.
 
 ## Implemented language extension: match statements/values (WP9)
@@ -896,6 +898,44 @@ reservations and native/rebuilt-browser compatibility. Node/browser cases retain
 the default ignored policy; optimization-level parity remains unchanged. See
 [spec §8.2](was_language_extensions_spec.md#82-match-expression-syntax) and
 [the frozen WP9 interview and suites](was_language_extensions_plan.md#wp9--match-statementsvalues-spec-8-implemented).
+
+## Implemented language extension: named-only pipelines (WP10; release gates passed)
+
+Named user-function stages inject the once-evaluated input into formal 0, then
+reuse ordinary positional-prefix/named binding and trailing defaults. Injection
+occupies formal 0 even when defaulted; bare and empty stages are equivalent.
+Input, written arguments and defaults execute once in order, retaining caller
+control context and callee parameter validation/ordered contracts. Hosts, builtin
+`len`, zero-parameter functions, callable values and expression callees are not
+eligible stages. Ordinary calls, default policy and raw full-arity ABI are unchanged.
+
+#27 completes final-Void support only for discarded results: direct expression
+statements and propagated discarded block tails/if branches/match arms, with
+transparent parentheses. Outer discard does not authorize operands, call arguments,
+pipeline inputs or value-producing contexts. Nonfinal declared Void is rejected
+even after Never; expression if/match structural joins remain unchanged.
+
+Raw pipelines preserve inference dependencies, whitelist rejection and source
+spans. Typed stages remain nested normalized direct calls with unique first
+`PipelineInput` mapped to formal 0; no typed wrapper or public discard flag is
+introduced. Source-semantic discard cannot be wholly reconstructed from forged
+typed input; backend injection ownership, type and flow checks remain independent.
+See [normative §12](was_language_extensions_spec.md#12-feature-specification-pipeline-operator-)
+and [migration](named-call-interface.md#wp10-pipeline-migration-issue-25).
+
+The four `tests/pipelines_{frontend,lowering,runtime,adapters}.rs` suites own source,
+forged-tree/decoded lowering, bounded effects and native/current-source browser
+contracts. Runtime/browser tests remain ignored by default. WP10 is implemented;
+[#27 release gates passed](was_language_extensions_plan.md#wp10-release-validation)
+on 2026-10-14. Parent-run validation includes default Cargo tests, native/browser
+Clippy, a current-source browser rebuild, 25 browser smoke cases, and the full
+include-ignored suite. Focused suites passed with 23 frontend, 25 lowering,
+14 runtime and 6 adapter tests, including ignored cases against fresh browser
+bindings. The plan's
+[#25](was_language_extensions_plan.md#issue-25-subset-validation-2026-10-14) and
+[#26](was_language_extensions_plan.md#issue-26-subset-validation-2026-10-14) records
+are historical subset validation, not final-Void release evidence. WP11–WP12 remain
+proposed; WP13 requires separate authorization.
 
 ## Remaining work
 

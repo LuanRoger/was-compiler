@@ -39,23 +39,40 @@ WP8 whitelist contracts are implemented;
 [release gates passed](was_language_extensions_plan.md#wp8-release-validation),
 including rebuilt-browser and full ignored runtime coverage.
 WP9 match statements/values are implemented with frontend/backend integrated;
-[release gates passed](was_language_extensions_plan.md#wp9-release-validation). WP10's positional value-producing subset is implemented; full WP10 is incomplete.
+[release gates passed](was_language_extensions_plan.md#wp9-release-validation). WP10 named-only pipelines are implemented, including named/default binding and
+final-Void discard support (#27);
+[release gates passed](was_language_extensions_plan.md#wp10-release-validation)
+on 2026-10-14, including current-source rebuilt-browser and full ignored runtime coverage.
 WP11–WP12 remain proposed; WP13
 optimization needs separate authorization.
 See [the #14 contract](result-inference-development.md#issue-14-acyclic-chains-and-diamonds) and the
 [named/default interface](named-call-interface.md) for migration and the
 [development handoff](wp6-wp7-development.md) for historical worktree evidence.
 
-### Named-only pipeline restrictions (partial WP10)
+### Named-only pipeline restrictions (WP10; release gates passed)
 
 `value |> function(args)` injects into formal 0 of a named user function and
 supports positional-prefix/named remaining arguments and omitted trailing defaults.
 Injection occupies formal 0 even when defaulted; naming it is a duplicate. Bare
-and empty-parenthesis stages are equivalent. Every Void stage remains deferred;
-ordinary calls remain unchanged. Host/builtin stages, zero-parameter stages, callable values,
-placeholders and expression callees are rejected. User-function wrappers can call
+and empty-parenthesis stages are equivalent. A final declared-Void stage requires
+a discarded result: a direct expression statement, or propagated discarded block
+tails/if branches/match arms, with transparent parentheses. An outer discard grants
+no permission to operands, call arguments, pipeline inputs or value-producing
+contexts. Nonfinal declared-Void stages are rejected even after Never. Existing
+structural joins for expression if/match remain unchanged; outer discard does not
+permit mixed Void/value branches. Ordinary calls, defaults and ABI remain unchanged.
+Host/builtin stages, zero-parameter stages, callable values, placeholders and
+expression callees are rejected. User-function wrappers can call
 hosts. Pipelines remain outside the default/contract whitelist. Parenthesize bare
 if/match/loop constructs for continuation across statement/tail boundaries.
+
+Discard is source-semantic context, not a typed wrapper or public discard flag;
+it is not wholly reconstructible from forged typed input. Backend injection
+ownership, type and flow checks remain independent. See [normative §12](was_language_extensions_spec.md#12-feature-specification-pipeline-operator-)
+and [migration](named-call-interface.md#wp10-pipeline-migration-issue-25).
+The plan's #25/#26 validation records remain historical subset evidence, not
+full-release evidence; [#27 release validation passed](was_language_extensions_plan.md#wp10-release-validation)
+for complete WP10 support.
 
 ### Initial result-inference restrictions
 
@@ -252,7 +269,9 @@ browser bindings and the full ignored-test run. Default tests still skip Node ca
 Match statements/values are implemented, with [release gates passed](was_language_extensions_plan.md#wp9-release-validation),
 including current-source rebuilt-browser and full ignored runtime coverage. The [normative match rules](was_language_extensions_spec.md#82-match-expression-syntax)
 and [frozen design interview](was_language_extensions_plan.md#wp9--match-statementsvalues-spec-8-implemented)
-separate this support from partial WP10 pipelines and proposed closures/placeholders.
+describe implemented language support alongside WP10 pipelines with
+[release validation passed](was_language_extensions_plan.md#wp10-release-validation);
+closures/placeholders remain proposed.
 
 - Scrutinees that complete must be number/bool/string, not arrays, ranges or Void.
   Patterns are wildcard, exact scalar literals, numeric comparisons and constant

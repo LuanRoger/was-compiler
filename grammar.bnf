@@ -193,12 +193,19 @@
 <pipeline_stage> ::= <identifier>
                      ( <ws> "(" <ws> <argument_list>? <ws> ")" )?
 
-# WP10's implemented subset supplies input to formal 0 of user-defined functions
-# and requires all remaining formals positionally, even when defaults exist.
-# Named stage arguments and every Void stage are rejected. Bare and empty-call
-# stages are equivalent. Pipelines associate left, below logical OR; |>'s bytes
-# must be contiguous. Defaults/contracts reject pipelines before normalization.
+# WP10 supplies input to formal 0 of named user-defined functions, even when that
+# formal has a default; naming formal 0 is a duplicate. Remaining formals use
+# ordinary positional-prefix/named binding and omitted trailing defaults. Bare and
+# empty-call stages are equivalent. Pipelines associate left, below logical OR;
+# |>'s bytes must be contiguous. Defaults/contracts reject pipelines before normalization.
+# A final declared-Void stage requires a discarded result: direct expression
+# statements and propagated discarded block tails/if branches/match arms, with
+# transparent parentheses. Outer discard does not authorize operands, call arguments,
+# pipeline inputs or value-producing contexts. Nonfinal declared Void is rejected
+# even after Never. Expression if/match structural joins remain unchanged.
 # Parenthesize bare if/match/loop for continuation across statement/tail boundaries.
+# Implementation is complete (#27); WP10 release gates passed on 2026-10-14.
+# Evidence: docs/was_language_extensions_plan.md#wp10-release-validation.
 
 
 <logical_or_expression> ::= <logical_and_expression>

@@ -48,6 +48,23 @@ fn text_default(s: string, same: string = s) -> bool { return s == same; }
 fn strings() -> bool { return "é🦀" |> text_default; }
 fn ordinary(a: number = 2, b: number = a + 1) -> number { return a * 10 + b; }
 fn ordinary_calls() -> number { return ordinary() + ordinary(b: 4, a: 3); }
+fn sink(a: number, b: number = a + 1) -> void
+    requires a > 0 requires b > a { mark(a); mark(b); }
+fn sink_wrapper() { 4 |> sink; }
+fn sink_trap_wrapper() { mark(1) |> sink(b: mark(0)); mark(99); }
+fn discarded(flag: bool) -> number {
+    mark(1) /* é🦀 */ |> identity |> /* λ */ sink(
+        b: mark(2)
+    );
+    (3 |> sink());
+    { /* é🦀: discarded tail */ (4 |> sink) };
+    if flag { 6 |> sink } else { 8 |> sink() }
+    (if flag { 10 |> sink } else { 12 |> sink });
+    match flag { true => 14 |> sink, false => 16 |> sink(), }
+    { if flag { { (18 |> sink) } } else { 20 |> sink } };
+    return 65;
+}
+fn discarded_never() -> number { (loop {}) |> sink; }
 "#;
 const SELECTED: &[&str] = &[
     "main",
@@ -65,9 +82,13 @@ const SELECTED: &[&str] = &[
     "default_chain",
     "arrays",
     "strings",
+    "sink",
+    "sink_wrapper",
+    "sink_trap_wrapper",
+    "discarded",
+    "discarded_never",
 ];
 
-// #26 adds named/default binding, but every declared-Void stage remains rejected.
 const ERRORS: &[(&str, &str)] = &[
     ("// é🦀\r\n\tfn f() { return 1 |> mark; }\r\n", "mark"),
     ("// é🦀\r\n\tfn f() { return [1] |> len(); }\r\n", "len()"),
@@ -78,26 +99,6 @@ const ERRORS: &[(&str, &str)] = &[
     (
         "// é🦀\r\n\tfn f() { return 1 |> pair; }\r\nfn pair(a: number, b: number) -> number { return a + b; }",
         "pair",
-    ),
-    (
-        "// é🦀\r\n\tfn f() { 1 |> discard(); }\r\nfn discard(a: number) {}",
-        "discard()",
-    ),
-    (
-        "// é🦀\r\n\tfn f() { return 1 |> discard; }\r\nfn discard(a: number) {}",
-        "discard",
-    ),
-    (
-        "// é🦀\r\n\tfn f() { 1 |> discard(b: 2); }\r\nfn discard(a: number, b: number = a + 1) {}",
-        "discard(b: 2)",
-    ),
-    (
-        "// é🦀\r\n\tfn f() { 1 |> discard(); }\r\nfn discard(a: number, b: number = a + 1) {}",
-        "discard()",
-    ),
-    (
-        "// é🦀\r\n\tfn f() { return 1 |> discard |> identity; }\r\nfn discard(a: number) {}\r\nfn identity(a: number) -> number { return a; }",
-        "discard",
     ),
     (
         "// é🦀\r\n\tfn f() { return (\"é🦀\") |> numeric; }\r\nfn numeric(a: number) -> number { return a; }",
@@ -111,7 +112,99 @@ const ERRORS: &[(&str, &str)] = &[
         "// é🦀\r\n\tfn f() { return 1 |> text |> numeric; }\r\nfn text(a: number) -> string { return \"é\"; }\r\nfn numeric(a: number) -> number { return a; }",
         "1 |> text",
     ),
+    (
+        "// é🦀\r\n\tfn f() { return (\"é🦀\" /* λ */\r\n\t) |> numeric; }\r\nfn numeric(a: number) -> number { return a; }",
+        "(\"é🦀\" /* λ */\r\n\t)",
+    ),
+    (
+        "// é🦀\r\n\tfn f() { return 1 /* λ */ |> text(\r\n\t) /* 🦀 */ |> numeric; }\r\nfn text(a: number) -> string { return \"é\"; }\r\nfn numeric(a: number) -> number { return a; }",
+        "1 /* λ */ |> text(\r\n\t)",
+    ),
+    (
+        "// é🦀\r\n\tfn f() { 1 |> discard; }\r\nfn discard(a: number, b: number = /* λ */ \"é🦀\") {}",
+        "\"é🦀\"",
+    ),
 ];
+const FINAL_VOID: &str = "a final void stage requires a discarded result";
+const NONFINAL_VOID: &str = "a nonfinal stage cannot return void";
+const VOID_ERRORS: &[(&str, &str, &str)] = &[
+    (
+        "fn f() { return 1 |> discard; } fn discard(a: number) {}",
+        "discard",
+        FINAL_VOID,
+    ),
+    (
+        "fn f() { let x = 1 |> discard(); } fn discard(a: number) {}",
+        "discard()",
+        FINAL_VOID,
+    ),
+    (
+        "fn f() { consume(1 |> discard); } fn discard(a: number) {} fn consume(a: number) {}",
+        "discard",
+        FINAL_VOID,
+    ),
+    (
+        "fn f() { (1 |> discard) + 2; } fn discard(a: number) {}",
+        "discard",
+        FINAL_VOID,
+    ),
+    (
+        "fn f() { if (1 |> discard) {} } fn discard(a: number) {}",
+        "discard",
+        FINAL_VOID,
+    ),
+    (
+        "fn f() { [1 |> discard]; } fn discard(a: number) {}",
+        "discard",
+        FINAL_VOID,
+    ),
+    (
+        "fn f() { let xs = [1]; xs[1 |> discard]; } fn discard(a: number) {}",
+        "discard",
+        FINAL_VOID,
+    ),
+    (
+        "fn f() { let x = { 1 |> discard }; } fn discard(a: number) {}",
+        "discard",
+        FINAL_VOID,
+    ),
+    (
+        "fn f() { let x = if true { 1 |> discard } else { 2 |> discard }; } fn discard(a: number) {}",
+        "discard",
+        FINAL_VOID,
+    ),
+    (
+        "fn f() { let x = match true { true => 1 |> discard, false => 2 |> discard, }; } fn discard(a: number) {}",
+        "discard",
+        FINAL_VOID,
+    ),
+    (
+        "fn f() -> number { return (loop {}) |> discard; } fn discard(a: number) {}",
+        "discard",
+        FINAL_VOID,
+    ),
+    (
+        "fn f() { 1 |> discard |> identity; } fn discard(a: number) {} fn identity(a: number) -> number { return a; }",
+        "discard",
+        NONFINAL_VOID,
+    ),
+    (
+        "fn f() -> number { (loop {}) |> discard() |> identity; } fn discard(a: number) {} fn identity(a: number) -> number { return a; }",
+        "discard()",
+        NONFINAL_VOID,
+    ),
+    (
+        "// é🦀\r\n\tfn f() { return 1 /* λ */ |> discard(\r\n\t    b: 2 /* 🦀 */\r\n\t); }\r\nfn discard(a: number, b: number = a + 1) {}",
+        "discard(\r\n\t    b: 2 /* 🦀 */\r\n\t)",
+        FINAL_VOID,
+    ),
+    (
+        "// é🦀\r\n\tfn f() { 1 /* λ */ |> discard(\r\n\t    b: 2 /* 🦀 */\r\n\t) |> identity; }\r\nfn discard(a: number, b: number = a + 1) {}\r\nfn identity(a: number) -> number { return a; }",
+        "discard(\r\n\t    b: 2 /* 🦀 */\r\n\t)",
+        NONFINAL_VOID,
+    ),
+];
+
 #[derive(Clone, Copy, Debug)]
 enum BindingError {
     Duplicate(&'static str),
@@ -177,6 +270,16 @@ const BINDING_ERRORS: &[(&str, &str, BindingError)] = &[
         "// é🦀\r\n\tfn f() -> number { return (loop {}) |> pair(a: 2); }\r\nfn pair(a: number, b: number = a + 1) -> number { return a + b; }",
         "a: 2",
         BindingError::Duplicate("a"),
+    ),
+    (
+        "// é🦀\r\n\tfn f() { 1 |> pair(a: missing); }\r\nfn pair(a: number, b: number = a + 1) {}",
+        "a: missing",
+        BindingError::Duplicate("a"),
+    ),
+    (
+        "// é🦀\r\n\tfn f() { 1 |> pair(b: \"é🦀\"); }\r\nfn pair(a: number, b: number = a + 1) {}",
+        "b: \"é🦀\"",
+        BindingError::TypeMismatch,
     ),
 ];
 
@@ -252,10 +355,17 @@ fn expected_diagnostic(path: &str, source: &str, origin: &str) -> String {
     let excerpt = source[line_start..line_end]
         .trim_end_matches('\r')
         .replace('\t', "    ");
+    let visible_end = (start + origin.len()).min(line_end);
+    let width = source[start..visible_end]
+        .trim_end_matches('\r')
+        .replace('\t', "    ")
+        .chars()
+        .count()
+        .max(1);
     let expected = format!(
         "{path}:{line}:{column}: semantic error: {error}\n  |\n{line} | {excerpt}\n  | {}{}",
         " ".repeat(padding),
-        "^".repeat(origin.chars().count())
+        "^".repeat(width)
     );
     assert_eq!(diagnostic::render(path, source, &error), expected);
     expected
@@ -266,6 +376,20 @@ fn diagnostic_cases(path: &str) -> Vec<(&'static str, String)> {
         .iter()
         .map(|(source, origin)| (*source, expected_diagnostic(path, source, origin)))
         .collect();
+    for (source, origin, message) in VOID_ERRORS {
+        let error = compiler().compile_source(source).unwrap_err();
+        assert!(
+            matches!(&error, CompileError::Semantic(SemanticError::InvalidPipeline { message: actual, .. }) if actual == message),
+            "expected {message:?}, got {error:?}"
+        );
+        let start = source.find(origin).unwrap();
+        let span = Span::new(start, start + origin.len());
+        assert_eq!(
+            error.to_string(),
+            format!("Invalid pipeline: {message} at {span:?}")
+        );
+        cases.push((*source, expected_diagnostic(path, source, origin)));
+    }
     for (source, origin, kind) in BINDING_ERRORS {
         let error = compiler().compile_source(source).unwrap_err();
         let CompileError::Semantic(semantic) = &error else {
@@ -302,7 +426,7 @@ fn diagnostic_cases(path: &str) -> Vec<(&'static str, String)> {
 fn assert_full_arity_default_export(bytes: &[u8]) {
     let mut signatures = Vec::new();
     let mut functions = Vec::new();
-    let mut exported = None;
+    let mut exported = Vec::new();
     for payload in Parser::new(0).parse_all(bytes) {
         match payload.unwrap() {
             Payload::TypeSection(reader) => {
@@ -314,8 +438,8 @@ fn assert_full_arity_default_export(bytes: &[u8]) {
             Payload::ExportSection(reader) => {
                 for export in reader {
                     let export = export.unwrap();
-                    if export.name == "defaults" {
-                        exported = Some(export.index);
+                    if matches!(export.name, "defaults" | "sink" | "sink_wrapper") {
+                        exported.push((export.name, export.index));
                     }
                 }
             }
@@ -323,10 +447,26 @@ fn assert_full_arity_default_export(bytes: &[u8]) {
         }
     }
     // SOURCE registers exactly one imported function, before every user function.
-    let index = usize::try_from(exported.expect("full-arity defaults export")).unwrap() - 1;
-    let signature = &signatures[usize::try_from(functions[index]).unwrap()];
-    assert_eq!(signature.params(), [ValType::F64; 3]);
-    assert_eq!(signature.results(), [ValType::F64]);
+    assert_eq!(exported.len(), 3);
+    for (name, index) in exported {
+        let index = usize::try_from(index).unwrap() - 1;
+        let signature = &signatures[usize::try_from(functions[index]).unwrap()];
+        match name {
+            "defaults" => {
+                assert_eq!(signature.params(), [ValType::F64; 3]);
+                assert_eq!(signature.results(), [ValType::F64]);
+            }
+            "sink" => {
+                assert_eq!(signature.params(), [ValType::F64; 2]);
+                assert!(signature.results().is_empty());
+            }
+            "sink_wrapper" => {
+                assert!(signature.params().is_empty());
+                assert!(signature.results().is_empty());
+            }
+            _ => unreachable!(),
+        }
+    }
 }
 
 #[test]
@@ -506,6 +646,88 @@ fn ordinary_calls_keep_named_defaults_hosts_builtins_zero_arity_and_void_support
     }
 }
 
+const VOID_ASSERTIONS: &str = r#"
+    function assertDiscardedVoid(assert, e, events) {
+        for (const [flag, expected] of [
+            [1, [1,2,1,2,3,4,4,5,6,7,10,11,14,15,18,19]],
+            [0, [1,2,1,2,3,4,4,5,8,9,12,13,16,17,20,21]]
+        ]) {
+            events.length = 0;
+            assert.equal(e.discarded(flag), 65);
+            assert.deepEqual(events, expected);
+        }
+        events.length = 0;
+        assert.equal(e.sink.length, 2);
+        assert.equal(e.sink(4, 5), undefined);
+        assert.equal(e.sink_wrapper.length, 0);
+        assert.equal(e.sink_wrapper(), undefined);
+        assert.deepEqual(events, [4,5,4,5]);
+        events.length = 0;
+        assert.throws(() => e.sink(4), WebAssembly.RuntimeError);
+        assert.throws(() => e.sink(0, 1), WebAssembly.RuntimeError);
+        assert.throws(() => e.sink(2, 1), WebAssembly.RuntimeError);
+        assert.deepEqual(events, []);
+        assert.throws(() => e.sink_trap_wrapper(), WebAssembly.RuntimeError);
+        assert.deepEqual(events, [1,0]);
+        // Validate the divergent export, but never run it without guest fuel.
+        assert.equal(typeof e.discarded_never, 'function');
+    }
+"#;
+
+#[test]
+#[ignore = "requires Node.js for bounded CLI-produced pipeline execution"]
+fn cli_discarded_void_pipelines_execute_defaults_contracts_and_full_arity_wrappers() {
+    let scratch = Scratch::new();
+    let source = SOURCE.replace('\n', "\r\n");
+    fs::write(scratch.0.join("program.was"), &source).unwrap();
+    let script = r#"
+        const assert = require('node:assert/strict');
+        const fs = require('node:fs');
+        const events = [];
+        const bytes = fs.readFileSync(process.argv[1]);
+        assert.ok(WebAssembly.validate(bytes));
+        const e = new WebAssembly.Instance(new WebAssembly.Module(bytes), {
+            env: {mark(n) {events.push(n); return n;}}
+        }).exports;
+        assertDiscardedVoid(assert, e, events);
+    "#;
+    let script = [VOID_ASSERTIONS, script].concat();
+    for (flag, level) in LEVELS {
+        let mut native = compiler();
+        native.set_optimization_level(level);
+        let bytes = native.compile_source(&source).unwrap();
+        assert_eq!(bytes, native.compile_source(SOURCE).unwrap());
+        Validator::new().validate_all(&bytes).unwrap();
+        assert_full_arity_default_export(&bytes);
+        let mut args = vec![
+            "program.was",
+            flag,
+            "-o",
+            "out.wasm",
+            "--host",
+            "mark=env.mark(number)->number",
+        ];
+        for name in SELECTED {
+            args.extend(["--export", name]);
+        }
+        let output = scratch.cli(&args);
+        assert!(output.status.success(), "{:?}", output);
+        assert!(output.stdout.is_empty());
+        assert!(output.stderr.is_empty());
+        assert_eq!(fs::read(scratch.0.join("out.wasm")).unwrap(), bytes);
+        let output = test_process::output(
+            Command::new("node")
+                .args(["-e", &script])
+                .arg(scratch.0.join("out.wasm")),
+            None,
+            Duration::from_secs(15),
+        );
+        assert!(output.status.success(), "{:?}", output);
+        assert!(output.stdout.is_empty());
+        assert!(output.stderr.is_empty());
+    }
+}
+
 fn field(input: &mut Vec<u8>, bytes: &[u8]) {
     input.extend_from_slice(&u32::try_from(bytes.len()).unwrap().to_le_bytes());
     input.extend_from_slice(bytes);
@@ -616,13 +838,15 @@ fn rebuilt_browser_pipeline_bytes_wat_execution_and_diagnostics_match_native() {
                     assert.equal(e.defaults.length, 3); assert.equal(e.defaults(4, 5, 6), 456);
                     assert.throws(() => e.defaults(4), WebAssembly.RuntimeError);
                     assert.ok(!('progression' in e)); assert.ok(!('total' in e));
+                    assertDiscardedVoid(assert, e, events);
                 }
             } finally {compiler.free();}
         }
         main().catch(error => {console.error(error); process.exitCode = 1;});
     "#;
+    let script = [VOID_ASSERTIONS, script].concat();
     let output = test_process::output(
-        Command::new("node").args(["-e", script]).arg(package),
+        Command::new("node").args(["-e", &script]).arg(package),
         Some(&input),
         Duration::from_secs(30),
     );

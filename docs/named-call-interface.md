@@ -26,9 +26,11 @@ WP9 match statements/values are implemented with [release gates passed](was_lang
 including native/current-source rebuilt-browser and full ignored runtime coverage.
 Match retains named/default normalization and raw full-arity ABI; it remains
 outside the shared pure-expression whitelist, including forged typed defaults.
-WP10's value-producing pipeline subset is implemented under #25/#26, including
-named/default stage binding; final Void and full WP10 release remain deferred. WP11–WP12 remain proposed, and WP13
-requires separate authorization; later packages
+WP10 named-only pipelines are implemented, including named/default stage binding
+and #27 final-Void discard support;
+[release gates passed](was_language_extensions_plan.md#wp10-release-validation)
+on 2026-10-14. WP11–WP12 remain proposed, and WP13 requires
+separate authorization; later packages
 reuse the approved interfaces only after their ordered integration/release gates.
 
 ### Public AST migration
@@ -77,11 +79,32 @@ formal order with declaration spans and resolved earlier-formal remapping.
 Injection supplies an earlier formal without exposing generated bindings to source
 lookup. Written explicit indices remain zero-based and argument spans unchanged.
 
-Source analysis still rejects every declared-Void stage, including after Never.
-Existing normalized-call support for Void direct calls in forged typed input is
-unchanged; typed normalization does not retain enough source provenance to
-reconstruct stage discard context. This is not full WP10 release completion or an
-ABI change. Ordinary named/default calls stay unchanged.
+#27 completes source support for final declared-Void stages only when the result
+is discarded. Direct expression statements supply discard context, which propagates
+through discarded block tails, if branches and match arms; parentheses are
+transparent. It does not propagate into operands, call arguments, pipeline inputs,
+initializers, returns or value breaks. Independent expression statements inside
+such contexts still discard their own results. Expression-form if/match retain
+existing structural joins, including exact Void/value distinctions and Never
+compatibility; outer discard does not bypass those checks.
+
+Every nonfinal declared-Void stage is rejected, even after Never. Source errors use
+`SemanticError::InvalidPipeline` with the stage span and the messages
+`a nonfinal stage cannot return void` or
+`a final void stage requires a discarded result`. Skipped/unreachable children
+remain checked, with ordinary binding/type diagnostics and their ordering preserved.
+
+No typed wrapper or public discard flag is added. Existing normalized-call support
+for Void direct calls in forged typed input is unchanged; source-semantic discard
+is not wholly reconstructible from that input. Backend injection ownership, type,
+result and flow checks remain independent, not complete source revalidation.
+Stages remain user-only; ordinary named/default calls and the full-arity ABI are
+unchanged. WP10 implementation is complete, and
+[#27 release gates passed](was_language_extensions_plan.md#wp10-release-validation),
+including freshly rebuilt browser bindings and the full ignored runtime suite.
+The plan's [#25](was_language_extensions_plan.md#issue-25-subset-validation-2026-10-14)
+and [#26](was_language_extensions_plan.md#issue-26-subset-validation-2026-10-14)
+records validate historical subsets, not the current final-Void release.
 
 ### WP8 contract constructor migration
 
