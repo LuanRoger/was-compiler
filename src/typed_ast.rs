@@ -126,6 +126,13 @@ pub enum TypedExprKind {
         name: String,
     },
 
+    /// Access to an original binding owned by the immediate creator.
+    Captured {
+        owner: BindingOwner,
+        id: VariableId,
+        name: String,
+    },
+
     Unary {
         op: UnaryOp,
         expr: Box<TypedExpr>,

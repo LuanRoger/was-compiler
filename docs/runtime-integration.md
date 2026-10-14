@@ -150,25 +150,43 @@ kind; its scrutinee runs once and only the first matching arm executes. See
 [the frozen match rules](was_language_extensions_spec.md#82-match-expression-syntax).
 WP10 named-only pipelines are implemented (#27), with
 [release gates passed](was_language_extensions_plan.md#wp10-release-validation)
-on 2026-10-14. WP11's capture-free local callable subset (#29) is implemented;
-shared captures/full WP11 release and WP12 placeholders remain deferred. WP13
-optimization requires separate authorization.
+on 2026-10-14. WP11 implements capture-free local callables (#29) and
+immediate-creator shared parameter/let captures (#30). Broader captures/full WP11
+release and WP12 placeholders remain deferred.
+[#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14),
+including rebuilt-browser and full ignored runtime coverage. WP13 optimization
+requires separate authorization.
 
-## Capture-free local callables (#29)
+## Local callables and shared captures (#29–#30)
 
 The CLI and core accept `let twice = (x: number) => x * 2;` followed by
 `twice(21)`. Expression and tail-valued block bodies infer concrete results;
-zero-argument and Void helpers work too. Calls to earlier context-free local
-callables are allowed; reading/writing outer value bindings is explicitly rejected.
-See [the subset and AST migration](local-callable-interface.md).
+zero-argument and Void helpers work too. #30 permits shared captures of immediate-
+creator parameters and ordinary lets of type `number`, `bool`, `string`, `number[]`
+or `range`. Reassignment from either side and ordinary indexed array mutation are
+supported. Earlier context-free callable composition remains supported. Nested
+helpers may capture their immediate creator's own bindings, not forward ancestor
+captures. Context-requiring callable dependencies, captured compound places
+(including creator-side promoted bindings) and captured `for` bindings are deferred.
+See [the subset, diagnostics and AST migration](local-callable-interface.md).
 
 Helpers are private direct-call functions after existing runtime helpers, not
-exports or host callables. They add no environment argument or allocation.
-Strings/arrays/ranges used by helper bodies/signatures retain their normal
-validation, allocation and lifetime rules. No public callable ABI, marshaling
-convention, table or implicit callback is added. Full shared-capture WP11 storage
-and lifetime semantics remain deferred; context-free support does not authorize
-heap rewind or alter persistent descriptor ownership.
+exports or host callables. Context-free declarations allocate no environment and
+add no hidden argument. Capturing helpers receive a private hidden first `i32`
+environment argument. Captured parameter cells allocate in formal order after
+validation/contracts, captured let cells after completing initializers, and
+nonempty environments only at executed declarations. Structural cell promotion
+can allocate even when a later capturing declaration is skipped.
+
+[Private uniform eight-byte cells/slots](memory-abi.md#private-closure-storage-30)
+use monotonic allocation: calls can grow memory or trap without rollback of prior
+effects or allocation. There is no scope/return/trap reclamation or general heap
+rewind; returned or host-retained arrays/strings must remain valid. Refresh
+JavaScript views after guest calls or host allocations that may grow memory.
+Normal handle validation, explicit marshaling and external range restrictions
+remain unchanged. No public callable ABI, table or implicit callback is added.
+Full WP11 release remains deferred. See the separate [#30 execution evidence](local-callable-interface.md#issue-30-validation-2026-10-14),
+not the historical #29 results, for shared-capture validation.
 
 ## Named-only pipelines (WP10; release gates passed)
 

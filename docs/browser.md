@@ -273,16 +273,38 @@ ignored policy; rebuild bindings after core changes before browser validation.
 See [the frozen match rules](was_language_extensions_spec.md#82-match-expression-syntax).
 WP10 named-only pipelines are implemented (#27), with
 [release gates passed](was_language_extensions_plan.md#wp10-release-validation)
-on 2026-10-14. WP11's capture-free local callable subset (#29) is implemented;
-shared captures/full WP11 release and WP12 placeholders remain deferred.
-WP13 optimization requires separate authorization.
+on 2026-10-14. WP11 implements capture-free local callables (#29) and
+immediate-creator shared parameter/let captures (#30). Broader captures/full WP11
+release and WP12 placeholders remain deferred. WP13 optimization requires separate
+authorization. [#30 validation passed](local-callable-interface.md#issue-30-validation-2026-10-14),
+including current-source rebuilt-browser coverage. Rebuild `pkg/` after future
+core changes before browser validation.
 
-The same core pipeline accepts `let twice = (x: number) => x * 2;` and direct
-positional lexical calls in the rebuilt browser compiler. Helpers are private,
-with no callable exports, hidden environment argument or callable-only memory.
-Existing handle operations/signatures retain the normal ABI and view-refresh
-requirements. Capture-requiring declarations are explicitly rejected. See
-[the subset and public AST migration](local-callable-interface.md).
+The shared core accepts `let twice = (x: number) => x * 2;` and direct positional
+lexical calls, plus shared captures of immediate-creator parameters/ordinary lets
+of type `number`, `bool`, `string`, `number[]` or `range`. Captured reassignment and
+ordinary indexed array mutation preserve original bindings and alias semantics.
+Nested helpers may capture their immediate creator's own bindings; ancestor
+forwarding, context-requiring callable dependencies, captured compound places
+(including creator-side promoted bindings) and captured `for` bindings remain deferred.
+See [the subset and public `Captured` AST migration](local-callable-interface.md).
+
+Helpers are private, with no callable exports or JavaScript callback ABI.
+Context-free declarations add no environment, hidden argument or callable-only
+memory. Capturing helpers use a private hidden first `i32` environment pointer;
+captured parameter cells allocate in formal order after validation/contracts,
+captured let cells after completing initialization, and nonempty environments
+only when their declarations execute. Cells/slots are uniformly eight-byte aligned
+and sized; see [the private storage contract](memory-abi.md#private-closure-storage-30).
+
+Allocation is monotonic, can grow guest memory or trap, and does not roll back
+prior effects or reclaim storage on return/trap. Even skipped capturing declarations
+can have eagerly promoted cells. Refresh JavaScript views of guest memory after
+calls or host allocations that may grow it. This guest memory is distinct from the
+browser compiler's own Wasm instance memory. Existing explicit string/array
+marshaling, descriptor obligations and external range restrictions are unchanged.
+Use the separate [#30 browser/runtime evidence](local-callable-interface.md#issue-30-validation-2026-10-14),
+not historical #29 results; full WP11 release remains deferred.
 
 ## Named-only pipelines (WP10; release gates passed)
 

@@ -365,3 +365,176 @@ fn unused_range_parameters_validate_records_before_helper_body_and_recover_after
         "#,
     );
 }
+
+#[test]
+#[ignore = "requires Node.js on PATH"]
+fn shared_cells_preserve_all_types_rebinding_aliases_and_original_shadowed_bindings() {
+    run(
+        r#"
+        fn main(n: number, flag: bool) -> number {
+            let text = "old";
+            let array = [1, 2];
+            let alias = array;
+            let interval = 1..3;
+            let read = () => if flag && text == "new" && 5 in interval { n + array[0] } else { 0 };
+            let change = () => {
+                n = n + 1; flag = true; text = "new";
+                array[0] = 7; array = [20]; interval = 5..=7;
+            };
+            change();
+            n = n + 10; array[0] = array[0] + 2;
+            { let n = 900; let text = "shadow"; mark(read()); };
+            return read() + alias[0];
+        }
+        fn identity(n: number) -> number { let read = () => n; return read(); }
+        fn nested(n: number) -> number {
+            let outer = (seed: number) => {
+                let local = seed;
+                let first = () => { local = local + 2; local };
+                let second = () => local;
+                first(); local = local + 3; second()
+            };
+            return outer(n);
+        }
+        "#,
+        &["main", "identity", "nested"],
+        r#"
+        assert.equal(e.main(1, 0), 41); assert.deepEqual(events.splice(0), [34]);
+        assert.equal(e.main(10, 1), 50); assert.deepEqual(events.splice(0), [43]);
+        assert.equal(e.nested(7), 12);
+        for (const n of [NaN, Infinity, -Infinity, -0, Number.MIN_VALUE, Number.MAX_VALUE]) {
+            assert.ok(Object.is(e.identity(n), n));
+        }
+        "#,
+    );
+}
+
+#[test]
+#[ignore = "requires Node.js on PATH"]
+fn allocation_timing_preserves_parameter_contract_initializer_and_declaration_effects() {
+    run(
+        r#"
+        fn array() -> number[] { return [1]; }
+        fn entry(n: number, xs: number[]) -> number requires n > 0 {
+            let read = () => { mark(90); n + len(xs) };
+            mark(1); return read();
+        }
+        fn skipped(flag: bool) -> number {
+            let n = mark(2);
+            if flag { let unused = () => { mark(99); n }; }
+            return n;
+        }
+        fn initialized() -> number {
+            let n = { mark(3); mark(4) };
+            let unused = () => { mark(99); n };
+            return n;
+        }
+        fn early() -> number {
+            let n: number = { mark(5); return 50; };
+            let unused = () => n;
+            return 0;
+        }
+        fn ordered() -> number {
+            let n = 0;
+            let set = (a: number, b: number) => { mark(8); n = a * 10 + b; n };
+            return set(mark(6), mark(7));
+        }
+        "#,
+        &[
+            "array",
+            "entry",
+            "skipped",
+            "initialized",
+            "early",
+            "ordered",
+        ],
+        r#"
+        const xs = e.array();
+        function allocated(action) {
+            const before = e.__alloc(8) >>> 0;
+            action();
+            return (e.__alloc(8) >>> 0) - before - 8;
+        }
+        // Invalid explicit handles and failed contracts allocate no parameter cells.
+        assert.equal(allocated(() => assert.throws(() => e.entry(1, 0), WebAssembly.RuntimeError)), 0);
+        assert.equal(allocated(() => assert.throws(() => e.entry(0, xs), WebAssembly.RuntimeError)), 0);
+        assert.deepEqual(events.splice(0), []);
+        // Two cells plus a two-slot environment; declaration still executes no body.
+        assert.equal(allocated(() => assert.equal(e.entry(2, xs), 3)), 32);
+        assert.deepEqual(events.splice(0), [1,90]);
+        assert.equal(allocated(() => assert.equal(e.skipped(0), 2)), 8);
+        assert.deepEqual(events.splice(0), [2]);
+        assert.equal(allocated(() => assert.equal(e.skipped(1), 2)), 16);
+        assert.deepEqual(events.splice(0), [2]);
+        let start;
+        onMark = n => { if (n === 3) start = e.__alloc(8) >>> 0;
+                         if (n === 4) assert.equal((e.__alloc(8) >>> 0) - start, 8); };
+        assert.equal(e.initialized(), 4); assert.deepEqual(events.splice(0), [3,4]);
+        onMark = () => {};
+        assert.equal(allocated(() => assert.equal(e.early(), 50)), 0);
+        assert.deepEqual(events.splice(0), [5]);
+        assert.equal(e.ordered(), 67); assert.deepEqual(events.splice(0), [6,7,8]);
+        "#,
+    );
+}
+
+#[test]
+#[ignore = "requires Node.js on PATH"]
+fn capture_storage_survives_recursive_reentrant_and_post_trap_invocations_and_memory_growth() {
+    run(
+        r#"
+        fn recursive(n: number) -> number {
+            let state = n;
+            let update = () => { state = state + 10; state };
+            if n > 0 { recursive(n - 1); }
+            return update();
+        }
+        fn reenter(n: number) -> number {
+            let state = n;
+            let read = () => state;
+            mark(n); state = state + 1; return read();
+        }
+        fn trapped(fail: bool) -> number[] {
+            let array = [3, 4];
+            let read = () => array;
+            if fail { mark(7); array[9]; }
+            array[0] = 8; return read();
+        }
+        fn text() -> string {
+            let value = "retained hé😀";
+            let read = () => value;
+            return read();
+        }
+        fn grow(count: number) -> number {
+            let i = 0;
+            while i < count {
+                let value = i;
+                let read = () => value;
+                read(); i += 1;
+            }
+            return i;
+        }
+        "#,
+        &["recursive", "reenter", "trapped", "text", "grow"],
+        r#"
+        assert.equal(e.recursive(4), 14); assert.equal(e.recursive(0), 10);
+        const retained = e.trapped(0), text = e.text();
+        onMark = n => { if (n === 2) assert.equal(e.reenter(20), 21); };
+        assert.equal(e.reenter(2), 3); assert.deepEqual(events.splice(0), [2,20]);
+        onMark = () => {};
+        for (let i = 0; i < 3; i++) {
+            assert.throws(() => e.trapped(1), WebAssembly.RuntimeError);
+            assert.deepEqual(events.splice(0), [7]);
+            assert.deepEqual(contents(e.trapped(0)), [8,4]);
+        }
+        const previous = e.memory.buffer, oldView = new DataView(previous);
+        assert.equal(e.grow(9000), 9000);
+        assert.notEqual(e.memory.buffer, previous);
+        assert.equal(previous.byteLength, 0);
+        assert.throws(() => oldView.getUint32(0, true), TypeError);
+        assert.deepEqual(contents(retained), [8,4]);
+        assert.equal(contents(text, true), 'retained hé😀');
+        assert.equal(e.recursive(3), 13);
+        "#,
+    );
+}

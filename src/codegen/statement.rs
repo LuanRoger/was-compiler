@@ -45,6 +45,7 @@ pub(super) fn emit(
             let flow = emitter.emit_expr(value, span)?;
             if flow.can_fall_through() {
                 emitter.local_set(index);
+                emitter.promote(*id, *ty, span)?;
             }
             emitter.initialize(*id);
 

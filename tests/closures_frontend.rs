@@ -60,6 +60,52 @@ fn deeply_nested_context_free_declarations_preserve_results_owners_and_dependenc
 }
 
 #[test]
+fn nested_inference_compound_checks_preserve_first_error_and_repeated_analysis() {
+    use was_compiler::tokens::Span;
+
+    let compiler = Compiler::new();
+    let mut body = "{ let x = 1; x += 2; x *= 3; let capture = () => x; capture() }".to_owned();
+    for level in (0..12).rev() {
+        // Repeated checks revisit distinct source compounds with colliding
+        // owner-local IDs; none of these ancestor bindings is captured.
+        body = format!(
+            "{{ let x = 0; x += 1; let nested{level} = () => {body}; x *= 2; nested{level}() }}"
+        );
+    }
+    let source =
+        format!("fn main() {{ let x = 0; x += 7; let root = () => {body}; return root(); }}");
+    let first = source.find("x += 2;").unwrap();
+    let expected = SemanticError::InvalidClosure {
+        reason: "compound assignment to captured bindings is not supported in this subset",
+        span: Span::new(first, first + "x += 2;".len()),
+    };
+    let valid = source.replace("x += 2; x *= 3;", "x = x + 2; x = x * 3;");
+    let expected_program = compiler.analyze(&valid).unwrap();
+    assert_eq!(expected_program.functions[0].return_type, Type::Number);
+
+    // A capture found before nested inference must survive every helper visit.
+    let earlier = source.replacen("let x = 0;", "let x = 0; let capture = () => x;", 1);
+    let early_span = earlier.find("x += 7;").unwrap();
+    for _ in 0..3 {
+        assert_eq!(compiler.analyze(&valid).unwrap(), expected_program);
+        let CompileError::Semantic(actual) = compiler.analyze(&source).unwrap_err() else {
+            panic!("expected semantic error");
+        };
+        assert_eq!(actual, expected);
+        let CompileError::Semantic(actual) = compiler.analyze(&earlier).unwrap_err() else {
+            panic!("expected semantic error");
+        };
+        assert_eq!(
+            actual,
+            SemanticError::InvalidClosure {
+                reason: "compound assignment to captured bindings is not supported in this subset",
+                span: Span::new(early_span, early_span + "x += 7;".len()),
+            }
+        );
+    }
+}
+
+#[test]
 fn repeated_closure_checks_preserve_initial_error_order_and_initializer_visibility() {
     use was_compiler::tokens::Span;
     use was_compiler::typed_ast::{CallableId, TypedClosureBody, TypedExprKind};
@@ -233,24 +279,58 @@ fn lambdas_and_callable_bindings_are_not_values() {
 }
 
 #[test]
-fn original_outer_values_are_explicitly_rejected_even_when_skipped_or_nested() {
+fn immediate_creator_values_are_captured_even_when_skipped_or_nested() {
     for source in [
         "fn main(x: number) { let f = () => x; }",
         "fn main() { let x = 1; let f = () => { x = 2; }; }",
-        "fn main() { let x = 1; let f = () => { x += 2; }; }",
         "fn main() { let x = [1]; let f = () => { x[0] = 2; }; }",
-        "fn main() { for x in 1..2 { let f = () => x; } }",
         "fn main() { let x = true; let f = () => false && x; }",
         "fn main() { let x = 1; let f = () => { return 1; x; }; }",
         "fn main() { let f = (x: number) => { let g = () => x; g() }; }",
+    ] {
+        Compiler::new().analyze(source).unwrap();
+    }
+}
+
+#[test]
+fn staged_capture_limits_are_explicit() {
+    for (source, expected) in [
+        (
+            "fn main() { let x = 1; let f = () => { x += 2; }; }",
+            "compound assignment to captured bindings is not supported in this subset",
+        ),
+        (
+            "fn main() { for x in 1..2 { let f = () => x; } }",
+            "capturing for bindings is not supported in this subset",
+        ),
+        (
+            "fn main(x: number) { let f = () => { let g = () => x; }; }",
+            "nested capture forwarding is not supported in this subset",
+        ),
+        (
+            "fn main(x: number) { let f = () => x; let g = () => f(); }",
+            "context-requiring callable dependencies are not supported in this subset",
+        ),
+        (
+            "fn main() { let x = [1]; let f = () => { x[0] += 2; }; }",
+            "compound assignment to captured bindings is not supported in this subset",
+        ),
+        (
+            "fn main() { let x = 1; x += 2; let f = () => x; }",
+            "compound assignment to captured bindings is not supported in this subset",
+        ),
+        (
+            "fn main() { let x = [1]; let f = () => x; x[0] += 2; }",
+            "compound assignment to captured bindings is not supported in this subset",
+        ),
     ] {
         assert!(
             matches!(
                 semantic_error(source),
                 SemanticError::InvalidClosure {
-                    reason: "capturing outer bindings is not supported in this subset",
+                    reason,
                     ..
-                }
+                } if reason == expected
             ),
             "{source}"
         );
@@ -258,6 +338,189 @@ fn original_outer_values_are_explicitly_rejected_even_when_skipped_or_nested() {
     Compiler::new()
         .analyze("fn main(x: number) { let f = (x: number) => x; let g = () => { let x = 2; x }; }")
         .unwrap();
+}
+
+#[test]
+fn captured_locals_retain_concrete_types_and_indexed_places_use_original_array_binding() {
+    use was_compiler::typed_ast::{TypedClosureBody, TypedExprKind, VariableId};
+    for (value, replacement, ty) in [
+        ("1", "2", Type::Number),
+        ("true", "false", Type::Bool),
+        ("\"first\"", "\"second\"", Type::String),
+        ("[1]", "[2]", Type::NumberArray),
+        ("1..2", "3..4", Type::Range),
+    ] {
+        let source = format!(
+            "fn main() {{ let x = {value}; let read = () => x; let write = () => {{ x = {replacement}; x }}; x = {replacement}; read(); write(); }}"
+        );
+        let program = Compiler::new().analyze(&source).unwrap();
+        for index in [1, 2] {
+            let callable = closure(&program, 0, index);
+            assert_eq!(callable.captures.len(), 1);
+            assert_eq!(callable.captures[0].variable, VariableId(0));
+            assert_eq!(callable.captures[0].ty, ty);
+            assert_eq!(callable.return_type, ty);
+        }
+    }
+    let program = Compiler::new()
+        .analyze("fn main() { let a = [1]; let f = () => { a[0] = a[0] + 1; a[0] }; }")
+        .unwrap();
+    let f = closure(&program, 0, 1);
+    assert_eq!(f.captures.len(), 1);
+    let TypedClosureBody::Block(body) = &f.body else {
+        panic!("block")
+    };
+    let TypedStatementKind::Assignment { target, .. } = &body.statements[0].kind else {
+        panic!("assignment")
+    };
+    let TypedExprKind::Index { expr, .. } = &target.kind else {
+        panic!("index")
+    };
+    assert!(matches!(
+        expr.kind,
+        TypedExprKind::Captured {
+            id: VariableId(0),
+            ..
+        }
+    ));
+}
+
+#[test]
+fn capture_shadowing_initializer_visibility_and_assignment_types_remain_lexical() {
+    use was_compiler::typed_ast::{
+        BindingOwner, CallableId, TypedClosureBody, TypedExprKind, VariableId,
+    };
+    let program = Compiler::new().analyze("fn main(x: number) { let f = () => { let x = x; x = 3; let g = () => x; g() }; let x2 = 4; }").unwrap();
+    let f = closure(&program, 0, 0);
+    let TypedClosureBody::Block(body) = &f.body else {
+        panic!("block")
+    };
+    let TypedStatementKind::Let { id, value, .. } = &body.statements[0].kind else {
+        panic!("let")
+    };
+    assert_eq!(*id, VariableId(0));
+    assert!(matches!(
+        value.kind,
+        TypedExprKind::Captured {
+            id: VariableId(0),
+            ..
+        }
+    ));
+    let TypedStatementKind::Closure(g) = &body.statements[2].kind else {
+        panic!("closure")
+    };
+    assert_eq!(g.captures.len(), 1);
+    assert_eq!(g.captures[0].owner, BindingOwner::Closure(CallableId(0)));
+    assert_eq!(g.captures[0].variable, VariableId(0));
+    assert!(f.dependencies.is_empty());
+    for source in [
+        "fn main() { let f = () => missing; let missing = 1; }",
+        "fn main() { let f = () => { let x = x; x }; }",
+    ] {
+        assert!(matches!(
+            semantic_error(source),
+            SemanticError::UndefinedVariable { .. }
+        ));
+    }
+    for source in [
+        "fn main(x: number) { let f = () => { x = true; }; }",
+        "fn main(x: number) { let f = () => x; x = true; }",
+        "fn main(x: number[]) { let f = () => { x[0] = true; }; }",
+    ] {
+        assert!(matches!(
+            semantic_error(source),
+            SemanticError::TypeMismatch { .. }
+        ));
+    }
+}
+
+#[test]
+fn captures_preserve_all_concrete_types_original_identity_and_declaration_order() {
+    use was_compiler::typed_ast::{
+        BindingOwner, CaptureMutability, FunctionId, TypedClosureBody, TypedExprKind, VariableId,
+    };
+    let program = Compiler::new().analyze(
+        "fn main(n: number, b: bool, s: string, a: number[], r: range) { let local = 7; let f = (own: number) => { r; a; s; b; local = own; n }; n = 2; }"
+    ).unwrap();
+    let f = closure(&program, 0, 1);
+    assert_eq!(
+        f.captures
+            .iter()
+            .map(|capture| (
+                capture.owner,
+                capture.variable,
+                capture.ty,
+                capture.mutability
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                BindingOwner::Function(FunctionId(0)),
+                VariableId(0),
+                Type::Number,
+                CaptureMutability::Mutable
+            ),
+            (
+                BindingOwner::Function(FunctionId(0)),
+                VariableId(1),
+                Type::Bool,
+                CaptureMutability::Mutable
+            ),
+            (
+                BindingOwner::Function(FunctionId(0)),
+                VariableId(2),
+                Type::String,
+                CaptureMutability::Mutable
+            ),
+            (
+                BindingOwner::Function(FunctionId(0)),
+                VariableId(3),
+                Type::NumberArray,
+                CaptureMutability::Mutable
+            ),
+            (
+                BindingOwner::Function(FunctionId(0)),
+                VariableId(4),
+                Type::Range,
+                CaptureMutability::Mutable
+            ),
+            (
+                BindingOwner::Function(FunctionId(0)),
+                VariableId(5),
+                Type::Number,
+                CaptureMutability::Mutable
+            ),
+        ]
+    );
+    let TypedClosureBody::Block(body) = &f.body else {
+        panic!("block")
+    };
+    assert!(
+        matches!(&body.tail.as_ref().unwrap().kind, TypedExprKind::Captured {
+        owner: BindingOwner::Function(FunctionId(0)), id: VariableId(0), name
+    } if name == "n")
+    );
+    let TypedStatementKind::Assignment { target, value } = &body.statements[4].kind else {
+        panic!("assignment")
+    };
+    assert!(matches!(
+        target.kind,
+        TypedExprKind::Captured {
+            id: VariableId(5),
+            ..
+        }
+    ));
+    assert!(matches!(
+        value.kind,
+        TypedExprKind::Identifier {
+            id: VariableId(0),
+            ..
+        }
+    ));
+    assert!(
+        matches!(&program.functions[0].body[2].kind, TypedStatementKind::Assignment { target, .. }
+        if matches!(target.kind, TypedExprKind::Identifier { id: VariableId(0), .. }))
+    );
 }
 
 #[test]
@@ -475,9 +738,9 @@ fn transparent_lambda_parentheses_and_utf8_trivia_preserve_focused_spans() {
 #[test]
 fn analysis_and_diagnostics_are_identical_at_all_optimization_levels() {
     use was_compiler::{CompilerOptions, OptimizationLevel};
-    let source = "fn main() { let f = (x: number) => x * 2; let g = () => { let h = () => f(21); h() }; return g(); }";
+    let source = "fn main() { let factor = 2; let f = (x: number) => x * factor; return f(21); }";
     let expected = Compiler::new().analyze(source).unwrap();
-    let invalid = "fn main() { let x = 1; let f = () => x; }";
+    let invalid = "fn main() { let x = 1; let f = () => { let g = () => x; }; }";
     let expected_error = Compiler::new().analyze(invalid).unwrap_err();
     for optimization_level in [
         OptimizationLevel::None,

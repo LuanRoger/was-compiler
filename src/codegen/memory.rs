@@ -166,7 +166,8 @@ impl Visitor<'_> for MemoryVisitor<'_> {
     fn enter_statement(&mut self, statement: &TypedStatement) -> ControlFlow<CodegenError> {
         match &statement.kind {
             TypedStatementKind::Closure(closure) => {
-                *self.used |= memory_type(closure.return_type)
+                *self.used |= !closure.captures.is_empty()
+                    || memory_type(closure.return_type)
                     || closure.params.iter().any(|p| memory_type(p.ty));
             }
             TypedStatementKind::Let { ty, .. } => *self.used |= memory_type(*ty),

@@ -439,7 +439,8 @@ fn normalize_expr(expr: &mut TypedExpr, next_id: &mut usize) {
         TypedExprKind::Number(_)
         | TypedExprKind::String(_)
         | TypedExprKind::Bool(_)
-        | TypedExprKind::Identifier { .. } => {}
+        | TypedExprKind::Identifier { .. }
+        | TypedExprKind::Captured { .. } => {}
     }
 }
 

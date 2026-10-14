@@ -85,6 +85,96 @@ fn assert_invalid(program: &TypedProgram, reason: &str, expected_span: Span) {
 }
 
 #[test]
+fn many_captures_with_repeated_accesses_preserve_canonical_slots_and_metadata_checks() {
+    use std::fmt::Write;
+
+    const CAPTURES: usize = 128;
+    const ROUNDS: usize = 8;
+    let mut source = String::from("fn main() -> number {");
+    for index in 0..CAPTURES {
+        write!(source, "let value{index} = {index};").unwrap();
+    }
+    source.push_str("let update = () => {");
+    for _ in 0..ROUNDS {
+        for index in (0..CAPTURES).rev() {
+            write!(source, "value{index} = value{index} + 1;").unwrap();
+        }
+    }
+    source.push_str("value0 }; return update(); }");
+
+    let compiler = Compiler::new();
+    let typed = compiler.analyze(&source).unwrap();
+    let original = typed.clone();
+    let bytes = compiler.compile(&typed).unwrap();
+    assert_eq!(compiler.compile_source(&source).unwrap(), bytes);
+    assert_eq!(compiler.compile(&typed).unwrap(), bytes);
+    assert_eq!(typed, original);
+
+    let helper = operators(&bytes, 8);
+    let offsets: Vec<_> = helper
+        .iter()
+        .filter_map(|op| match op {
+            Operator::I32Load { memarg } => Some(memarg.offset),
+            _ => None,
+        })
+        .collect();
+    let mut expected = Vec::new();
+    for _ in 0..ROUNDS {
+        for index in (0..CAPTURES).rev() {
+            let offset = u64::try_from(index).unwrap() * 8;
+            expected.extend([offset, offset]);
+        }
+    }
+    expected.push(0);
+    assert_eq!(offsets, expected);
+
+    for mutation in 0..5 {
+        let mut forged = typed.clone();
+        let TypedStatementKind::Closure(closure) = &mut forged.functions[0].body[CAPTURES].kind
+        else {
+            panic!("closure")
+        };
+        let origin = match mutation {
+            0 => {
+                closure.captures.push(closure.captures[0].clone());
+                closure.span
+            }
+            1 => {
+                closure.captures.swap(0, CAPTURES - 1);
+                closure.span
+            }
+            2 => {
+                closure.captures.pop();
+                let TypedClosureBody::Block(block) = &closure.body else {
+                    panic!("block")
+                };
+                block.statements[0].span
+            }
+            3 => {
+                let TypedClosureBody::Block(block) = &mut closure.body else {
+                    panic!("block")
+                };
+                let TypedExprKind::Captured { owner, .. } = &mut block.tail.as_mut().unwrap().kind
+                else {
+                    panic!("capture")
+                };
+                *owner = BindingOwner::Closure(closure.id);
+                block.span
+            }
+            _ => {
+                let TypedClosureBody::Block(block) = &mut closure.body else {
+                    panic!("block")
+                };
+                block.tail = Some(Box::new(number("0")));
+                block.statements.clear();
+                closure.span
+            }
+        };
+        assert_invalid(&forged, "invalid capture metadata", origin);
+    }
+}
+
+#[test]
 fn wide_independent_siblings_keep_direct_helpers_and_lexical_dependency_checks() {
     const WIDTH: usize = 2048;
     let mut statements = Vec::with_capacity(WIDTH + 1);
@@ -1287,4 +1377,540 @@ fn public_typed_callable_compiles_to_unexported_direct_helper_without_memory() {
             _ => {}
         }
     }
+}
+
+#[test]
+fn captured_parameter_uses_shared_cell_and_hidden_environment() {
+    let owner = BindingOwner::Function(FunctionId(0));
+    let mut c = closure(
+        0,
+        owner,
+        TypedClosureBody::Expression(Box::new(TypedExpr {
+            kind: TypedExprKind::Captured {
+                owner,
+                id: VariableId(7),
+                name: "value".into(),
+            },
+            ty: Type::Number.into(),
+        })),
+        Type::Number,
+    );
+    c.captures.push(TypedCapture {
+        owner,
+        variable: VariableId(7),
+        ty: Type::Number,
+        mutability: CaptureMutability::Mutable,
+    });
+    let mut p = program(vec![
+        statement(TypedStatementKind::Closure(c)),
+        statement(TypedStatementKind::Return(Some(lexical(
+            0,
+            vec![],
+            Type::Number,
+        )))),
+    ]);
+    p.functions[0].params.push(TypedParam {
+        id: VariableId(7),
+        name: "value".into(),
+        ty: Type::Number,
+        span: span(),
+    });
+    let bytes = Compiler::new().compile(&p).unwrap();
+    let creator = operators(&bytes, 0);
+    assert_eq!(
+        creator
+            .iter()
+            .filter(|op| matches!(op, Operator::Call { function_index: 1 }))
+            .count(),
+        2
+    );
+    assert!(
+        creator
+            .iter()
+            .any(|op| matches!(op, Operator::F64Store { memarg } if memarg.offset == 0))
+    );
+    let helper = operators(&bytes, 8);
+    assert!(matches!(helper[0], Operator::LocalGet { local_index: 0 }));
+    assert!(matches!(helper[1], Operator::I32Load { memarg } if memarg.offset == 0));
+    assert!(matches!(helper[2], Operator::F64Load { memarg } if memarg.offset == 0));
+    let types: Vec<_> = Parser::new(0)
+        .parse_all(&bytes)
+        .filter_map(|p| match p.unwrap() {
+            Payload::TypeSection(t) => Some(
+                t.into_iter_err_on_gc_types()
+                    .map(Result::unwrap)
+                    .collect::<Vec<_>>(),
+            ),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    assert!(
+        types
+            .iter()
+            .any(|t| t.params() == [wasmparser::ValType::I32]
+                && t.results() == [wasmparser::ValType::F64])
+    );
+}
+
+#[test]
+fn capture_storage_is_eager_but_environment_allocation_stays_in_the_declaration_branch() {
+    let bytes = Compiler::new().compile_source("fn main(flag: bool) -> number { let value = 1; if flag { let read = () => value; read(); } value = 2; return value; }").unwrap();
+    let ops = operators(&bytes, 0);
+    let branch = ops
+        .iter()
+        .position(|op| matches!(op, Operator::If { .. }))
+        .unwrap();
+    let allocations: Vec<_> = ops
+        .iter()
+        .enumerate()
+        .filter_map(|(i, op)| matches!(op, Operator::Call { function_index: 1 }).then_some(i))
+        .collect();
+    assert_eq!(allocations.len(), 2);
+    assert!(allocations[0] < branch && allocations[1] > branch);
+    assert_eq!(
+        ops.iter()
+            .filter(|op| matches!(op, Operator::F64Store { .. }))
+            .count(),
+        2
+    );
+    assert!(ops.iter().any(|op| matches!(op, Operator::F64Load { .. })));
+}
+
+#[test]
+fn capture_metadata_must_be_complete_canonical_initialized_and_original() {
+    let compiler = Compiler::new();
+    let original = compiler.analyze("fn main(a: number, b: bool) -> number { let use_both = () => { if b { a = 2; } a }; return use_both(); }").unwrap();
+    compiler.compile(&original).unwrap();
+    for mutation in 0..9 {
+        let mut forged = original.clone();
+        let TypedStatementKind::Closure(c) = &mut forged.functions[0].body[0].kind else {
+            panic!()
+        };
+        match mutation {
+            0 => c.captures.reverse(),
+            1 => c.captures.push(c.captures[0].clone()),
+            2 => c.captures[0].variable = VariableId(999),
+            3 => c.captures[0].owner = BindingOwner::Closure(CallableId(0)),
+            4 => c.captures[0].ty = Type::Bool,
+            5 => c.captures[0].mutability = CaptureMutability::ReadOnly,
+            6 => {
+                c.captures.remove(0);
+            }
+            7 => {
+                c.captures.clear();
+            }
+            _ => {
+                c.body = TypedClosureBody::Expression(Box::new(number("1")));
+            }
+        }
+        let error = compiler.compile(&forged).unwrap_err();
+        assert!(
+            matches!(
+                error,
+                CodegenError::InvalidClosure {
+                    reason: "invalid capture metadata",
+                    ..
+                }
+            ),
+            "mutation {mutation}: {error:?}"
+        );
+    }
+}
+
+#[test]
+fn all_capture_types_use_uniform_slots_and_preserve_handle_validation_before_promotion() {
+    let source = r#"fn main(n: number, b: bool, s: string, a: number[], r: range) -> number requires n >= 0 { let change = () => { n = 2; b = false; s = "new"; a[0] = n; a = [3]; r = 1..3; if b { len(a) } else { if 1 in r { n } else { 0 } } }; return change(); }"#;
+    let mut compiler = Compiler::new();
+    compiler.set_exports(was_compiler::ExportOptions::None);
+    let typed = compiler.analyze(source).unwrap();
+    let bytes = compiler.compile(&typed).unwrap();
+    let ops = operators(&bytes, 0);
+    let first_alloc = ops
+        .iter()
+        .position(|op| matches!(op, Operator::Call { function_index: 1 }))
+        .unwrap();
+    let calls_before: Vec<_> = ops[..first_alloc]
+        .iter()
+        .filter_map(|op| {
+            if let Operator::Call { function_index } = op {
+                Some(*function_index)
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(calls_before, [2, 3, 9]);
+    let contract = ops
+        .iter()
+        .position(|op| matches!(op, Operator::If { .. }))
+        .unwrap();
+    assert!(contract < first_alloc);
+    assert!(
+        !ops[..first_alloc]
+            .iter()
+            .any(|op| matches!(op, Operator::F64Load { .. } | Operator::I32Load { .. }))
+    );
+    assert_eq!(
+        ops.iter()
+            .filter(|op| matches!(op, Operator::Call { function_index: 1 }))
+            .count(),
+        6
+    );
+    let slot_offsets: Vec<_> = ops
+        .iter()
+        .filter_map(|op| {
+            if let Operator::I32Store { memarg } = op {
+                (memarg.offset != 0).then_some(memarg.offset)
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(slot_offsets, [8, 16, 24, 32]);
+    let helper = operators(&bytes, 11);
+    assert!(
+        helper
+            .iter()
+            .any(|op| matches!(op, Operator::F64Store { .. }))
+    );
+    assert!(
+        helper
+            .iter()
+            .any(|op| matches!(op, Operator::I32Store { .. }))
+    );
+}
+
+#[test]
+fn nested_helpers_capture_only_their_immediate_creators_own_bindings() {
+    let source = "fn main() -> number { let outer = () => { let local = 1; let inner = (x: number) => { local = local + x; local }; inner(2) }; return outer(); }";
+    let bytes = Compiler::new().compile_source(source).unwrap();
+    let main = operators(&bytes, 0);
+    assert_eq!(
+        main.iter()
+            .filter(|op| matches!(op, Operator::Call { .. }))
+            .count(),
+        1
+    );
+    assert!(
+        !main
+            .iter()
+            .any(|op| matches!(op, Operator::I32Const { .. }))
+    );
+    let creator = operators(&bytes, 8);
+    assert_eq!(
+        creator
+            .iter()
+            .filter(|op| matches!(op, Operator::Call { function_index: 1 }))
+            .count(),
+        2
+    );
+    let nested = operators(&bytes, 9);
+    assert!(
+        nested
+            .iter()
+            .any(|op| matches!(op, Operator::LocalGet { local_index: 1 }))
+    );
+    assert!(
+        nested
+            .iter()
+            .any(|op| matches!(op, Operator::F64Store { .. }))
+    );
+}
+
+#[test]
+fn forged_capture_places_reject_compounds_in_creator_and_helper() {
+    let compiler = Compiler::new();
+    for source in [
+        "fn main() -> number { let n = 1; let f = () => { n = n + 2; n }; n = n + 3; return f(); }",
+        "fn main() -> number { let n = [1]; let f = () => { n[0] = 2; n[0] }; n[0] = 3; return f(); }",
+    ] {
+        let original = compiler.analyze(source).unwrap();
+        compiler.compile(&original).unwrap();
+        for helper in [false, true] {
+            let mut forged = original.clone();
+            let statement = if helper {
+                let TypedStatementKind::Closure(c) = &mut forged.functions[0].body[1].kind else {
+                    panic!()
+                };
+                let TypedClosureBody::Block(block) = &mut c.body else {
+                    panic!()
+                };
+                &mut block.statements[0]
+            } else {
+                &mut forged.functions[0].body[2]
+            };
+            let TypedStatementKind::Assignment { target, .. } = &statement.kind else {
+                panic!()
+            };
+            statement.kind = TypedStatementKind::CompoundAssignment {
+                target: target.clone(),
+                op: was_compiler::ast::BinaryOp::Add,
+                value: number("1"),
+            };
+            assert_invalid(
+                &forged,
+                "invalid capture metadata",
+                statement_span(&original, helper),
+            );
+        }
+    }
+}
+fn statement_span(program: &TypedProgram, helper: bool) -> Span {
+    if !helper {
+        return program.functions[0].body[2].span;
+    }
+    let TypedStatementKind::Closure(c) = &program.functions[0].body[1].kind else {
+        panic!()
+    };
+    let TypedClosureBody::Block(block) = &c.body else {
+        panic!()
+    };
+    block.statements[0].span
+}
+
+#[test]
+fn captures_reject_out_of_scope_uninitialized_iteration_and_synthetic_originals() {
+    let compiler = Compiler::new();
+    let source = "fn main() -> number { let value = 1; let read = () => value; return read(); }";
+    let original = compiler.analyze(source).unwrap();
+    let mut early = original.clone();
+    early.functions[0].body.swap(0, 1);
+    let TypedStatementKind::Closure(c) = &early.functions[0].body[0].kind else {
+        panic!()
+    };
+    assert_invalid(&early, "invalid capture metadata", c.span);
+    let mut escaped = original.clone();
+    let declaration = escaped.functions[0].body.remove(0);
+    escaped.functions[0].body.insert(
+        0,
+        statement(TypedStatementKind::If {
+            cond: Box::new(TypedExpr {
+                kind: TypedExprKind::Bool(true),
+                ty: Type::Bool.into(),
+            }),
+            then: vec![declaration],
+            else_: None,
+        }),
+    );
+    let TypedStatementKind::Closure(c) = &escaped.functions[0].body[1].kind else {
+        panic!()
+    };
+    assert_invalid(&escaped, "invalid capture metadata", c.span);
+
+    let mut iteration = compiler
+        .analyze(
+            "fn main() -> number { for value in [1] { let read = () => 1; read(); } return 0; }",
+        )
+        .unwrap();
+    let TypedStatementKind::For { variable, body, .. } = &mut iteration.functions[0].body[0].kind
+    else {
+        panic!()
+    };
+    let TypedStatementKind::Closure(c) = &mut body[0].kind else {
+        panic!()
+    };
+    c.captures.push(TypedCapture {
+        owner: c.owner,
+        variable: *variable,
+        ty: Type::Number,
+        mutability: CaptureMutability::ReadOnly,
+    });
+    let origin = c.span;
+    assert_invalid(&iteration, "invalid capture metadata", origin);
+
+    let mut synthetic = compiler.analyze("fn named(a: number = 1) -> number { return a; } fn main() -> number { let read = () => 1; return named(a: 1); }").unwrap();
+    let declaration = synthetic.functions[1].body.remove(0);
+    let TypedStatementKind::Return(Some(TypedExpr {
+        kind: TypedExprKind::NormalizedCall(sequence),
+        ..
+    })) = &mut synthetic.functions[1].body[0].kind
+    else {
+        panic!()
+    };
+    let binding = &mut sequence.bindings[0];
+    let mut declaration = declaration;
+    let TypedStatementKind::Closure(c) = &mut declaration.kind else {
+        panic!()
+    };
+    c.captures.push(TypedCapture {
+        owner: c.owner,
+        variable: binding.id,
+        ty: binding.ty,
+        mutability: CaptureMutability::Mutable,
+    });
+    let origin = c.span;
+    binding.value = TypedExpr {
+        kind: TypedExprKind::Block(TypedValueBlock {
+            statements: vec![declaration],
+            tail: Some(Box::new(number("1"))),
+            span: span(),
+        }),
+        ty: Type::Number.into(),
+    };
+    assert_invalid(&synthetic, "invalid capture metadata", origin);
+}
+
+#[test]
+fn missing_capture_entries_and_deferred_contexts_fail_safely_at_typed_input_seam() {
+    let compiler = Compiler::new();
+    let mut missing = compiler
+        .analyze("fn main() -> number { let f = () => 1; return f(); }")
+        .unwrap();
+    let TypedStatementKind::Closure(c) = &mut missing.functions[0].body[0].kind else {
+        panic!()
+    };
+    c.body = TypedClosureBody::Expression(Box::new(TypedExpr {
+        kind: TypedExprKind::Captured {
+            owner: c.owner,
+            id: VariableId(999),
+            name: "missing".into(),
+        },
+        ty: Type::Number.into(),
+    }));
+    assert_invalid(&missing, "invalid capture metadata", c_body_span(&missing));
+    let mut forwarded = compiler.analyze("fn main() -> number { let n = 1; let outer = () => { let inner = () => 1; inner() }; return outer(); }").unwrap();
+    let TypedStatementKind::Closure(outer) = &mut forwarded.functions[0].body[1].kind else {
+        panic!()
+    };
+    let TypedClosureBody::Block(block) = &mut outer.body else {
+        panic!()
+    };
+    let TypedStatementKind::Closure(inner) = &mut block.statements[0].kind else {
+        panic!()
+    };
+    inner.captures.push(TypedCapture {
+        owner: BindingOwner::Function(FunctionId(0)),
+        variable: VariableId(0),
+        ty: Type::Number,
+        mutability: CaptureMutability::Mutable,
+    });
+    let origin = inner.span;
+    assert_invalid(&forwarded, "invalid capture metadata", origin);
+    let mut dependency = compiler
+        .analyze("fn main() -> number { let n = 1; let a = () => n; let b = () => 2; return a(); }")
+        .unwrap();
+    let TypedStatementKind::Closure(b) = &mut dependency.functions[0].body[2].kind else {
+        panic!()
+    };
+    b.dependencies.push(CallableId(0));
+    b.body = TypedClosureBody::Expression(Box::new(lexical(0, vec![], Type::Number)));
+    let origin = b.span;
+    assert_invalid(&dependency, "invalid callable dependency", origin);
+}
+fn c_body_span(program: &TypedProgram) -> Span {
+    let TypedStatementKind::Closure(c) = &program.functions[0].body[0].kind else {
+        panic!()
+    };
+    c.body_span
+}
+
+#[test]
+fn shared_storage_is_deterministic_across_options_and_keeps_helper_exports_private() {
+    use was_compiler::{CompilerOptions, OptimizationLevel};
+    let source = "fn main(a: number) -> number { let x = 1; let first = () => { x = x + a; x }; let second = () => x; first(); return second(); }";
+    let mut expected = None;
+    for level in [
+        OptimizationLevel::None,
+        OptimizationLevel::Basic,
+        OptimizationLevel::Standard,
+        OptimizationLevel::Aggressive,
+    ] {
+        let compiler = Compiler::with_options(CompilerOptions {
+            optimization_level: level,
+        });
+        let bytes = compiler.compile_source(source).unwrap();
+        Validator::new().validate_all(&bytes).unwrap();
+        assert_eq!(compiler.compile_source(source).unwrap(), bytes);
+        if let Some(expected) = &expected {
+            assert_eq!(&bytes, expected);
+        } else {
+            expected = Some(bytes.clone());
+        }
+        let exports: Vec<_> = Parser::new(0)
+            .parse_all(&bytes)
+            .filter_map(|p| match p.unwrap() {
+                Payload::ExportSection(exports) => Some(
+                    exports
+                        .into_iter()
+                        .map(|e| e.unwrap().name)
+                        .collect::<Vec<_>>(),
+                ),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        assert_eq!(exports, ["main", "memory", "__alloc"]);
+        assert!(
+            !Parser::new(0)
+                .parse_all(&bytes)
+                .any(|p| matches!(p.unwrap(), Payload::TableSection(_)))
+        );
+    }
+}
+
+#[test]
+fn capturing_helpers_validate_and_promote_their_own_parameters_with_hidden_index_shift() {
+    let source = r#"fn main(n: number) -> number { let outer = (a: string, b: number) => { let inner = () => { a = "changed"; b = b + 1; b }; n = n + 1; inner() }; return outer("initial", 2); }"#;
+    let typed = Compiler::new().analyze(source).unwrap();
+    let original = typed.clone();
+    let bytes = Compiler::new().compile(&typed).unwrap();
+    assert_eq!(typed, original);
+    let helper = operators(&bytes, 8);
+    assert!(matches!(helper[0], Operator::LocalGet { local_index: 1 }));
+    assert!(matches!(helper[1], Operator::Call { function_index: 2 }));
+    assert!(matches!(helper[2], Operator::Drop));
+    let env_alloc = helper
+        .iter()
+        .enumerate()
+        .filter(|(_, op)| matches!(op, Operator::Call { function_index: 1 }))
+        .nth(2)
+        .unwrap()
+        .0;
+    let incoming: Vec<_> = helper[..env_alloc]
+        .windows(2)
+        .filter_map(|pair| match (&pair[0], &pair[1]) {
+            (
+                Operator::LocalGet { local_index },
+                Operator::I32Store { .. } | Operator::F64Store { .. },
+            ) => Some(*local_index),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(incoming, [1, 2]);
+    let nested = operators(&bytes, 9);
+    let offsets: Vec<_> = nested
+        .iter()
+        .filter_map(|op| {
+            if let Operator::I32Load { memarg } = op {
+                Some(memarg.offset)
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(offsets, [0, 8, 8, 8]);
+}
+
+#[test]
+fn noncompleting_initializer_allocates_no_cell_before_unreachable_declaration() {
+    let bytes = Compiler::new()
+        .compile_source(
+            "fn main() -> number { let n: number = loop {}; let read = () => n; return read(); }",
+        )
+        .unwrap();
+    let creator = operators(&bytes, 0);
+    // Only the structurally checked, unreachable declaration contains an allocator call.
+    assert_eq!(
+        creator
+            .iter()
+            .filter(|op| matches!(op, Operator::Call { function_index: 1 }))
+            .count(),
+        1
+    );
+    assert!(
+        !creator
+            .iter()
+            .any(|op| matches!(op, Operator::F64Store { .. }))
+    );
 }

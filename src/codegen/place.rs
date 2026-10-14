@@ -13,6 +13,7 @@ use super::{
 
 enum Place<'a> {
     Local(LocalIndex),
+    Cell(Type),
     Element {
         base: &'a TypedExpr,
         index: &'a TypedExpr,
@@ -30,16 +31,31 @@ impl<'a> Place<'a> {
                 let index = body.resolve_expr(*id, target.ty, span)?;
                 body.check_writable(*id, span)?;
 
+                if let Some(ty) = body.cell_address(target, span)? {
+                    return Ok(Self::Cell(ty));
+                }
                 Ok(Self::Local(index))
             }
 
+            TypedExprKind::Captured { .. } => {
+                let ty = body
+                    .cell_address(target, span)?
+                    .ok_or_else(|| invalid_target(body, span))?;
+                Ok(Self::Cell(ty))
+            }
+
             TypedExprKind::Index { expr: base, index } => {
-                let TypedExprKind::Identifier { id, .. } = &base.kind else {
+                if !matches!(
+                    base.kind,
+                    TypedExprKind::Identifier { .. } | TypedExprKind::Captured { .. }
+                ) {
                     return Err(invalid_target(body, span));
-                };
+                }
 
                 values::expect_index_types(base, index, target.ty, body, span)?;
-                body.resolve_expr(*id, base.ty, span)?;
+                if let TypedExprKind::Identifier { id, .. } = &base.kind {
+                    body.resolve_expr(*id, base.ty, span)?;
+                }
 
                 Ok(Self::Element { base, index })
             }
@@ -51,6 +67,7 @@ impl<'a> Place<'a> {
     fn store(&self, body: &mut BodyEmitter<'_>) {
         match self {
             Self::Local(index) => body.local_set(*index),
+            Self::Cell(ty) => body.store_cell(*ty),
             Self::Element { .. } => body.instruction(&Instruction::F64Store(element_arg())),
         }
     }
@@ -64,6 +81,7 @@ pub(super) fn emit_assignment(
 ) -> Result<Flow, CodegenError> {
     let place = Place::check(target, body, span)?;
     let ty = match &place {
+        Place::Cell(ty) => *ty,
         Place::Local(_) => target
             .ty
             .value_type()
@@ -91,6 +109,9 @@ pub(super) fn emit_compound_assignment(
     body: &mut BodyEmitter<'_>,
     span: Span,
 ) -> Result<Flow, CodegenError> {
+    if body.is_shared(target) {
+        return Err(super::closures::invalid("invalid capture metadata", span));
+    }
     let instruction = expression::arithmetic_instruction(op, body).map_err(|operator| {
         CodegenError::UnsupportedOperator {
             function: body.name().into(),
@@ -104,6 +125,7 @@ pub(super) fn emit_compound_assignment(
     expect_operand(body.name(), Type::Number, value.ty, span)?;
 
     let target_flow = match &place {
+        Place::Cell(_) => unreachable!("shared compound places rejected before place checking"),
         Place::Local(index) => {
             // Calls and nested expressions preserve this live f64 stack prefix.
             // No scratch local is needed to retain the pre-RHS value.

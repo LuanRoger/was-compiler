@@ -205,6 +205,7 @@ impl Visitor<'_> for Recorder {
             TypedExprKind::String(value) => format!("string:{value}"),
             TypedExprKind::Bool(value) => format!("bool:{value}"),
             TypedExprKind::Identifier { name, .. } => format!("identifier:{name}"),
+            TypedExprKind::Captured { name, .. } => format!("captured:{name}"),
             TypedExprKind::Unary { .. } => "unary".into(),
             TypedExprKind::Binary { .. } => "binary".into(),
             TypedExprKind::Range { .. } => "range".into(),

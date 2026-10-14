@@ -70,10 +70,13 @@ pub(super) fn emit(
             (Flow::FALLTHROUGH, Type::Bool.into())
         }
 
-        TypedExprKind::Identifier { id, .. } => {
-            let index = body.resolve_expr(*id, expr.ty, span)?;
-
-            body.local_get(index);
+        TypedExprKind::Identifier { .. } | TypedExprKind::Captured { .. } => {
+            if let Some(ty) = body.cell_address(expr, span)? {
+                body.load_cell(ty);
+            } else if let TypedExprKind::Identifier { id, .. } = &expr.kind {
+                let index = body.resolve_expr(*id, expr.ty, span)?;
+                body.local_get(index);
+            }
 
             (Flow::FALLTHROUGH, expr.ty)
         }

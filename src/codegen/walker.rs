@@ -231,7 +231,8 @@ pub(super) fn walk_expression<'ast, V: Visitor<'ast>>(
         TypedExprKind::Number(_)
         | TypedExprKind::String(_)
         | TypedExprKind::Bool(_)
-        | TypedExprKind::Identifier { .. } => {}
+        | TypedExprKind::Identifier { .. }
+        | TypedExprKind::Captured { .. } => {}
     }
 
     ControlFlow::Continue(())

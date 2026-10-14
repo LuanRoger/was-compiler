@@ -301,11 +301,16 @@ impl<'a> Layout<'a> {
                 what: "total function count",
             })?;
         for (index, declaration) in declarations.into_iter().enumerate() {
-            let signature = abi::internal_signature(
+            let mut signature = abi::internal_signature(
                 "<closure>",
                 declaration.params.iter().map(|p| p.ty),
                 declaration.return_type,
             )?;
+            if !declaration.captures.is_empty() {
+                signature.params.insert(0, wasm_encoder::ValType::I32);
+                checked_u32(signature.params.len(), "closure parameter count")?;
+            }
+            abi::environment_size(declaration.captures.len())?;
             let type_index = layout.intern(signature, &mut type_indices)?;
             layout.callables.push(CallablePlan {
                 declaration,

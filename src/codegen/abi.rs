@@ -114,3 +114,28 @@ pub(super) fn value_type(
         }),
     }
 }
+
+// Private closure storage: uniform slots trade space for deterministic alignment.
+pub(super) const CAPTURE_CELL_SIZE: u32 = 8;
+pub(super) const ENV_SLOT_SIZE: u32 = 8;
+pub(super) fn environment_size(count: usize) -> Result<u32, CodegenError> {
+    checked_u32(count, "closure environment slots")?
+        .checked_mul(ENV_SLOT_SIZE)
+        .ok_or(CodegenError::LimitExceeded {
+            what: "closure environment size",
+        })
+}
+pub(super) fn environment_slot(index: usize) -> Result<wasm_encoder::MemArg, CodegenError> {
+    Ok(wasm_encoder::MemArg {
+        offset: u64::from(environment_size(index)?),
+        align: 2,
+        memory_index: 0,
+    })
+}
+pub(super) fn cell_arg(ty: Type) -> wasm_encoder::MemArg {
+    wasm_encoder::MemArg {
+        offset: 0,
+        align: if ty == Type::Number { 3 } else { 2 },
+        memory_index: 0,
+    }
+}

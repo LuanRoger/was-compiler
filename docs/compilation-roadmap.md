@@ -81,8 +81,11 @@ WP10 named-only pipelines are implemented through nested checked normalized call
 including named/default binding and final-Void discard support (#27); raw pipelines
 retain source spans and stage dependency syntax.
 [Release gates passed](was_language_extensions_plan.md#wp10-release-validation)
-on 2026-10-14. WP11's capture-free local callable subset (#29) is implemented;
-shared captures and full WP11 release remain deferred. WP12 and WP13 are
+on 2026-10-14. WP11 implements capture-free local callables (#29) and
+immediate-creator shared parameter/let captures (#30), with
+[#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14).
+Nested forwarding, context-requiring dependencies, captured
+compounds/for bindings and full WP11 release remain deferred. WP12 and WP13 are
 separately scoped. See [the local callable interface](local-callable-interface.md). See
 [the #14 inference contract](result-inference-development.md#issue-14-acyclic-chains-and-diamonds). See the
 [interface gate](named-call-interface.md) and [handoff](wp6-wp7-development.md).
@@ -114,7 +117,7 @@ The compiler emits bytes. The embedding application decides whether to write a
 | `src/codegen/match_.rs` | Private checked match lowering with a cached scrutinee, scoped arms and ordered comparison regions. |
 | `tests/match_frontend.rs`, `tests/match_lowering.rs` | Match frontend/inference and forged-tree/decoded lowering contracts. |
 | `src/codegen/abi.rs` | Internal language-type → Wasm-type mapping and signatures, separate from external eligibility checks for every host snapshot and selected user exports. |
-| `src/semantic/closures.rs` | Capture-free lexical bindings, independent closure result/control contexts, and callable dependencies. |
+| `src/semantic/closures.rs` | Lexical bindings, immediate-creator captures, independent closure result/control contexts, and context-free callable dependencies. |
 | `src/codegen/closures.rs` | Borrowed helper-body owners and source-preorder identity/ownership discovery. |
 | `src/codegen/layout.rs` | Deduplicate signatures, assign indices, and build the complete typed callee table before body emission. |
 | `src/codegen/validation.rs` | Borrow the typed AST, complete layout and existing body checks in diagnostic order, and retain checked bodies behind a private construction boundary. |
@@ -175,12 +178,20 @@ they explicitly update the corresponding metadata and references.
   no implicit host import and requires no Memory, Global, or Data sections.
   Existing host/user/memory-helper indices remain unchanged, and programs without
   `%` retain byte-for-byte output.
-- Capture-free closure helpers follow all existing memory/remainder/range helpers,
+- Closure helpers follow all existing memory/remainder/range helpers,
   in source depth-first preorder independently of inference scheduling. Their owned
   bodies are borrowed, checked and cached through `ValidatedProgram`; locals,
   scratch and control contexts are planned independently of their creator. Module
   discovery enters closure bodies, while owner-local planning excludes nested
   bodies. Dedicated `CallableId`s are not public user-function IDs or exports.
+  #30 adds owner-qualified `TypedExprKind::Captured` reads/places and canonical
+  original owner/declaration metadata for immediate-creator parameters/ordinary lets
+  of all concrete types; creator `Identifier` accesses use promoted storage.
+  Captured parameter cells allocate in formal order after validation/contracts,
+  captured let cells after completing initialization, and nonempty environments
+  only at executed declarations. Capturing helpers have a hidden first `i32`;
+  context-free helpers retain no environment argument/allocation. See
+  [private uniform eight-byte storage and monotonic lifetime rules](memory-abi.md#private-closure-storage-30).
 - Type indices are separate from function indices. Identical signatures share
   one Type-section entry, including signatures shared by hosts and users.
 - `VariableId` is function-local. The local layout places parameters first, then
@@ -579,8 +590,8 @@ traps, memory growth, numerical special values, and optimization/export parity.
 
 See the [extension specification](was_language_extensions_spec.md) and
 [implementation plan](was_language_extensions_plan.md) for later work packages;
-Closure-dependent captured scalar mutation and array-binding rebinding tests
-belong to WP11, not this milestone.
+Closure-dependent ordinary captured assignment and array-binding rebinding belong
+to WP11's #30 subset, not this milestone; captured compound places remain deferred.
 
 ## Implemented language extension: while loop transfers (WP2)
 
@@ -816,8 +827,11 @@ The default Cargo suite still skips Node cases. WP6/WP7 and their release gates
 are complete; WP8 contracts and their runtime/browser release gates are also complete.
 WP9 frontend/backend are integrated with [release gates passed](was_language_extensions_plan.md#wp9-release-validation);
 WP10 named-only pipelines, including named/default and final-Void discard support,
-are implemented (#27), with [release validation passed](was_language_extensions_plan.md#wp10-release-validation). WP11's capture-free local callable subset (#29) is implemented; shared captures,
-full WP11 release and WP12 remain deferred. WP13 requires separate authorization.
+are implemented (#27), with [release validation passed](was_language_extensions_plan.md#wp10-release-validation).
+WP11's #29/#30 subsets implement local callables and immediate-creator shared
+parameter/let captures; broader captures, full WP11 release and WP12 remain deferred.
+[#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14).
+WP13 requires separate authorization.
 External range signatures, range equality, and allocation-free range optimization
 remain out of scope.
 

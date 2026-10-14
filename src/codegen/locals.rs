@@ -78,6 +78,17 @@ impl LocalLayout {
         self.bindings.get(&id).copied()
     }
 
+    pub fn shift_for_environment(&mut self) -> Result<(), CodegenError> {
+        for local in self.bindings.values_mut() {
+            local.index = LocalIndex::new(local.index.raw().checked_add(1).ok_or(
+                CodegenError::LimitExceeded {
+                    what: "function local count",
+                },
+            )?);
+        }
+        Ok(())
+    }
+
     fn insert(
         &mut self,
         id: VariableId,

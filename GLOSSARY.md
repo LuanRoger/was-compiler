@@ -37,15 +37,14 @@ permitted only where the pipeline's result is discarded.
 
 **Local callable binding**:
 A lexical name for a closure that can be invoked directly but cannot be aliased,
-reassigned, passed, returned, or otherwise used as a value. Proposed in WP11.
+reassigned, passed, returned, or otherwise used as a value.
 _Avoid_: Function-valued local, first-class function
 
 **Shared-binding capture**:
 A closure's reference to an original lexical binding, preserving its type and
-mutability and observing reassignment from either side. Proposed in WP11.
+mutability and observing reassignment from either side.
 _Avoid_: Snapshot capture, capture by value
 
 **Lexical callable dependency**:
 A closure's dependence on an earlier visible local callable for direct invocation,
-including the original callable's live context. It is not a callable alias or value
-capture. Proposed in WP11.
+including its live context when required. It is not a callable alias or value capture.

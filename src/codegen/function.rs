@@ -1,6 +1,6 @@
 use std::{
     cell::Cell,
-    collections::{BTreeSet, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
 };
 
 use crate::{
@@ -15,7 +15,7 @@ use crate::{
 use wasm_encoder::{BlockType, Function, Instruction, ValType};
 
 use super::{
-    CodegenError, checked_u32,
+    CodegenError, abi, checked_u32,
     closures::{self, BodyOwner, CallablePlan, LexicalPrefix},
     expect_result, expect_type, expression,
     indices::{FunctionIndex, LabelDepth, LocalIndex},
@@ -35,6 +35,10 @@ struct Context<'a> {
     lexical_prefix: LexicalPrefix,
     used_dependencies: BTreeSet<usize>,
     value_return_syntax: bool,
+    storage: closures::Storage,
+    cells_active: bool,
+    used_captures: BTreeSet<usize>,
+    capture_slots: HashMap<(BindingOwner, VariableId), usize>,
     locals: LocalLayout,
     initialized: HashSet<VariableId>,
     next_temporary: Cell<u32>,
@@ -44,20 +48,46 @@ struct Context<'a> {
 
 impl<'a> Context<'a> {
     fn new(function: BodyOwner<'a>, module: &'a Layout<'a>) -> Result<Self, CodegenError> {
-        let locals = LocalLayout::for_owner(function)?;
+        let mut locals = LocalLayout::for_owner(function)?;
+        let hidden = u32::from(matches!(function, BodyOwner::Closure(c) if !c.captures.is_empty()));
+        if hidden != 0 {
+            locals.shift_for_environment()?;
+        }
         let first_temporary = checked_u32(function.params().len(), "function parameter count")?
+            .checked_add(hidden)
+            .ok_or(CodegenError::LimitExceeded {
+                what: "function parameter count",
+            })?
             .checked_add(checked_u32(locals.types.len(), "function local count")?)
             .ok_or(CodegenError::LimitExceeded {
                 what: "function local count",
             })?;
         let temporary_types = temporaries::for_owner(function)?;
-        first_temporary
+        let first_storage = first_temporary
             .checked_add(checked_u32(temporary_types.len(), "temporary local count")?)
             .ok_or(CodegenError::LimitExceeded {
                 what: "function local count",
             })?;
 
+        let storage = closures::Storage::new(function, &locals, first_storage)?;
+        let mut capture_slots = HashMap::new();
+        if let BodyOwner::Closure(closure) = function {
+            capture_slots.reserve(closure.captures.len());
+            for (slot, capture) in closure.captures.iter().enumerate() {
+                if capture_slots
+                    .insert((capture.owner, capture.variable), slot)
+                    .is_some()
+                {
+                    return Err(closures::invalid("invalid capture metadata", closure.span));
+                }
+            }
+        }
+
         Ok(Self {
+            capture_slots,
+            storage,
+            cells_active: false,
+            used_captures: BTreeSet::new(),
             name: function.name(),
             return_type: function.return_type(),
             module,
@@ -220,6 +250,9 @@ impl<'a> BodyEmitter<'a> {
 
         // Keep declaration groups separate from scratch groups for legacy bytes.
         locals.extend(temporary_groups);
+        if context.storage.count != 0 {
+            locals.push((context.storage.count, ValType::I32));
+        }
 
         Ok(Self {
             body: Function::new(locals),
@@ -381,19 +414,62 @@ impl<'a> BodyEmitter<'a> {
         if closure.owner != self.context.owner {
             return Err(invalid("invalid closure ownership"));
         }
-        if !closure.captures.is_empty() {
-            return Err(invalid("invalid capture metadata"));
+        let mut previous = None;
+        for capture in &closure.captures {
+            let local = self
+                .context
+                .locals
+                .get(capture.variable)
+                .ok_or_else(|| invalid("invalid capture metadata"))?;
+            if capture.owner != self.context.owner
+                || local.ty != capture.ty
+                || local.kind != BindingKind::Mutable
+                || capture.mutability != crate::typed_ast::CaptureMutability::Mutable
+                || !self.context.initialized.contains(&capture.variable)
+                || previous.is_some_and(|index| local.index.raw() <= index)
+            {
+                return Err(invalid("invalid capture metadata"));
+            }
+            previous = Some(local.index.raw());
         }
         let mut previous = None;
         for &dependency in &closure.dependencies {
             if previous.is_some_and(|id| dependency.0 <= id)
                 || dependency.0 >= closure.id.0
                 || !self.context.callable_available(dependency)
+                || self
+                    .context
+                    .module
+                    .callables
+                    .get(dependency.0)
+                    .is_none_or(|p| !p.declaration.captures.is_empty())
             {
                 return Err(invalid("invalid callable dependency"));
             }
             previous = Some(dependency.0);
             self.use_dependency(dependency);
+        }
+        if !closure.captures.is_empty() {
+            let env = self
+                .context
+                .storage
+                .environments
+                .get(&closure.id)
+                .copied()
+                .ok_or_else(|| invalid("invalid capture metadata"))?;
+            self.allocate(abi::environment_size(closure.captures.len())?, env);
+            for (index, capture) in closure.captures.iter().enumerate() {
+                self.local_get(env);
+                let cell = self
+                    .context
+                    .storage
+                    .cells
+                    .get(&capture.variable)
+                    .copied()
+                    .ok_or_else(|| invalid("invalid capture metadata"))?;
+                self.local_get(cell);
+                self.instruction(&Instruction::I32Store(abi::environment_slot(index)?));
+            }
         }
         plan.lexical_prefix.set(Some(self.context.lexical_prefix));
         self.context.lexical_prefix.activate(closure.id);
@@ -412,11 +488,130 @@ impl<'a> BodyEmitter<'a> {
             .callables
             .get(id.0)
             .ok_or_else(|| closures::invalid("invalid callable call", span))?;
-        if !self.context.callable_available(id) {
+        if !self.context.callable_available(id)
+            || (!plan.declaration.captures.is_empty()
+                && plan.declaration.owner != self.context.owner)
+        {
             return Err(closures::invalid("invalid callable call", span));
         }
         self.use_dependency(id);
         Ok(plan)
+    }
+
+    fn allocate(&mut self, size: u32, destination: LocalIndex) {
+        self.instruction(&Instruction::I32Const(i32::from_ne_bytes(
+            size.to_ne_bytes(),
+        )));
+        self.call(self.helper(Helper::Alloc));
+        self.local_set(destination);
+    }
+
+    pub fn promote(&mut self, id: VariableId, ty: Type, span: Span) -> Result<(), CodegenError> {
+        if let Some(cell) = self.context.storage.cells.get(&id).copied() {
+            let local = self.declaration(id, ty, span)?;
+            self.allocate(abi::CAPTURE_CELL_SIZE, cell);
+            self.local_get(cell);
+            self.local_get(local);
+            self.store_cell(ty);
+        }
+        Ok(())
+    }
+
+    fn promote_parameters(&mut self, params: &[TypedParam]) -> Result<(), CodegenError> {
+        for param in params {
+            self.promote(param.id, param.ty, param.span)?;
+        }
+        self.context.cells_active = true;
+        Ok(())
+    }
+
+    pub fn is_shared(&self, expression: &TypedExpr) -> bool {
+        match &expression.kind {
+            crate::typed_ast::TypedExprKind::Captured { .. } => true,
+            crate::typed_ast::TypedExprKind::Identifier { id, .. } => {
+                self.context.storage.cells.contains_key(id)
+            }
+            crate::typed_ast::TypedExprKind::Index { expr, .. } => self.is_shared(expr),
+            _ => false,
+        }
+    }
+
+    pub fn cell_address(
+        &mut self,
+        expr: &TypedExpr,
+        span: Span,
+    ) -> Result<Option<Type>, CodegenError> {
+        use crate::typed_ast::TypedExprKind;
+        match &expr.kind {
+            TypedExprKind::Identifier { id, .. } => {
+                self.resolve_expr(*id, expr.ty, span)?;
+                if self.context.cells_active
+                    && let Some(cell) = self.context.storage.cells.get(id).copied()
+                {
+                    self.local_get(cell);
+                    return Ok(expr.ty.value_type());
+                }
+                Ok(None)
+            }
+            TypedExprKind::Captured { owner, id, .. } => {
+                let invalid = || closures::invalid("invalid capture metadata", span);
+                let BindingOwner::Closure(callable) = self.context.owner else {
+                    return Err(invalid());
+                };
+                let closure = self
+                    .context
+                    .module
+                    .callables
+                    .get(callable.0)
+                    .ok_or_else(invalid)?
+                    .declaration;
+                let slot = *self
+                    .context
+                    .capture_slots
+                    .get(&(*owner, *id))
+                    .ok_or_else(invalid)?;
+                let capture = closure.captures.get(slot).ok_or_else(invalid)?;
+                if capture.ty == Type::Void
+                    || expr.ty != ExprResult::from(capture.ty)
+                    || capture.owner != closure.owner
+                {
+                    return Err(invalid());
+                }
+                self.context.used_captures.insert(slot);
+                self.local_get(LocalIndex::new(0));
+                self.instruction(&Instruction::I32Load(abi::environment_slot(slot)?));
+                Ok(Some(capture.ty))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    pub fn load_cell(&mut self, ty: Type) {
+        self.instruction(&if ty == Type::Number {
+            Instruction::F64Load(abi::cell_arg(ty))
+        } else {
+            Instruction::I32Load(abi::cell_arg(ty))
+        });
+    }
+
+    pub fn store_cell(&mut self, ty: Type) {
+        self.instruction(&if ty == Type::Number {
+            Instruction::F64Store(abi::cell_arg(ty))
+        } else {
+            Instruction::I32Store(abi::cell_arg(ty))
+        });
+    }
+
+    pub fn callable_environment(&mut self, id: CallableId, span: Span) -> Result<(), CodegenError> {
+        let local = self
+            .context
+            .storage
+            .environments
+            .get(&id)
+            .copied()
+            .ok_or_else(|| closures::invalid("invalid callable call", span))?;
+        self.local_get(local);
+        Ok(())
     }
 
     pub fn note_value_return(&mut self) {
@@ -615,6 +810,8 @@ pub(super) fn emit<'a>(
         emitter.end();
     }
 
+    emitter.promote_parameters(&function.params)?;
+
     // Contracts are assertions, not trusted flow facts, even when constant false.
     let flow = emitter.emit_block(&function.body)?;
     if function.return_type != Type::Void && !flow.returns_or_diverges() {
@@ -668,6 +865,7 @@ pub(super) fn emit_closure<'a>(
         .ok_or_else(|| closures::invalid("invalid closure ownership", closure.span))?;
     emitter.context.available_callables = closure.dependencies.iter().copied().collect();
     validate_parameters(&closure.params, &mut emitter)?;
+    emitter.promote_parameters(&closure.params)?;
     let (flow, result, has_tail) = match &closure.body {
         TypedClosureBody::Expression(expr) => {
             let flow = emitter.emit_expr(expr, closure.body_span)?;
@@ -710,6 +908,9 @@ pub(super) fn emit_closure<'a>(
             "invalid closure result",
             closure.body_span,
         ));
+    }
+    if emitter.context.used_captures.len() != closure.captures.len() {
+        return Err(closures::invalid("invalid capture metadata", closure.span));
     }
     let used: Vec<_> = emitter
         .context

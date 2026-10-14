@@ -1,6 +1,6 @@
 # WAS language extensions implementation plan
 
-**Status:** WP1–WP9 implemented; WP5, WP6 (#13), WP7 (#16), and WP8 release gates passed (exact evidence in §5). WP9 frontend/backend are integrated and [release gates passed](#wp9-release-validation). WP10 named-only pipelines, including positional/named/default binding and final-Void discard support (#27), are implemented with [release gates passed](#wp10-release-validation). WP11's capture-free local callable subset (#29) is implemented; shared captures/full WP11 release and WP12 remain deferred. WP13 requires separate authorization.
+**Status:** WP1–WP9 implemented; WP5, WP6 (#13), WP7 (#16), and WP8 release gates passed (exact evidence in §5). WP9 frontend/backend are integrated and [release gates passed](#wp9-release-validation). WP10 named-only pipelines, including positional/named/default binding and final-Void discard support (#27), are implemented with [release gates passed](#wp10-release-validation). WP11's local callable (#29) and immediate-creator shared parameter/let capture (#30) subsets are implemented; [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14), broader captures/full WP11 release and WP12 remain deferred. WP13 requires separate authorization.
 **Baseline:** Extension specification v0.3.
 
 Follow the [agent guide](../AGENTS.md), [extension specification](was_language_extensions_spec.md),
@@ -67,7 +67,7 @@ support; all WP5 release gates passed as recorded in §5. WP6 named/default para
 and WP7 acyclic result inference are implemented with release gates passed (#13/#16).
 WP8 whitelist contracts are implemented, with
 [release gates passed](#wp8-release-validation). WP9 match statements/values are
-implemented with frontend/backend integrated and [release gates passed](#wp9-release-validation). WP10 named-only pipelines are implemented with [release gates passed](#wp10-release-validation). WP11's capture-free local callable subset (#29) is implemented; shared captures/full WP11 release and WP12 remain deferred, and WP13 requires separate authorization.
+implemented with frontend/backend integrated and [release gates passed](#wp9-release-validation). WP10 named-only pipelines are implemented with [release gates passed](#wp10-release-validation). WP11's local callable (#29) and immediate-creator shared parameter/let capture (#30) subsets are implemented; [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14), broader captures/full WP11 release and WP12 remain deferred, and WP13 requires separate authorization.
 `requires`, `match`, and standalone `_` are reserved for source/host-language names,
 not arbitrary nonempty host module/field names. `_temp` remains valid; `by` stays
 contextual. WP9 does not implement ignored bindings or placeholder expressions.
@@ -110,8 +110,9 @@ lowering, not new helpers. Array iteration reuses checked `ArrayAddress` and
 preserves live alias observation without changing the descriptor ABI.
 
 **Private policy modules:** `src/semantic/inference.rs` implements #11 result
-inference and #14 acyclic dependency scheduling; `src/semantic/captures.rs` remains proposed for WP11 if those policies
-outgrow `semantic.rs`; `src/codegen/closures.rs` in WP11 for direct helpers/cells.
+inference and #14 acyclic dependency scheduling; `src/semantic/closures.rs` implements
+local callable inference, immediate-creator capture analysis and context-free
+dependencies; `src/codegen/closures.rs` handles direct helper/cell planning.
 These are cohesive modules, not another IR. Proposed integration suites appear below;
 create them at their step, not as empty scaffolding now. Keep specialized decoders local.
 
@@ -237,8 +238,9 @@ This historical first-wave handoff required final design confirmation before WP6
 and WP7 implementation. Those packages and their release gates are now complete;
 WP8 is implemented with release gates passed; WP9 frontend/backend are now
 integrated with [release gates passed](#wp9-release-validation). WP10 is implemented
-with [release gates passed](#wp10-release-validation). WP11–WP12 remain future waves
-and WP13 remains separately authorized. The module paths below
+with [release gates passed](#wp10-release-validation). WP11's #29/#30 subsets are
+implemented; broader captures/full WP11 release and WP12 remain deferred, and WP13
+remains separately authorized. The module paths below
 record original write-scope assignments, not current module inventory or a reason
 to create empty scaffolding.
 
@@ -274,7 +276,8 @@ Typed temporaries reserve an `i32` element address and `f64` old value per index
 occurrence before traversing children. Local updates keep the old value on the
 operand stack. Target/bounds checks and old-value reads precede RHS effects;
 writes use the original place. There is no scratch reuse or change to legacy
-array-slot order/encoding. Captured scalar mutation becomes testable in WP11.
+array-slot order/encoding. WP11's #30 subset adds ordinary captured assignment;
+captured compound places remain deferred.
 `%=` delegates to the unchanged exact helper and triggers its statement discovery
 hook even without binary `%`, in hidden, unreachable or runtime-skipped bodies.
 
@@ -715,7 +718,8 @@ rebuilt-browser and include-ignored runs recorded in §5, not default Cargo succ
 metadata and proof-based check elimination require separate design/authorization;
 none is part of WP8. WP9 match is implemented with [release gates passed](#wp9-release-validation);
 WP10 named-only pipelines are implemented with [release gates passed](#wp10-release-validation);
-WP11–WP12 closures/placeholders remain proposed.
+WP11's #29/#30 local callable/shared parameter/let capture subsets are implemented;
+broader captures/full WP11 release and WP12 placeholders remain deferred.
 
 ### WP9 — `match` statements/values (spec §8): implemented
 
@@ -992,8 +996,9 @@ and historical subset runs are not substitutes for that release evidence.
 
 The [WP11 design interview](wp11-local-closures-development.md) records accepted
 scope, inference, identity, storage, diagnostic, and validation decisions. Final
-shared understanding was confirmed on 2026-10-14; WP11 remains proposed and this
-record does not authorize implementation or establish release evidence.
+shared understanding was confirmed on 2026-10-14. The interview itself does not
+authorize implementation or establish release evidence. #29/#30 implement the
+subsets below; the remaining full WP11 contract and release remain deferred.
 
 **Implemented #29 subset:** Capture-free local declarations and lexical positional
 calls use dedicated owned typed declarations, program-wide callable IDs and
@@ -1001,8 +1006,42 @@ owner-qualified capture interfaces. Context-free helpers are checked/cached thro
 `ValidatedProgram`, emitted in source depth-first preorder after existing runtime
 helpers, with independent locals/temporaries/control contexts and no environment
 or callable-only memory. Earlier context-free callable dependencies are supported.
-Value captures are explicitly rejected until the capture slice lands. This is not
-full WP11 release readiness. See [public migration, scopes and validation](local-callable-interface.md).
+#30 extends this baseline with shared captures. See [public migration and scopes](local-callable-interface.md)
+and the separate [#30 validation record](local-callable-interface.md#issue-30-validation-2026-10-14);
+the historical #29 results do not cover shared storage.
+
+**Implemented #30 subset ([validation passed](local-callable-interface.md#issue-30-validation-2026-10-14)):** Capture immediate-
+creator parameters and ordinary lets of all concrete types (`number`, `bool`,
+`string`, `number[]`, `range`). Helper reads/assignment targets/indexed array bases
+use `TypedExprKind::Captured { owner, id, name }`; creator accesses remain
+`Identifier`. Metadata is unique and canonical by original owner/declaration order;
+checked lowering must derive that order independently of forged sparse IDs. Preserve
+initialization, shadowing, original type and shared ordinary assignment/indexed
+mutation without snapshotting or cloning bodies. Cached concrete closure-result
+inference and independent final body checks remain intact.
+
+Eager parameter cells allocate in formal order after all validation/contracts,
+eager let cells after completing initialization. Structural promotion can allocate
+cells even when a later capturing declaration is skipped. Nonempty environments
+allocate only at executed declarations; capturing helpers alone receive hidden
+first `i32` environments. Context-free helpers retain no callable-only allocation
+or hidden parameter. The [private storage contract](memory-abi.md#private-closure-storage-30)
+uses uniform eight-byte cells/slots and monotonic allocation, with possible memory
+growth/traps and no rollback/reclamation/heap rewind. Hosts refresh views after
+possible growth; persistent returned/retained handles keep existing ownership.
+
+Nested helpers may capture their immediate creator's own bindings and be called
+by that creator. Explicitly defer ancestor forwarding, context-requiring callable
+dependencies owned elsewhere, captured compound places (also creator-side promoted
+bindings before/after capture), and captured `for` bindings; preserve the
+[stable subset reasons](local-callable-interface.md#implemented-shared-capture-subset-30).
+Full WP11 release remains deferred. [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14)
+after review fixes, including current-source rebuilt-browser and full ignored
+runtime coverage. That record includes exact commands/results and the re-reviewed
+owner-qualified lookup/ordered bookkeeping fixes; it is not a parent WP11 release claim.
+
+The remaining paragraphs describe the **full WP11 target and exit**, including
+features deliberately outside #30; they are not claims of current support.
 
 **Entry:** WP10; approve dedicated callable/capture metadata and allocation policy.
 Parse explicitly typed lambda parameters with expression/block bodies; infer result
@@ -1031,7 +1070,9 @@ plan them deterministically in source discovery order after existing runtime hel
 without changing user IDs/import order. Extend checked layout/body lowering to helper
 bodies and capture accesses; do not trust public capture types, owners or offsets.
 
-**Exit tests:** proposed `tests/local_closures.rs`; all escape/alias restrictions,
+**Full WP11 exit tests (not satisfied by #30):** extend
+`tests/closures_frontend.rs`, `tests/closures_lowering.rs`,
+`tests/closures_runtime.rs` and `tests/closures_adapters.rs`; all escape/alias restrictions,
 read-only captured writes, cross-lambda transfers, forged helper/capture IDs/types,
 shared cells, shadowing, array-binding reassignment, closure own returns. Extend
 compound-place tests with captured scalar updates and RHS rebinding of an indexed
@@ -1156,8 +1197,11 @@ The focused include-ignored run and rebuilt-browser/full ignored gates supply
 runtime evidence; ordinary default Cargo success alone does not. Ignored defaults,
 optimization-level parity and sequential compiler planning remain unchanged.
 WP10 is now implemented with [release gates passed](#wp10-release-validation);
-WP11–WP12 remain proposed; WP13 optimization requires separate authorization.
-Earlier WP5–WP9 release records retain their historical scope and counts.
+WP11's #29/#30 subsets are implemented, while broader captures/full WP11 release
+and WP12 remain deferred; WP13 optimization requires separate authorization.
+Earlier WP5–WP9 release records retain their historical scope and counts; see
+[the separate #30 evidence](local-callable-interface.md#issue-30-validation-2026-10-14)
+for shared-capture validation.
 
 ### WP8 release validation
 

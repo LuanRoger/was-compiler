@@ -6,16 +6,64 @@ and registered host-function parameters/results. Language types remain distinct
 in semantic analysis even though both lower to `i32`; descriptors have no runtime
 type tag. Hosts must supply the type declared in their registration.
 
-## Capture-free local callable subset (#29)
+## Local callable subsets (#29–#30)
 
-Context-free helpers use direct calls with only explicit parameters. Local callable
-bindings have no runtime descriptor, environment, cells, hidden argument, or public
-host ABI. Declarations alone allocate nothing and do not execute helper bodies.
-Ordinary strings/arrays/ranges in helper bodies or signatures still activate the
-existing helpers and entry validation. Value captures are explicitly rejected in
-this subset; future shared-cell/environment storage remains deferred. Descriptor
-ownership, monotonic allocation and persistent returned/retained handles are
-unchanged. See [the subset interface](local-callable-interface.md).
+Context-free helpers use direct calls with only explicit parameters. Their declarations
+allocate no environment or cells and do not execute helper bodies. Ordinary
+strings/arrays/ranges in helper bodies or signatures still activate the existing
+helpers and entry validation. #30 adds shared captures of immediate-creator
+parameters and ordinary lets of every concrete type; full WP11 release remains
+deferred. See [the subset interface and public migration](local-callable-interface.md).
+See [#30 storage/runtime validation](local-callable-interface.md#issue-30-validation-2026-10-14)
+for current subset evidence; historical #29 results do not cover shared storage.
+
+### Private closure storage (#30)
+
+This is a backend-private layout, not a public host descriptor or callable ABI.
+Capturing helpers receive a hidden first `i32` environment pointer and still use
+direct calls; helpers remain unexported. Context-free helpers omit that pointer.
+No table, indirect call, environment header or universal callable descriptor is added.
+
+| Storage | Alignment/size | Contents |
+| --- | --- | --- |
+| Original binding cell | Eight-byte aligned, eight bytes | `f64` at offset 0 for `number`; `i32` at offset 0 for bool values and string/array/range handles |
+| Capture environment slot | Eight-byte aligned, eight bytes | `i32` address of the original shared cell at offset 0 |
+
+An environment has one slot per unique capture in canonical original owner/declaration
+order (parameters before lets), not numeric variable-ID order for forged typed input.
+Slot offsets are `8 * slot_index`; sizes/offsets use checked arithmetic. The unused
+four bytes of an `i32` cell/slot are not a host-readable field or tag. Uniform
+slots trade space for simple deterministic alignment instead of packed four-byte
+pointer slots. Layout constants remain private in `src/codegen/abi.rs`.
+
+Promotion is structural and eager. Captured parameter cells allocate in formal
+order **after all explicit parameter validation and ordered contracts**. A captured
+ordinary let's cell allocates **after its initializer completes**, including any
+initializer effects; a noncompleting initializer allocates no cell.
+A promoted binding can allocate even if a later capturing declaration is skipped.
+Creator and helper accesses use the same cell, so reassignment does not snapshot
+handles or values. Existing indexed array checks and alias semantics are unchanged.
+
+A nonempty environment allocates **only when its closure declaration executes**,
+then stores the original cell addresses without executing the body. A skipped
+declaration allocates no environment; a context-free declaration allocates none.
+Each recursive or host-reentrant creator invocation uses fresh storage, while
+closures sharing one live original binding share its cell.
+
+Cells/environments use the existing monotonic bump allocator. Allocation can grow
+memory or trap; prior host effects, writes and allocations are not rolled back.
+Storage is not freed at scope exit, normal return or trap, so repeated calls can
+consume memory until instance limits are reached. Never rewind the general heap:
+returned or host-retained strings/arrays may still be live. Hosts must refresh
+JavaScript views after any guest call or host allocation that may grow memory.
+Existing descriptor metadata/UTF-8/immutability obligations and explicit marshaling
+remain unchanged; private storage does not isolate hosts able to corrupt guest memory.
+
+Nested forwarding, context-requiring callable dependencies, captured compound places
+(including creator-side promoted bindings), capture of `for` bindings, and full WP11
+release remain deferred. A nested helper can capture its immediate creator's own
+parameters/ordinary lets. No transitive callable-context slots or iteration cells
+are implemented by this subset.
 
 ## Descriptor layout
 

@@ -255,6 +255,9 @@ pub(super) fn emit_lexical(
     if annotation != predicted_result(declaration.return_type, args) {
         return Err(super::closures::invalid("invalid callable call", span));
     }
+    if !declaration.captures.is_empty() {
+        body.callable_environment(id, span)?;
+    }
     let mut flow = Flow::FALLTHROUGH;
     for (arg, param) in args.iter().zip(&declaration.params) {
         expect_operand(body.name(), param.ty, arg.ty, span)?;

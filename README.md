@@ -155,11 +155,15 @@ WP10 named-only pipelines support positional/named arguments, omitted trailing
 defaults, and final Void stages with discarded results (#27). Implementation is
 complete; [release gates passed](docs/was_language_extensions_plan.md#wp10-release-validation)
 on 2026-10-14, including current-source rebuilt-browser and full ignored runtime coverage.
-WP11's capture-free local callable subset (#29) is implemented. Shared captures
-and full WP11 release remain deferred; WP12 placeholders and WP13 optimization
-are separately scoped.
+WP11's local callable subsets are implemented: capture-free declarations/calls
+(#29) and immediate-creator shared parameter/let captures (#30). Nested forwarding,
+context-requiring callable dependencies, captured compound places and captured
+`for` bindings remain deferred, as does full WP11 release.
+[#30 subset validation passed](docs/local-callable-interface.md#issue-30-validation-2026-10-14),
+including rebuilt-browser and full ignored runtime coverage. WP12 placeholders and
+WP13 optimization are separately scoped.
 
-### Capture-free local callables (WP11 subset, #29)
+### Local callables and shared captures (WP11 subsets, #29–#30)
 
 ```text
 fn main() -> number {
@@ -178,16 +182,29 @@ helpers; new declarations have no special self or forward visibility. Calls are
 positional, once-only and left-to-right. Ordinary named/default calls and contracts
 inside closure bodies retain their existing behavior.
 
+Closures may share their immediate creator's parameters and ordinary lets of type
+`number`, `bool`, `string`, `number[]` or `range`. Reassignment from either side is
+visible to the other; ordinary indexed array writes retain alias semantics. A
+nested closure may capture its immediate creator's own bindings, but forwarding
+ancestor captures and calling an external context-requiring local callable from a
+helper remain deferred. Compound writes involving captured bindings (including
+creator-side promoted bindings) and capture of `for` bindings are also deferred.
+Use ordinary assignment for supported captured mutation.
+
 Callables cannot be aliased, reassigned, annotated with a value type, passed,
-returned or used as values. Value captures are explicitly rejected with
-`capturing outer bindings is not supported in this subset`. Immediate invocation,
-closure defaults/contracts/result annotations, placeholders and closure pipeline
-stages are not supported. Shared capture storage and full WP11 release are deferred.
+returned or used as values. Immediate invocation, closure defaults/contracts/result
+annotations, placeholders and closure pipeline stages are not supported. Full WP11
+release remains deferred.
 
 Generated helpers use direct calls, are never exported, and follow existing runtime
 helpers. Context-free callables add no environments, hidden arguments or memory
 solely for callable support; ordinary strings/arrays/ranges may still need memory.
-See [the public AST migration and subset contract](docs/local-callable-interface.md).
+Captured bindings use eager shared cells and declaration-time environments with
+private uniform eight-byte storage. Allocation may grow memory or trap, is monotonic,
+and does not roll back earlier effects. Hosts must refresh views after possible
+memory growth. See [the private storage contract](docs/memory-abi.md#private-closure-storage-30)
+and [the public AST migration and subset contract](docs/local-callable-interface.md),
+including the new owner-qualified `TypedExprKind::Captured` variant.
 
 ### Named-only pipelines (WP10 implemented; release gates passed)
 

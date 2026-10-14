@@ -43,8 +43,10 @@ WP9 match statements/values are implemented with frontend/backend integrated;
 final-Void discard support (#27);
 [release gates passed](was_language_extensions_plan.md#wp10-release-validation)
 on 2026-10-14, including current-source rebuilt-browser and full ignored runtime coverage.
-WP11's capture-free local callable subset (#29) is implemented; shared captures
-and full WP11 release remain deferred. WP12 and WP13 remain separately scoped.
+WP11 implements capture-free local callables (#29) and immediate-creator shared
+parameter/let captures (#30), with [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14).
+Nested forwarding, context-requiring callable dependencies, captured compounds/for
+bindings and full WP11 release remain deferred. WP12 and WP13 remain separately scoped.
 See [the #14 contract](result-inference-development.md#issue-14-acyclic-chains-and-diamonds) and the
 [named/default interface](named-call-interface.md) for migration and the
 [development handoff](wp6-wp7-development.md) for historical worktree evidence.
@@ -74,7 +76,7 @@ The plan's #25/#26 validation records remain historical subset evidence, not
 full-release evidence; [#27 release validation passed](was_language_extensions_plan.md#wp10-release-validation)
 for complete WP10 support.
 
-### Capture-free local callable restrictions (#29)
+### Local callable and shared-capture restrictions (#29–#30)
 
 Only lambda-initialized local bindings and direct positional calls are supported.
 Parentheses around initializers are transparent. Callables cannot be used as
@@ -83,12 +85,27 @@ Immediate invocation, named/default closure parameters, closure contracts/result
 annotations, placeholders and closure pipeline stages are rejected. Closures may
 call ordinary named functions with their existing defaults and contracts.
 
-Reading or writing an original outer value binding is rejected explicitly with
-`capturing outer bindings is not supported in this subset`; no snapshot or capture
-storage is generated. Earlier context-free callable dependencies are allowed,
-including nested composition. Declaration-before-use and ordinary lexical
-shadowing apply, without self/forward closure hoisting. Return and loop contexts
-are independent of the creator. Calls have concrete signatures, not Never results.
+A closure may capture immediate-creator parameters and ordinary lets of every
+concrete type (`number`, `bool`, `string`, `number[]`, `range`). Captures preserve
+original bindings and observe reassignment from either side, including ordinary
+array indexed mutation and array-binding reassignment. Nested helpers may capture
+their immediate creator's own bindings. Ancestor forwarding, dependencies on
+context-requiring callables owned elsewhere, capture of `for` bindings and captured
+compound places remain explicitly rejected. Compounds on creator-side promoted
+bindings are rejected too, even before the capturing declaration; use ordinary
+assignment instead. See [the stable subset reasons](local-callable-interface.md#implemented-shared-capture-subset-30).
+
+Earlier context-free callable dependencies are allowed, including nested
+composition. Declaration-before-use and ordinary lexical shadowing apply, without
+self/forward closure hoisting. Return and loop contexts are independent of the
+creator. Calls have concrete signatures, not Never results.
+
+Shared cells and executed nonempty environments consume monotonic linear memory;
+allocation can grow memory or trap without rollback, even when a capturing
+declaration is later skipped (its promoted binding cell can already exist).
+There is no reclamation or heap rewind. See [allocation timing and private layout](memory-abi.md#private-closure-storage-30).
+Full WP11 release remains deferred. The separate [#30 validation record](local-callable-interface.md#issue-30-validation-2026-10-14)
+covers this subset; historical #29 results do not cover shared storage.
 
 Reachable returns join exactly with completing expressions/tails. No-tail normal
 completion requires Void; expression/tail Never-only inference is rejected. A
@@ -197,7 +214,8 @@ target and RHS must have type `number`. They do not produce an expression value,
 concatenate strings, operate on whole arrays, or broaden postfix access. Indexed
 updates check the target once and save its address and old value before RHS
 effects; failure traps before RHS evaluation. `%=` shares exact floating remainder
-behavior with `%`. Captured-binding updates remain future closure work.
+behavior with `%`. Compound places involving captured bindings remain deferred;
+#30 supports ordinary captured assignment and indexed array mutation.
 
 `break`, `continue`, `loop`, `in`, `for`, and `requires` are reserved source keywords and
 host-language names; rename existing bindings/functions using them. Host module/field names
@@ -294,8 +312,8 @@ including current-source rebuilt-browser and full ignored runtime coverage. The 
 and [frozen design interview](was_language_extensions_plan.md#wp9--match-statementsvalues-spec-8-implemented)
 describe implemented language support alongside WP10 pipelines with
 [release validation passed](was_language_extensions_plan.md#wp10-release-validation);
-capture-free local callables are implemented as the #29 subset; shared captures
-and placeholders remain deferred.
+local callables and immediate-creator shared parameter/let captures are implemented
+as the #29/#30 subsets; broader captures, full WP11 release and placeholders remain deferred.
 
 - Scrutinees that complete must be number/bool/string, not arrays, ranges or Void.
   Patterns are wildcard, exact scalar literals, numeric comparisons and constant
@@ -333,7 +351,7 @@ and placeholders remain deferred.
 | Restriction now | Practical effect | Current alternative | Possible future choice and tradeoff |
 | --- | --- | --- | --- |
 | Only `number`, `bool`, `string`, `number[]`, `range`, and `void` exist. Parameters require annotations; omitted results infer through acyclic chains/diamonds. Recursive components require explicit results on every member, including across annotated barriers; Never-only value-return syntax needs an annotation. Every `let` requires an initializer. No parameter inference, whole-program type unification, promotions, implicit coercions, or source `i32` type. | Local inference does not change the `f64` numeric model or allow later assignments of another type. A boolean cannot stand in for a number, and a numeric value cannot serve as a condition; `void` is not a variable/parameter type. | Use inferred or explicitly annotated locals and explicit helper functions, branches, or registered host conversions with matching signatures. | Explicit conversions or broader inference require separate type-system and error-ordering decisions; neither is implied by local initializer inference. |
-| No source modules/import declarations, structs, generics, or first-class functions. Capture-free local callables support direct positional lexical calls; ordinary calls resolve named user functions, registered hosts, or built-in `len`. | The source program is one collection of functions; host registration is an embedding/CLI responsibility. | Put related functions in one source unit and supply external capabilities through host functions. Numeric-array conventions can model simple records, but have no field/type safety. | Modules or dedicated aggregate/function types need name-resolution, type-system, and ABI decisions. Host-side modeling avoids those changes but keeps application-specific conventions outside the language. |
+| No source modules/import declarations, structs, generics, or first-class functions. Local callables support direct positional lexical calls and immediate-creator shared parameter/let captures; ordinary calls resolve named user functions, registered hosts, or built-in `len`. | The source program is one collection of functions; host registration is an embedding/CLI responsibility. | Put related functions in one source unit and supply external capabilities through host functions. Numeric-array conventions can model simple records, but have no field/type safety. | Modules or dedicated aggregate/function types need name-resolution, type-system, and ABI decisions. Host-side modeling avoids those changes but keeps application-specific conventions outside the language. |
 | No labels or `foreach`. Transfers target the nearest active while/for/loop; only value loops allow value breaks. Range/array for is statement-only with a read-only numeric binding. Nonvoid functions must return or explicitly diverge, never fall through. | Loops cannot transfer across function boundaries. A range or array may be empty, so its body alone does not guarantee return. A no-exit syntactic loop is Never; arbitrary calls or possible traps do not prove divergence. | Use range/array for, statement/value `loop`, numeric-index while plus `len(array)`, and explicit returns. Shadow an iteration binding with a distinct inner let when a mutable local is needed. | Labels need their own target-resolution contract; implementing WP5 does not add labeled transfers. |
 | Array indexing in source starts from an identifier; there is no general postfix chaining. | `make_values()[0]` and `[1, 2][0]` are not supported source forms. | Assign the result/literal to an inferred or annotated `number[]` local, then index that local. | General postfix parsing is a grammar feature and needs explicit assignment-target rules. |
 | Identifiers are ASCII letters/underscore followed by ASCII letters/digits/underscore. | Unicode identifiers are unsupported. | Use ASCII identifiers. | Define a Unicode identifier policy with normalization/confusable-name decisions. |

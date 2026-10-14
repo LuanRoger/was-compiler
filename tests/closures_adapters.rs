@@ -26,7 +26,9 @@ fn main() -> number {
     let first = ((x: number) => named(a: x));
     let wrapper = () => { let nested = () => first(mark(2)); nested() };
     let sink = () => { mark(3); return; };
-    sink(); return wrapper();
+    let state = 0;
+    let increment = () => { state = state + 1; };
+    increment(); sink(); return wrapper() + state;
 }
 fn text() -> string { let make = () => "hé😀"; return make(); }
 fn array() -> number[] { let make = () => [1, 2]; return make(); }
@@ -90,14 +92,16 @@ enum ErrorKind {
 
 const ERRORS: &[(&str, &str, ErrorKind)] = &[
     (
-        "let x = 1; let f = () => x;",
+        "let x = 1; let f = () => { let g = () => x; g() };",
         "x",
-        ErrorKind::Invalid("capturing outer bindings is not supported in this subset"),
+        ErrorKind::Invalid("nested capture forwarding is not supported in this subset"),
     ),
     (
-        "let f = (x: number) => { let g = () => x; g() };",
-        "x",
-        ErrorKind::Invalid("capturing outer bindings is not supported in this subset"),
+        "let x = 1; let f = () => x; let g = () => f();",
+        "f()",
+        ErrorKind::Invalid(
+            "context-requiring callable dependencies are not supported in this subset",
+        ),
     ),
     (
         "let f: number = (() => missing);",
@@ -402,7 +406,7 @@ fn rebuilt_browser_closure_bytes_wat_execution_and_diagnostics_match_native() {
                     const events = [];
                     const e = new WebAssembly.Instance(new WebAssembly.Module(compiler.compile(source)),
                         {env:{mark(n) {events.push(n); return n;}}}).exports;
-                    assert.equal(e.main(), 5); assert.deepEqual(events.splice(0), [3,2]);
+                    assert.equal(e.main(), 6); assert.deepEqual(events.splice(0), [3,2]);
                     assert.equal(e.operations(), 1);
                     function contents(h, text = false) {
                         const v = new DataView(e.memory.buffer);
