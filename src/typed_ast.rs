@@ -4,8 +4,54 @@ use crate::{
     tokens::Span,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FunctionId(pub usize);
+
+/// Program-wide identity in lexical source-discovery order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CallableId(pub usize);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BindingOwner {
+    Function(FunctionId),
+    Closure(CallableId),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptureMutability {
+    Mutable,
+    ReadOnly,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypedCapture {
+    pub owner: BindingOwner,
+    pub variable: VariableId,
+    pub ty: Type,
+    pub mutability: CaptureMutability,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TypedClosureBody {
+    Expression(Box<TypedExpr>),
+    Block(TypedValueBlock),
+}
+
+/// A declaration owns its helper body; it is not a first-class value.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypedClosure {
+    pub id: CallableId,
+    pub owner: BindingOwner,
+    pub name: String,
+    pub name_span: Span,
+    pub params: Vec<TypedParam>,
+    pub return_type: Type,
+    pub body: TypedClosureBody,
+    pub captures: Vec<TypedCapture>,
+    pub dependencies: Vec<CallableId>,
+    pub span: Span,
+    pub body_span: Span,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct VariableId(pub usize);
@@ -106,6 +152,12 @@ pub enum TypedExprKind {
 
     NormalizedCall(TypedNormalizedCall),
 
+    LexicalCall {
+        callable: CallableId,
+        args: Vec<TypedExpr>,
+        span: Span,
+    },
+
     Loop {
         id: LoopId,
         body: TypedBlock,
@@ -178,6 +230,8 @@ pub struct TypedValueBlock {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypedStatementKind {
+    Closure(TypedClosure),
+
     Let {
         id: VariableId,
         name: String,

@@ -160,11 +160,15 @@ struct MemoryVisitor<'a> {
     used: &'a mut bool,
 }
 
-impl Visitor for MemoryVisitor<'_> {
+impl Visitor<'_> for MemoryVisitor<'_> {
     type Break = CodegenError;
 
     fn enter_statement(&mut self, statement: &TypedStatement) -> ControlFlow<CodegenError> {
         match &statement.kind {
+            TypedStatementKind::Closure(closure) => {
+                *self.used |= memory_type(closure.return_type)
+                    || closure.params.iter().any(|p| memory_type(p.ty));
+            }
             TypedStatementKind::Let { ty, .. } => *self.used |= memory_type(*ty),
             TypedStatementKind::For { .. } => *self.used = true,
             _ => {}

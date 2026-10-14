@@ -5,8 +5,9 @@ use super::{CodegenError, function, layout::Layout};
 
 pub(super) struct ValidatedProgram<'a> {
     program: &'a TypedProgram,
-    layout: Layout,
+    layout: Layout<'a>,
     bodies: Vec<Function>,
+    callable_bodies: Vec<Function>,
 }
 
 impl<'a> ValidatedProgram<'a> {
@@ -21,10 +22,16 @@ impl<'a> ValidatedProgram<'a> {
             bodies.push(function::emit(function, &layout)?);
         }
 
+        let mut callable_bodies = Vec::with_capacity(layout.callables.len());
+        for plan in &layout.callables {
+            callable_bodies.push(function::emit_closure(plan.declaration, &layout)?);
+        }
+
         Ok(Self {
             program,
             layout,
             bodies,
+            callable_bodies,
         })
     }
 
@@ -32,8 +39,12 @@ impl<'a> ValidatedProgram<'a> {
         self.program
     }
 
-    pub fn layout(&self) -> &Layout {
+    pub fn layout(&self) -> &Layout<'a> {
         &self.layout
+    }
+
+    pub fn callable_bodies(&self) -> &[Function] {
+        &self.callable_bodies
     }
 
     pub fn bodies(&self) -> &[Function] {

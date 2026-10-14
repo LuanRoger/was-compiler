@@ -4,27 +4,34 @@ use thiserror::Error;
 
 use crate::{
     ast::{
-        BinaryOp, Block, CallArgument, Expr, Function, MatchArm, PipelineStage, Program, Statement,
-        StatementKind, Type, UnaryOp, ValueBlock,
+        BinaryOp, Block, CallArgument, Expr, Function, Lambda, LambdaBody, MatchArm, PipelineStage,
+        Program, Statement, StatementKind, Type, UnaryOp, ValueBlock,
     },
     flow::Flow,
     host::HostFunctions,
     tokens::Span,
     typed_ast::{
-        BuiltinFunction, CallBindingOrigin, ExprResult, FunctionId, FunctionRef, LoopId,
-        TypedBlock, TypedCallBinding, TypedContract, TypedExpr, TypedExprKind, TypedFunction,
-        TypedMatchArm, TypedNormalizedCall, TypedParam, TypedProgram, TypedStatement,
-        TypedStatementKind, TypedValueBlock, VariableId,
+        BindingOwner, BuiltinFunction, CallBindingOrigin, CallableId, ExprResult, FunctionId,
+        FunctionRef, LoopId, TypedBlock, TypedCallBinding, TypedClosure, TypedClosureBody,
+        TypedContract, TypedExpr, TypedExprKind, TypedFunction, TypedMatchArm, TypedNormalizedCall,
+        TypedParam, TypedProgram, TypedStatement, TypedStatementKind, TypedValueBlock, VariableId,
     },
 };
 
 mod call_binding;
+mod closures;
+use closures::{BindingUse, LexicalBinding};
 mod defaults;
 mod inference;
 mod pure_expression;
 
 #[derive(Debug, Error, PartialEq)]
 pub enum SemanticError {
+    #[error("invalid closure: {reason}")]
+    InvalidClosure { reason: &'static str, span: Span },
+
+    #[error("cannot infer a concrete closure result")]
+    CannotInferClosureResult { span: Span },
     #[error("Invalid pipeline: {message} at {span:?}")]
     InvalidPipeline { message: &'static str, span: Span },
 
@@ -189,7 +196,9 @@ pub enum SemanticError {
 impl SemanticError {
     pub fn span(&self) -> Option<Span> {
         match self {
-            Self::InvalidPipeline { span, .. }
+            Self::InvalidClosure { span, .. }
+            | Self::CannotInferClosureResult { span }
+            | Self::InvalidPipeline { span, .. }
             | Self::InvalidMatch { span, .. }
             | Self::RecursiveResultAnnotationRequired { span, .. }
             | Self::UnresolvedResultDependency { span, .. }
@@ -250,6 +259,7 @@ struct FunctionSignature {
 
 #[derive(Clone, Copy)]
 struct VariableBinding {
+    owner: Option<BindingOwner>,
     id: VariableId,
     ty: Type,
     mutability: BindingMutability,
@@ -289,7 +299,11 @@ struct LoopContext {
 pub struct SemanticAnalyzer {
     host_functions: HostFunctions,
     functions: HashMap<String, FunctionSignature>,
-    scopes: Vec<HashMap<String, VariableBinding>>,
+    scopes: Vec<HashMap<String, LexicalBinding>>,
+    owner: Option<BindingOwner>,
+    callable_ids: HashMap<usize, CallableId>,
+    closure_results: HashMap<usize, Type>,
+    dependencies: Vec<(CallableId, Vec<CallableId>)>,
     next_variable_id: usize,
     loops: Vec<LoopContext>,
     next_loop_id: usize,
@@ -308,6 +322,15 @@ impl SemanticAnalyzer {
     }
 
     pub fn analyze(&mut self, program: &Program) -> Result<TypedProgram, SemanticError> {
+        // Addresses identify borrowed raw nodes only during this analysis. Their
+        // assigned IDs come from source traversal, never address or inference order.
+        self.callable_ids = inference::discover_lambdas(program)
+            .into_iter()
+            .enumerate()
+            .map(|(index, lambda)| (std::ptr::from_ref(lambda).addr(), CallableId(index)))
+            .collect();
+        self.closure_results.clear();
+        self.dependencies.clear();
         self.functions.clear();
         self.scopes.clear();
         self.next_variable_id = 0;
@@ -344,6 +367,10 @@ impl SemanticAnalyzer {
 
         self.scopes.clear();
         self.loops.clear();
+        self.callable_ids.clear();
+        self.closure_results.clear();
+        self.dependencies.clear();
+        self.owner = None;
 
         result
     }
@@ -435,6 +462,7 @@ impl SemanticAnalyzer {
         id: FunctionId,
         context: ReturnContext,
     ) -> Result<TypedFunction, SemanticError> {
+        self.owner = Some(BindingOwner::Function(id));
         self.next_variable_id = 0;
         self.next_loop_id = 0;
         self.loops.clear();
@@ -553,7 +581,29 @@ impl SemanticAnalyzer {
         let flow;
 
         let kind = match &statement.kind {
-            StatementKind::Let { name, ty, value } => {
+            StatementKind::Let {
+                name,
+                name_span,
+                ty,
+                value,
+            } => {
+                if let Expr::Lambda(lambda) = value {
+                    if ty.is_some() {
+                        return Err(SemanticError::InvalidClosure {
+                            reason: "a local callable binding cannot have a value type annotation",
+                            span: *name_span,
+                        });
+                    }
+                    let closure = self.analyze_closure(name, *name_span, lambda)?;
+                    self.declare_callable(&closure, span)?;
+                    return Ok((
+                        TypedStatement {
+                            kind: TypedStatementKind::Closure(closure),
+                            span,
+                        },
+                        Flow::FALLTHROUGH,
+                    ));
+                }
                 if let Some(ty) = ty {
                     self.check_variable_type(name, *ty, span)?;
                 }
@@ -818,6 +868,15 @@ impl SemanticAnalyzer {
             }
 
             StatementKind::Return(value) => {
+                if let Some(Expr::Lambda(lambda)) = value {
+                    return Err(SemanticError::InvalidClosure {
+                        reason: "a closure must initialize a local callable binding",
+                        span: lambda.span,
+                    });
+                }
+                if let Some(Expr::Identifier(name)) = value {
+                    self.check_value_binding(name, span, BindingUse::Read)?;
+                }
                 let value = match value {
                     Some(_) if return_type == ReturnContext::Known(Type::Void) => {
                         return Err(SemanticError::UnexpectedReturnValue { span });
@@ -895,6 +954,7 @@ impl SemanticAnalyzer {
     ) -> Result<(TypedExpr, Flow), SemanticError> {
         match target {
             Expr::Identifier(name) => {
+                self.check_value_binding(name, span, BindingUse::Write)?;
                 let binding =
                     self.lookup_variable(name)
                         .ok_or_else(|| SemanticError::UndefinedVariable {
@@ -1074,6 +1134,7 @@ impl SemanticAnalyzer {
             Expr::Bool(value) => (TypedExprKind::Bool(*value), Type::Bool.into()),
 
             Expr::Identifier(name) => {
+                self.check_value_binding(name, span, BindingUse::Read)?;
                 let binding =
                     self.lookup_variable(name)
                         .ok_or_else(|| SemanticError::UndefinedVariable {
@@ -1245,7 +1306,23 @@ impl SemanticAnalyzer {
             } => {
                 return self.analyze_pipeline(input, *input_span, stages, return_type, context);
             }
-            Expr::Call { func, args } => return self.analyze_call(func, args, span, return_type),
+            Expr::Lambda(lambda) => {
+                return Err(SemanticError::InvalidClosure {
+                    reason: "a closure must initialize a local callable binding",
+                    span: lambda.span,
+                });
+            }
+            Expr::Call {
+                func,
+                args,
+                span: call_span,
+            } => {
+                if let Some(LexicalBinding::Callable(callable)) = self.lookup_binding(func).cloned()
+                {
+                    return self.analyze_lexical_call(&callable, args, *call_span, return_type);
+                }
+                return self.analyze_call(func, args, span, return_type);
+            }
 
             Expr::Array(elements) => {
                 let mut values = Vec::with_capacity(elements.len());
@@ -1441,10 +1518,10 @@ impl SemanticAnalyzer {
     }
 
     fn lookup_variable(&self, name: &str) -> Option<VariableBinding> {
-        self.scopes
-            .iter()
-            .rev()
-            .find_map(|scope| scope.get(name).copied())
+        match self.lookup_binding(name) {
+            Some(LexicalBinding::Value(binding)) => Some(*binding),
+            _ => None,
+        }
     }
 
     fn declare_variable(
@@ -1470,7 +1547,12 @@ impl SemanticAnalyzer {
 
                 self.next_variable_id += 1;
 
-                entry.insert(VariableBinding { id, ty, mutability });
+                entry.insert(LexicalBinding::Value(VariableBinding {
+                    owner: self.owner,
+                    id,
+                    ty,
+                    mutability,
+                }));
 
                 Ok(id)
             }

@@ -128,7 +128,7 @@ fn function_walk_is_ordered_and_breaks_before_later_contracts_and_body_hooks() {
         blocks: usize,
         stop: bool,
     }
-    impl Visitor for Recorder {
+    impl Visitor<'_> for Recorder {
         type Break = ();
         fn enter_expression(&mut self, value: &TypedExpr) -> ControlFlow<()> {
             if let TypedExprKind::String(value) = &value.kind {

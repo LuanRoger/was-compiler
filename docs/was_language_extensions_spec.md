@@ -1,11 +1,11 @@
 # WAS Language Extensions — Unified Design and Implementation Specification
 
-**Status:** Design baseline with the 13 approved decisions and implementation clarifications (WP1–WP5 implementation complete: compound assignments, while transfers, block/if values, internal Never, statement/value loops, and range construction/internal calls, numeric membership, and range/array statement for; issue #6 adapter/interaction support implemented, all WP5 release gates passed (exact evidence in plan §5), WP6 named/default parameters are implemented and #13 release validation passed; WP7 acyclic result inference and named/default integration are implemented and #16 release validation passed; WP8 whitelist contracts are implemented and release gates passed (exact evidence in plan §5); WP9 match statements/values are implemented with frontend/backend integrated and [release gates passed](was_language_extensions_plan.md#wp9-release-validation); WP10 named-only pipelines are implemented, including positional/named/default binding and final-Void discard support (#27), with [release gates passed](was_language_extensions_plan.md#wp10-release-validation) on 2026-10-14; WP11–WP12 remain proposed and WP13 requires separate authorization)
+**Status:** Design baseline with the 13 approved decisions and implementation clarifications (WP1–WP5 implementation complete: compound assignments, while transfers, block/if values, internal Never, statement/value loops, and range construction/internal calls, numeric membership, and range/array statement for; issue #6 adapter/interaction support implemented, all WP5 release gates passed (exact evidence in plan §5), WP6 named/default parameters are implemented and #13 release validation passed; WP7 acyclic result inference and named/default integration are implemented and #16 release validation passed; WP8 whitelist contracts are implemented and release gates passed (exact evidence in plan §5); WP9 match statements/values are implemented with frontend/backend integrated and [release gates passed](was_language_extensions_plan.md#wp9-release-validation); WP10 named-only pipelines are implemented, including positional/named/default binding and final-Void discard support (#27), with [release gates passed](was_language_extensions_plan.md#wp10-release-validation) on 2026-10-14; WP11's capture-free local callable subset (#29) is implemented, shared captures/full WP11 release remain deferred, WP12 remains proposed and WP13 requires separate authorization)
 **Version:** 0.3 — 9 October 2026 (implementation clarification update)  
 **Target:** Core WebAssembly, initially the MVP-compatible instruction set already used by `was-compiler`, with optional optimizations gated by Wasm features.  
 **Repository:** https://github.com/LuanRoger/was-compiler
 
-> **Normative language.** **MUST**, **SHOULD**, and **MAY** describe requirements, strong recommendations, and optional implementation choices. This document establishes a coherent semantic model, distinguishing implemented support from proposed extensions. Decisions tagged **Open decision** need confirmation before being frozen as language guarantees. Compound assignments (§4/WP1), bare `while` transfers (§7/WP2), block/if values with internal Never (§§3.2, 8.1/WP3), and statement/value loops (§7/WP4) are implemented. Range construction, internal calls, exact numeric membership (§5/WP5), and range/array statement `for` (§6/issues #4–#5) are also implemented, with adapter/interaction support under issue #6; all WP5 release gates passed (exact evidence in plan §5). WP6 user-function named/mixed-prefix calls and trailing pure defaults (§14/issues #10/#12) are implemented, and [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation). WP7 acyclic result inference (§9) and its named/default integration are implemented, and [#16 release validation passed](was_language_extensions_plan.md#issue-16-wp7-release-validation). Every recursive component member requires an explicit result in this initial release. WP8 whitelist contracts (§13) are implemented and [release gates passed](was_language_extensions_plan.md#wp8-release-validation), including rebuilt-browser and full ignored runtime coverage. WP9 match statements/values (§8.2–§8.3) are implemented with frontend/backend integrated and [release gates passed](was_language_extensions_plan.md#wp9-release-validation). WP10 named-only pipelines (§12) implement positional/named/default stage binding and final Void stages with discarded results (#27); implementation is complete and [release gates passed](was_language_extensions_plan.md#wp10-release-validation), including current-source rebuilt-browser and full ignored runtime coverage. WP11–WP12 closures/placeholders and examples using them remain proposed `.was` syntax.
+> **Normative language.** **MUST**, **SHOULD**, and **MAY** describe requirements, strong recommendations, and optional implementation choices. This document establishes a coherent semantic model, distinguishing implemented support from proposed extensions. Decisions tagged **Open decision** need confirmation before being frozen as language guarantees. Compound assignments (§4/WP1), bare `while` transfers (§7/WP2), block/if values with internal Never (§§3.2, 8.1/WP3), and statement/value loops (§7/WP4) are implemented. Range construction, internal calls, exact numeric membership (§5/WP5), and range/array statement `for` (§6/issues #4–#5) are also implemented, with adapter/interaction support under issue #6; all WP5 release gates passed (exact evidence in plan §5). WP6 user-function named/mixed-prefix calls and trailing pure defaults (§14/issues #10/#12) are implemented, and [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation). WP7 acyclic result inference (§9) and its named/default integration are implemented, and [#16 release validation passed](was_language_extensions_plan.md#issue-16-wp7-release-validation). Every recursive component member requires an explicit result in this initial release. WP8 whitelist contracts (§13) are implemented and [release gates passed](was_language_extensions_plan.md#wp8-release-validation), including rebuilt-browser and full ignored runtime coverage. WP9 match statements/values (§8.2–§8.3) are implemented with frontend/backend integrated and [release gates passed](was_language_extensions_plan.md#wp9-release-validation). WP10 named-only pipelines (§12) implement positional/named/default stage binding and final Void stages with discarded results (#27); implementation is complete and [release gates passed](was_language_extensions_plan.md#wp10-release-validation), including current-source rebuilt-browser and full ignored runtime coverage. WP11 capture-free local callables (#29) are implemented; shared-capture and WP12 placeholder examples remain proposed `.was` syntax.
 
 The [concrete implementation plan](was_language_extensions_plan.md) maps this
 specification to ordered work packages, repository files, acceptance tests, and
@@ -16,7 +16,7 @@ and bare `while` transfers (§7/WP2), followed by block/if values and internal N
 (§§3.2, 8.1/WP3) and statement/value loops (§7/WP4), are implemented;
 WP5's construction/internal-call, numeric membership, range-for, and array-for checkpoints are implemented;
 issue #6 completes adapter/interaction implementation and all release gates passed.
-Exact evidence is recorded in [plan §5](was_language_extensions_plan.md#5-documentation-and-validation-workflow). WP6 named/default parameters are implemented on main, and [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation). WP7 acyclic result inference and combined-feature integration are implemented, with [#16 release validation](was_language_extensions_plan.md#issue-16-wp7-release-validation). WP8 whitelist contracts are implemented, with [release gates passed](was_language_extensions_plan.md#wp8-release-validation). WP9 match statements/values are implemented with [release gates passed](was_language_extensions_plan.md#wp9-release-validation). WP10 named-only pipelines are implemented with named/default binding and final-Void discard support (#27); [release validation passed](was_language_extensions_plan.md#wp10-release-validation); WP11–WP12 remain proposed later packages and WP13 requires separate authorization.
+Exact evidence is recorded in [plan §5](was_language_extensions_plan.md#5-documentation-and-validation-workflow). WP6 named/default parameters are implemented on main, and [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation). WP7 acyclic result inference and combined-feature integration are implemented, with [#16 release validation](was_language_extensions_plan.md#issue-16-wp7-release-validation). WP8 whitelist contracts are implemented, with [release gates passed](was_language_extensions_plan.md#wp8-release-validation). WP9 match statements/values are implemented with [release gates passed](was_language_extensions_plan.md#wp9-release-validation). WP10 named-only pipelines are implemented with named/default binding and final-Void discard support (#27); [release validation passed](was_language_extensions_plan.md#wp10-release-validation); WP11's capture-free local callable subset (#29) is implemented, while shared captures/full WP11 release and WP12 remain deferred; WP13 requires separate authorization.
 
 ## 1. Goals and non-goals
 
@@ -832,7 +832,7 @@ The initial release conservatively requires explicit results on **every** recurs
 component member, even anchored recursion and across annotated barriers. No recursive
 constraint solver is implemented. [Public raw-AST migration](named-call-interface.md#public-ast-migration)
 uses `Function.return_type: Option<Type>`; typed signatures remain concrete/full-arity.
-Later anonymous-function syntax and optimization examples remain proposals.
+Capture-free anonymous local callables are implemented under #29; shared-capture and optimization examples remain proposals.
 
 ### 9.1 Syntax
 
@@ -910,6 +910,15 @@ Return inference is complete **before module type section emission**. It does no
 
 ## 10. Feature specification: anonymous functions and local closures
 
+**Implemented subset (#29):** explicitly typed positional/zero-argument local
+callables, expression/tail-valued block/Void bodies, transparent initializer
+parentheses, and direct lexical calls including earlier context-free dependencies.
+Value captures are rejected with `capturing outer bindings is not supported in this subset`.
+Shared capture storage in §§10.2–10.3 remains an accepted future contract, not
+implemented support or full WP11 release evidence. The authoritative parent
+[issue #28](https://github.com/LuanRoger/was-compiler/issues/28) fixes the full
+contract. See [the concrete public migration](local-callable-interface.md).
+
 ### 10.1 Syntax and restricted v1 use
 
 ```
@@ -923,7 +932,28 @@ let result: number = multiply(10); // 50
 
 An anonymous function uses `(typed_parameters) => expression` or `(typed_parameters) => { statements; tail_expression }`. Local closure parameters are explicitly typed in v1. Its result type is inferred from expression bodies or compatible explicit `return` statements / tail expressions. Zero-argument closures are supported (`() => { ... }`). A locally declared closure binding is a **named lexical callable**, not a first-class value in the public type system.
 
-Allowed: direct lexical invocation `multiply(10)`, immediate invocation of a syntactically known closure if implemented, closure stages in pipelines after the closure phase, and closures referring to other lexical values where no callable escapes.
+Allowed in WP11: local lambda declarations and direct lexical positional invocation.
+Immediate invocation, general postfix callees, named/default closure parameters,
+closure contracts/result annotations, closure pipeline stages and placeholders
+are excluded. Calls from a closure to ordinary named functions retain existing
+named/default/contract semantics.
+
+Analyze the initializer before introducing its callable name. Earlier visible
+callables may be invoked, including through nested declarations. Values and
+callables shadow named functions; calling a shadowing value is an error. There is
+no self/forward/mutual closure hoisting, and unresolved names retain ordinary
+undefined-name errors. Helpers have independent return and loop contexts.
+
+Join reachable explicit returns (bare return contributes Void) with normally
+completing expression/body-tail results using exact types and Never compatibility.
+No-tail fallthrough requires Void; value returns with possible no-tail completion
+are rejected. Check skipped/unreachable children against final signatures without
+using them to select inference. Never-only expression/tail or value-return syntax
+without a reachable concrete result is not inferable. A no-tail block without
+value-return syntax follows the Void convention even when divergent. Calls retain
+concrete signatures, not interprocedural Never. Include named calls in lambda
+bodies in structural recursion discovery, including skipped syntax, while excluding
+lambda returns from creator inference. Recursive named members need annotations.
 
 Rejected in v1: `fn apply(f: fn(number) -> number)`, `return multiply;`, `return (x: number) => x + 1;`, `let f = named_function;`, `let g = multiply;`, assigning a different closure to `multiply`, storing a closure in an array, exporting/importing a callable, or passing a closure as any call argument. The general `fn(...) -> ...` source type syntax is deferred.
 
@@ -960,7 +990,13 @@ fn example() -> number {
 
 WebAssembly locals are private to each function invocation. A generated lambda helper therefore cannot directly access its creator's Wasm locals. Perform free-variable/capture analysis, promote captured mutable bindings to shared **cells** (e.g. in a closure environment region of linear memory), and rewrite both outer and inner accesses to load/store the same cell. Non-captured locals stay in Wasm locals.
 
-For a compiler-known local closure, generate a static helper function plus a known environment pointer, then emit a **direct `call`** passing the pointer. This does not require general `call_indirect`, a table, public callable types, or first-class function values. A local closure binding can be compiler metadata rather than a heap-stored universal callable descriptor. If a closure captures nothing, omit the environment argument via a distinct helper signature where convenient.
+For a compiler-known local closure, generate a static helper function plus a known environment pointer, then emit a **direct `call`** passing the pointer. This does not require general `call_indirect`, a table, public callable types, or first-class function values. A local closure binding can be compiler metadata rather than a heap-stored universal callable descriptor. A context-free helper MUST omit the environment argument and allocation; dependencies
+on context-requiring callables count as context even without direct value captures.
+Discover helpers in source-ordered function/lexical depth-first preorder, including
+skipped syntax, independently of inference scheduling. Borrow declaration-owned
+bodies and append helpers after memory/remainder/range helpers. Keep local,
+temporary, return and loop planning owner-local; module discovery enters bodies.
+No generated helper is exported. Context-free callable support alone adds no memory.
 
 Initially allocate environments and boxed cells with the existing monotonic bump
 allocator. They remain allocated until the instance is discarded; local-only
@@ -982,6 +1018,28 @@ recursion, host reentrancy, and traps; Wasm traps do not automatically run clean
 Optimization requires proof: inline local closure bodies, forward a known address, eliminate a cell if all reads/writes can be safely unified in one lowered function, or scalar-replace storage only while preserving shared-binding reads/writes and observable call ordering.
 
 ### 10.4 Diagnostics and future expansion
+
+Semantic `InvalidClosure` uses stable reasons for placement (`a closure must initialize a local callable binding`),
+value use (`a local callable binding cannot be used as a value; invoke it directly or use a named function`),
+reassignment (`a local callable binding cannot be reassigned`), and annotation
+(`a local callable binding cannot have a value type annotation`).
+`CannotInferClosureResult` displays `cannot infer a concrete closure result` without
+suggesting unsupported annotations. Backend `InvalidClosure` categories are
+`invalid callable identity`, `invalid closure ownership`, `invalid capture metadata`,
+`invalid callable dependency`, `invalid callable call`, and `invalid closure result`.
+Reuse accurate existing return/type/transfer/positional errors and `<closure>` as
+the function label. Lambda/default/contract malformed syntax and immediate
+invocation remain parser errors; parsed forbidden placements fail semantically.
+Preserve whitelist precedence and named declaration/recursion diagnostic staging.
+
+Lambda byte spans cover the opening parameter-list parenthesis through body end,
+excluding wrapping parentheses and semicolon; body spans cover the expression or
+whole braced body; declaration-name spans cover the identifier; lexical-call spans
+cover the callee through closing parenthesis. Result errors use body spans,
+placement errors lambda spans, and bare value uses existing enclosing origins.
+Validate parameters before bodies and reject annotations/placement before analysis.
+Checked lowering validates identities, owners, dependencies, availability, calls,
+results and transfers in every helper through the existing cached-body boundary.
 
 Reject passing, returning, exporting, aliasing, or treating closure bindings as general expression values. Report a clear diagnostic suggesting an ordinary named function or a local invocation. General callable parameters/results and escaping closures are deferred to a separate future specification, as are dynamic dispatch and general closure heap-lifetime management.
 
@@ -1501,7 +1559,8 @@ requires separate authorization and measured, independently validated changes.
 WP9 match syntax is implemented with [release gates passed](was_language_extensions_plan.md#wp9-release-validation);
 WP10 named-only pipeline syntax is implemented with
 [release gates passed](was_language_extensions_plan.md#wp10-release-validation).
-WP11–WP12 closure/placeholder syntax remains proposed.
+WP11's capture-free local callable syntax (#29) is implemented; shared captures,
+full WP11 release and WP12 placeholders remain deferred.
 
 | Optimization | Feature(s) | Preconditions / warning |
 |---|---|---|

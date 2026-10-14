@@ -37,6 +37,7 @@ pub(super) fn check(value: &TypedExpr, readable: &[VariableId]) -> Result<(), Vi
             }
         }
         TypedExprKind::Call { .. }
+        | TypedExprKind::LexicalCall { .. }
         | TypedExprKind::NormalizedCall(_)
         | TypedExprKind::Range { .. }
         | TypedExprKind::Loop { .. }

@@ -34,6 +34,10 @@ pub(super) fn emit(
     let span = statement.span;
 
     match &statement.kind {
+        TypedStatementKind::Closure(closure) => {
+            emitter.declare_callable(closure)?;
+            Ok(Flow::FALLTHROUGH)
+        }
         TypedStatementKind::Let { id, ty, value, .. } => {
             let index = emitter.declaration(*id, *ty, span)?;
 
@@ -66,6 +70,9 @@ pub(super) fn emit(
         }
 
         TypedStatementKind::Return(value) => {
+            if value.is_some() {
+                emitter.note_value_return();
+            }
             let flow = match value {
                 Some(_) if emitter.return_type() == Type::Void => {
                     return Err(CodegenError::UnexpectedReturnValue {
@@ -87,7 +94,7 @@ pub(super) fn emit(
 
             emitter.instruction(&Instruction::Return);
 
-            Ok(flow.then(Flow::RETURN))
+            Ok(flow.then(Flow::return_value(emitter.return_type())))
         }
 
         TypedStatementKind::If { cond, then, else_ } => {

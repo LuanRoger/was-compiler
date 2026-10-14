@@ -10,6 +10,7 @@ use super::{
     CodegenError,
     abi::{self, Signature},
     checked_u32,
+    closures::{self, CallablePlan},
     indices::{FunctionIndex, TypeIndex},
     memory::{self, MemoryPlan},
     numeric, range,
@@ -34,24 +35,25 @@ pub(super) struct MemoryLayout {
     pub first_function: FunctionIndex,
 }
 
-pub(super) struct Layout {
+pub(super) struct Layout<'a> {
     pub signatures: Vec<Signature>,
     pub host_type_indices: Vec<TypeIndex>,
     pub users: Vec<UserFunctionPlan>,
     pub memory: Option<MemoryLayout>,
     pub remainder: Option<UserFunctionPlan>,
     pub ranges: Vec<UserFunctionPlan>,
+    pub callables: Vec<CallablePlan<'a>>,
     callees: Vec<CallTarget>,
     host_count: usize,
 }
 
-impl Layout {
-    pub fn new(program: &TypedProgram) -> Result<Self, CodegenError> {
+impl<'a> Layout<'a> {
+    pub fn new(program: &'a TypedProgram) -> Result<Self, CodegenError> {
         Self::with_exports(program, &ExportOptions::All)
     }
 
     pub fn with_exports(
-        program: &TypedProgram,
+        program: &'a TypedProgram,
         exports: &ExportOptions,
     ) -> Result<Self, CodegenError> {
         let host_count = checked_u32(program.host_functions.len(), "host function count")?;
@@ -71,6 +73,7 @@ impl Layout {
             memory: None,
             remainder: None,
             ranges: Vec::new(),
+            callables: Vec::new(),
             callees: Vec::new(),
             host_count: program.host_functions.len(),
         };
@@ -279,6 +282,39 @@ impl Layout {
                 };
                 layout.ranges.push(plan);
             }
+        }
+
+        let first_callable = first_runtime
+            .checked_add(checked_u32(
+                layout.memory.as_ref().map_or(0, |m| m.helpers.len()),
+                "runtime function count",
+            )?)
+            .and_then(|i| i.checked_add(u32::from(layout.remainder.is_some())))
+            .and_then(|i| i.checked_add(u32::try_from(layout.ranges.len()).ok()?))
+            .ok_or(CodegenError::LimitExceeded {
+                what: "total function count",
+            })?;
+        let declarations = closures::discover(program)?;
+        first_callable
+            .checked_add(checked_u32(declarations.len(), "callable count")?)
+            .ok_or(CodegenError::LimitExceeded {
+                what: "total function count",
+            })?;
+        for (index, declaration) in declarations.into_iter().enumerate() {
+            let signature = abi::internal_signature(
+                "<closure>",
+                declaration.params.iter().map(|p| p.ty),
+                declaration.return_type,
+            )?;
+            let type_index = layout.intern(signature, &mut type_indices)?;
+            layout.callables.push(CallablePlan {
+                declaration,
+                type_index,
+                function_index: FunctionIndex::new(
+                    first_callable + checked_u32(index, "callable index")?,
+                ),
+                lexical_prefix: std::cell::Cell::new(None),
+            });
         }
 
         Ok(layout)

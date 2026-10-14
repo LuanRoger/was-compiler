@@ -197,6 +197,15 @@ pub(super) fn emit(
 
         TypedExprKind::NormalizedCall(sequence) => call::emit_normalized(sequence, body, span)?,
 
+        TypedExprKind::LexicalCall {
+            callable,
+            args,
+            span: call_span,
+        } => {
+            let (flow, ty) = call::emit_lexical(*callable, args, expr.ty, body, *call_span)?;
+            (flow, result(flow, ty))
+        }
+
         TypedExprKind::String(value) => {
             expect_result(function, Type::String.into(), expr.ty, span)?;
             body.instruction(&Instruction::I32Const(body.string(value) as i32));
@@ -374,7 +383,7 @@ fn emit_value_block(
     Ok(outcome)
 }
 
-fn emit_value_contents(
+pub(super) fn emit_value_contents(
     block: &TypedValueBlock,
     body: &mut BodyEmitter<'_>,
 ) -> Result<(Flow, ExprResult), CodegenError> {

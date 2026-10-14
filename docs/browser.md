@@ -273,8 +273,16 @@ ignored policy; rebuild bindings after core changes before browser validation.
 See [the frozen match rules](was_language_extensions_spec.md#82-match-expression-syntax).
 WP10 named-only pipelines are implemented (#27), with
 [release gates passed](was_language_extensions_plan.md#wp10-release-validation)
-on 2026-10-14. WP11–WP12 closures/placeholders remain proposed;
+on 2026-10-14. WP11's capture-free local callable subset (#29) is implemented;
+shared captures/full WP11 release and WP12 placeholders remain deferred.
 WP13 optimization requires separate authorization.
+
+The same core pipeline accepts `let twice = (x: number) => x * 2;` and direct
+positional lexical calls in the rebuilt browser compiler. Helpers are private,
+with no callable exports, hidden environment argument or callable-only memory.
+Existing handle operations/signatures retain the normal ABI and view-refresh
+requirements. Capture-requiring declarations are explicitly rejected. See
+[the subset and public AST migration](local-callable-interface.md).
 
 ## Named-only pipelines (WP10; release gates passed)
 

@@ -2,24 +2,29 @@ use std::ops::ControlFlow;
 
 use crate::{
     ast::Type,
-    typed_ast::{
-        ExprResult, TypedExpr, TypedExprKind, TypedFunction, TypedStatement, TypedStatementKind,
-    },
+    typed_ast::{ExprResult, TypedExpr, TypedExprKind, TypedStatement, TypedStatementKind},
 };
 use wasm_encoder::ValType;
 
-use super::{
-    CodegenError,
-    walker::{self, Visitor},
-};
+use super::{CodegenError, closures::BodyOwner, walker::Visitor};
 
-pub(super) fn plan(function: &TypedFunction) -> Result<Vec<ValType>, CodegenError> {
+#[cfg(test)]
+use super::walker;
+
+#[cfg(test)]
+pub(super) fn plan(
+    function: &crate::typed_ast::TypedFunction,
+) -> Result<Vec<ValType>, CodegenError> {
+    for_owner(BodyOwner::Function(function))
+}
+
+pub(super) fn for_owner(function: BodyOwner<'_>) -> Result<Vec<ValType>, CodegenError> {
     let mut visitor = TemporaryVisitor {
         count: 0,
         types: Vec::new(),
     };
 
-    if let ControlFlow::Break(error) = walker::walk_function(function, &mut visitor) {
+    if let ControlFlow::Break(error) = function.walk(&mut visitor) {
         return Err(error);
     }
 
@@ -64,8 +69,12 @@ impl TemporaryVisitor {
     }
 }
 
-impl Visitor for TemporaryVisitor {
+impl Visitor<'_> for TemporaryVisitor {
     type Break = CodegenError;
+
+    fn visit_closure_bodies(&self) -> bool {
+        false
+    }
 
     fn enter_statement(&mut self, statement: &TypedStatement) -> ControlFlow<CodegenError> {
         if let TypedStatementKind::CompoundAssignment { target, .. } = &statement.kind

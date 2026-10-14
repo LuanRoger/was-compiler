@@ -6,6 +6,17 @@ and registered host-function parameters/results. Language types remain distinct
 in semantic analysis even though both lower to `i32`; descriptors have no runtime
 type tag. Hosts must supply the type declared in their registration.
 
+## Capture-free local callable subset (#29)
+
+Context-free helpers use direct calls with only explicit parameters. Local callable
+bindings have no runtime descriptor, environment, cells, hidden argument, or public
+host ABI. Declarations alone allocate nothing and do not execute helper bodies.
+Ordinary strings/arrays/ranges in helper bodies or signatures still activate the
+existing helpers and entry validation. Value captures are explicitly rejected in
+this subset; future shared-cell/environment storage remains deferred. Descriptor
+ownership, monotonic allocation and persistent returned/retained handles are
+unchanged. See [the subset interface](local-callable-interface.md).
+
 ## Descriptor layout
 
 A handle is an eight-byte-aligned address of this little-endian descriptor:

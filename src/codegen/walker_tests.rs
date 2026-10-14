@@ -35,7 +35,7 @@ fn match_patterns_are_separate_visits_in_scrutinee_pattern_body_order() {
     };
 
     struct PatternVisitor(Vec<String>);
-    impl Visitor for PatternVisitor {
+    impl Visitor<'_> for PatternVisitor {
         type Break = ();
 
         fn enter_expression(&mut self, expr: &TypedExpr) -> ControlFlow<()> {
@@ -184,7 +184,7 @@ impl Recorder {
     }
 }
 
-impl Visitor for Recorder {
+impl Visitor<'_> for Recorder {
     type Break = usize;
 
     fn enter_block(&mut self, block: &TypedBlock) -> ControlFlow<usize> {
@@ -209,6 +209,7 @@ impl Visitor for Recorder {
             TypedExprKind::Binary { .. } => "binary".into(),
             TypedExprKind::Range { .. } => "range".into(),
             TypedExprKind::Call { .. } => "call".into(),
+            TypedExprKind::LexicalCall { .. } => "lexical-call".into(),
             TypedExprKind::NormalizedCall(_) => "normalized-call".into(),
             TypedExprKind::Array(_) => "array".into(),
             TypedExprKind::Index { .. } => "index".into(),

@@ -240,6 +240,30 @@ fn check_default(
     })
 }
 
+pub(super) fn emit_lexical(
+    id: crate::typed_ast::CallableId,
+    args: &[TypedExpr],
+    annotation: ExprResult,
+    body: &mut BodyEmitter<'_>,
+    span: Span,
+) -> Result<(Flow, Type), CodegenError> {
+    let plan = body.callable(id, span)?;
+    let declaration = plan.declaration;
+    if args.len() != declaration.params.len() {
+        return Err(super::closures::invalid("invalid callable call", span));
+    }
+    if annotation != predicted_result(declaration.return_type, args) {
+        return Err(super::closures::invalid("invalid callable call", span));
+    }
+    let mut flow = Flow::FALLTHROUGH;
+    for (arg, param) in args.iter().zip(&declaration.params) {
+        expect_operand(body.name(), param.ty, arg.ty, span)?;
+        flow = flow.then(body.emit_expr(arg, span)?);
+    }
+    body.call(plan.function_index);
+    Ok((flow, declaration.return_type))
+}
+
 fn predicted_result(ty: Type, args: &[TypedExpr]) -> ExprResult {
     if args.iter().any(|arg| arg.ty == ExprResult::Never) {
         ExprResult::Never

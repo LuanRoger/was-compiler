@@ -150,8 +150,25 @@ kind; its scrutinee runs once and only the first matching arm executes. See
 [the frozen match rules](was_language_extensions_spec.md#82-match-expression-syntax).
 WP10 named-only pipelines are implemented (#27), with
 [release gates passed](was_language_extensions_plan.md#wp10-release-validation)
-on 2026-10-14. WP11–WP12 closures/placeholders remain proposed; WP13 optimization
-requires separate authorization.
+on 2026-10-14. WP11's capture-free local callable subset (#29) is implemented;
+shared captures/full WP11 release and WP12 placeholders remain deferred. WP13
+optimization requires separate authorization.
+
+## Capture-free local callables (#29)
+
+The CLI and core accept `let twice = (x: number) => x * 2;` followed by
+`twice(21)`. Expression and tail-valued block bodies infer concrete results;
+zero-argument and Void helpers work too. Calls to earlier context-free local
+callables are allowed; reading/writing outer value bindings is explicitly rejected.
+See [the subset and AST migration](local-callable-interface.md).
+
+Helpers are private direct-call functions after existing runtime helpers, not
+exports or host callables. They add no environment argument or allocation.
+Strings/arrays/ranges used by helper bodies/signatures retain their normal
+validation, allocation and lifetime rules. No public callable ABI, marshaling
+convention, table or implicit callback is added. Full shared-capture WP11 storage
+and lifetime semantics remain deferred; context-free support does not authorize
+heap rewind or alter persistent descriptor ownership.
 
 ## Named-only pipelines (WP10; release gates passed)
 

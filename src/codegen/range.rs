@@ -51,7 +51,7 @@ impl Helper {
 
 pub(super) fn helpers(program: &TypedProgram) -> &'static [Helper] {
     struct Membership;
-    impl Visitor for Membership {
+    impl Visitor<'_> for Membership {
         type Break = ();
 
         fn enter_expression(&mut self, expr: &TypedExpr) -> ControlFlow<()> {
@@ -84,9 +84,15 @@ pub(super) fn helpers(program: &TypedProgram) -> &'static [Helper] {
 
 pub(super) fn needed(program: &TypedProgram) -> bool {
     struct Ranges;
-    impl Visitor for Ranges {
+    impl Visitor<'_> for Ranges {
         type Break = ();
         fn enter_statement(&mut self, statement: &TypedStatement) -> ControlFlow<()> {
+            if let TypedStatementKind::Closure(closure) = &statement.kind
+                && (closure.return_type == Type::Range
+                    || closure.params.iter().any(|p| p.ty == Type::Range))
+            {
+                return ControlFlow::Break(());
+            }
             if matches!(
                 statement.kind,
                 TypedStatementKind::Let {

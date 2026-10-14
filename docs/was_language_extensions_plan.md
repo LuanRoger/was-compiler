@@ -1,6 +1,6 @@
 # WAS language extensions implementation plan
 
-**Status:** WP1–WP9 implemented; WP5, WP6 (#13), WP7 (#16), and WP8 release gates passed (exact evidence in §5). WP9 frontend/backend are integrated and [release gates passed](#wp9-release-validation). WP10 named-only pipelines, including positional/named/default binding and final-Void discard support (#27), are implemented with [release gates passed](#wp10-release-validation). WP11–WP12 remain proposed; WP13 requires separate authorization.
+**Status:** WP1–WP9 implemented; WP5, WP6 (#13), WP7 (#16), and WP8 release gates passed (exact evidence in §5). WP9 frontend/backend are integrated and [release gates passed](#wp9-release-validation). WP10 named-only pipelines, including positional/named/default binding and final-Void discard support (#27), are implemented with [release gates passed](#wp10-release-validation). WP11's capture-free local callable subset (#29) is implemented; shared captures/full WP11 release and WP12 remain deferred. WP13 requires separate authorization.
 **Baseline:** Extension specification v0.3.
 
 Follow the [agent guide](../AGENTS.md), [extension specification](was_language_extensions_spec.md),
@@ -67,7 +67,7 @@ support; all WP5 release gates passed as recorded in §5. WP6 named/default para
 and WP7 acyclic result inference are implemented with release gates passed (#13/#16).
 WP8 whitelist contracts are implemented, with
 [release gates passed](#wp8-release-validation). WP9 match statements/values are
-implemented with frontend/backend integrated and [release gates passed](#wp9-release-validation). WP10 named-only pipelines are implemented with [release gates passed](#wp10-release-validation). WP11–WP12 remain proposed, and WP13 requires separate authorization.
+implemented with frontend/backend integrated and [release gates passed](#wp9-release-validation). WP10 named-only pipelines are implemented with [release gates passed](#wp10-release-validation). WP11's capture-free local callable subset (#29) is implemented; shared captures/full WP11 release and WP12 remain deferred, and WP13 requires separate authorization.
 `requires`, `match`, and standalone `_` are reserved for source/host-language names,
 not arbitrary nonempty host module/field names. `_temp` remains valid; `by` stays
 contextual. WP9 does not implement ignored bindings or placeholder expressions.
@@ -989,6 +989,15 @@ and [combined WP10 release validation](#wp10-release-validation). Interview reco
 and historical subset runs are not substitutes for that release evidence.
 
 ### WP11 — Local-only shared-binding closures/direct helpers (spec §10)
+
+**Implemented #29 subset:** Capture-free local declarations and lexical positional
+calls use dedicated owned typed declarations, program-wide callable IDs and
+owner-qualified capture interfaces. Context-free helpers are checked/cached through
+`ValidatedProgram`, emitted in source depth-first preorder after existing runtime
+helpers, with independent locals/temporaries/control contexts and no environment
+or callable-only memory. Earlier context-free callable dependencies are supported.
+Value captures are explicitly rejected until the capture slice lands. This is not
+full WP11 release readiness. See [public migration, scopes and validation](local-callable-interface.md).
 
 **Entry:** WP10; approve dedicated callable/capture metadata and allocation policy.
 Parse explicitly typed lambda parameters with expression/block bodies; infer result

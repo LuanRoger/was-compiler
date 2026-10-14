@@ -6,14 +6,12 @@ use std::{
 use crate::{
     ast::Type,
     tokens::Span,
-    typed_ast::{TypedCallBinding, TypedFunction, TypedStatement, TypedStatementKind, VariableId},
+    typed_ast::{TypedCallBinding, TypedStatement, TypedStatementKind, VariableId},
 };
 use wasm_encoder::ValType;
 
 use super::{
-    CodegenError, abi, checked_u32,
-    indices::LocalIndex,
-    walker::{self, Visitor},
+    CodegenError, abi, checked_u32, closures::BodyOwner, indices::LocalIndex, walker::Visitor,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,34 +35,39 @@ pub(super) struct LocalLayout {
 }
 
 impl LocalLayout {
-    pub fn new(function: &TypedFunction) -> Result<Self, CodegenError> {
+    #[cfg(test)]
+    pub fn new(function: &crate::typed_ast::TypedFunction) -> Result<Self, CodegenError> {
+        Self::for_owner(BodyOwner::Function(function))
+    }
+
+    pub fn for_owner(function: BodyOwner<'_>) -> Result<Self, CodegenError> {
         let mut layout = Self::default();
 
-        for (index, param) in function.params.iter().enumerate() {
+        for (index, param) in function.params().iter().enumerate() {
             if param.ty == Type::Void {
                 return Err(CodegenError::VoidParameter {
-                    function: function.name.clone(),
+                    function: function.name().into(),
                     index,
                 });
             }
 
-            abi::value_type(&function.name, "parameter", param.ty)?;
+            abi::value_type(function.name(), "parameter", param.ty)?;
 
             layout.insert(
                 param.id,
                 param.ty,
                 BindingKind::Mutable,
-                &function.name,
+                function.name(),
                 param.span,
             )?;
         }
 
         let mut visitor = LocalVisitor {
             layout: &mut layout,
-            function: &function.name,
+            function: function.name(),
         };
 
-        if let ControlFlow::Break(error) = walker::walk_function(function, &mut visitor) {
+        if let ControlFlow::Break(error) = function.walk(&mut visitor) {
             return Err(error);
         }
 
@@ -106,8 +109,12 @@ struct LocalVisitor<'a> {
     function: &'a str,
 }
 
-impl Visitor for LocalVisitor<'_> {
+impl Visitor<'_> for LocalVisitor<'_> {
     type Break = CodegenError;
+
+    fn visit_closure_bodies(&self) -> bool {
+        false
+    }
 
     fn enter_call_binding(&mut self, binding: &TypedCallBinding) -> ControlFlow<CodegenError> {
         let value_type = match abi::value_type(self.function, "local", binding.ty) {

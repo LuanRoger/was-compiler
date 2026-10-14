@@ -2,7 +2,9 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use super::{FunctionId, SemanticAnalyzer, SemanticError};
 use crate::{
-    ast::{Block, Expr, Function, MatchArm, Program, StatementKind, ValueBlock},
+    ast::{
+        Block, Expr, Function, Lambda, LambdaBody, MatchArm, Program, StatementKind, ValueBlock,
+    },
     tokens::Span,
 };
 
@@ -182,6 +184,24 @@ fn recursive_members(graph: &[Vec<Call>]) -> Vec<bool> {
         .collect()
 }
 
+pub(super) fn discover_lambdas(program: &Program) -> Vec<&Lambda> {
+    let mut walker = LexicalWalker::new(|_, _| None);
+    for function in &program.functions {
+        walker.function(function);
+    }
+    walker.lambdas
+}
+
+pub(super) fn closure_has_value_return(lambda: &Lambda) -> bool {
+    let mut walker = LexicalWalker::new(|_, _| None);
+    walker.scopes.push(HashSet::new());
+    match &lambda.body {
+        LambdaBody::Expression(expr) => walker.expr(expr, lambda.body_span),
+        LambdaBody::Block(block) => walker.value_block(block),
+    }
+    walker.has_value_return
+}
+
 pub(super) fn has_value_return(function: &Function) -> bool {
     let mut walker = LexicalWalker::new(|_, _| None);
 
@@ -196,6 +216,7 @@ struct LexicalWalker<'a, F> {
     scopes: Vec<HashSet<&'a str>>,
     call: F,
     has_value_return: bool,
+    lambdas: Vec<&'a Lambda>,
 }
 
 impl<'a, F: FnMut(&'a str, Span) -> Option<&'a Function>> LexicalWalker<'a, F> {
@@ -204,6 +225,7 @@ impl<'a, F: FnMut(&'a str, Span) -> Option<&'a Function>> LexicalWalker<'a, F> {
             scopes: Vec::new(),
             call,
             has_value_return: false,
+            lambdas: Vec::new(),
         }
     }
 
@@ -339,7 +361,7 @@ impl<'a, F: FnMut(&'a str, Span) -> Option<&'a Function>> LexicalWalker<'a, F> {
                     }
                 }
             }
-            Expr::Call { func, args } => {
+            Expr::Call { func, args, .. } => {
                 let declaration = if self
                     .scopes
                     .iter()
@@ -361,6 +383,23 @@ impl<'a, F: FnMut(&'a str, Span) -> Option<&'a Function>> LexicalWalker<'a, F> {
                 for arg in args {
                     self.expr(&arg.value, if normalized { arg.span } else { span });
                 }
+            }
+            Expr::Lambda(lambda) => {
+                self.lambdas.push(lambda);
+                let has_value_return = self.has_value_return;
+                self.scopes.push(
+                    lambda
+                        .params
+                        .iter()
+                        .map(|param| param.name.as_str())
+                        .collect(),
+                );
+                match &lambda.body {
+                    LambdaBody::Expression(expr) => self.expr(expr, lambda.body_span),
+                    LambdaBody::Block(block) => self.value_block(block),
+                }
+                self.scopes.pop();
+                self.has_value_return = has_value_return;
             }
             Expr::Match { scrutinee, arms } => self.match_arms(scrutinee, arms, span),
             Expr::Loop { body } => self.scoped_block(body),

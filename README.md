@@ -155,8 +155,39 @@ WP10 named-only pipelines support positional/named arguments, omitted trailing
 defaults, and final Void stages with discarded results (#27). Implementation is
 complete; [release gates passed](docs/was_language_extensions_plan.md#wp10-release-validation)
 on 2026-10-14, including current-source rebuilt-browser and full ignored runtime coverage.
-Closures/placeholders (WP11–WP12) remain proposed; WP13 optimization requires
-separate authorization.
+WP11's capture-free local callable subset (#29) is implemented. Shared captures
+and full WP11 release remain deferred; WP12 placeholders and WP13 optimization
+are separately scoped.
+
+### Capture-free local callables (WP11 subset, #29)
+
+```text
+fn main() -> number {
+    let twice = ((x: number) => x * 2);
+    let answer = () => { let nested = () => twice(21); nested() };
+    return answer(); // 42
+}
+```
+
+Parameters require explicit existing concrete types. Results infer from reachable
+explicit returns and a completing expression/block tail, with exact joins. A
+no-tail block may complete only as Void; Never-only expression/tail results cannot
+infer a signature. Closures have their own return and loop-control contexts.
+Earlier context-free local callables can be invoked, including through nested
+helpers; new declarations have no special self or forward visibility. Calls are
+positional, once-only and left-to-right. Ordinary named/default calls and contracts
+inside closure bodies retain their existing behavior.
+
+Callables cannot be aliased, reassigned, annotated with a value type, passed,
+returned or used as values. Value captures are explicitly rejected with
+`capturing outer bindings is not supported in this subset`. Immediate invocation,
+closure defaults/contracts/result annotations, placeholders and closure pipeline
+stages are not supported. Shared capture storage and full WP11 release are deferred.
+
+Generated helpers use direct calls, are never exported, and follow existing runtime
+helpers. Context-free callables add no environments, hidden arguments or memory
+solely for callable support; ordinary strings/arrays/ranges may still need memory.
+See [the public AST migration and subset contract](docs/local-callable-interface.md).
 
 ### Named-only pipelines (WP10 implemented; release gates passed)
 

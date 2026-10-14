@@ -290,8 +290,27 @@
                        | <if_expression>
                        | <match_expression>
                        | <loop_expression>
+                       | <lambda_expression>
                        | "(" <ws> <expression> <ws> ")"
 
+
+<lambda_expression> ::= "(" <ws> <lambda_parameter_list>? <ws> ")"
+                         <ws> "=>" <ws> ( <value_block> | <expression> )
+
+<lambda_parameter_list> ::= <lambda_parameter>
+                            ( <ws> "," <ws> <lambda_parameter> )*
+
+<lambda_parameter> ::= <identifier> <ws> ":" <ws> <type>
+
+# Issue #29 accepts capture-free lambdas only as unannotated local initializers.
+# Parentheses are transparent; invocation is identifier-led and positional only.
+# Callable bindings cannot be values, aliases, assignment targets or pipeline stages.
+# Parameters and loop/return contexts belong to the lambda, not its creator.
+# Reading/writing outer value bindings is rejected: capturing outer bindings is
+# not supported in this subset. Earlier context-free callable dependencies work.
+# A bare final loop in a lambda's braced body remains a statement loop, so
+# () => { loop {} } has a Void signature; parenthesize a value-loop tail there.
+# No result annotations, defaults, contracts or immediate invocation are added.
 
 <argument_list> ::= <argument>
                     ( <ws> "," <ws> <argument> )*

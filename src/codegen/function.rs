@@ -1,17 +1,23 @@
-use std::{cell::Cell, collections::HashSet};
+use std::{
+    cell::Cell,
+    collections::{BTreeSet, HashSet},
+};
 
 use crate::{
     ast::Type,
     flow::Flow,
     tokens::Span,
     typed_ast::{
-        ExprResult, FunctionRef, LoopId, TypedBlock, TypedExpr, TypedFunction, VariableId,
+        BindingOwner, CallableId, ExprResult, FunctionRef, LoopId, TypedBlock, TypedClosure,
+        TypedClosureBody, TypedExpr, TypedFunction, TypedParam, VariableId,
     },
 };
 use wasm_encoder::{BlockType, Function, Instruction, ValType};
 
 use super::{
-    CodegenError, checked_u32, expect_result, expect_type, expression,
+    CodegenError, checked_u32,
+    closures::{self, BodyOwner, CallablePlan, LexicalPrefix},
+    expect_result, expect_type, expression,
     indices::{FunctionIndex, LabelDepth, LocalIndex},
     layout::{CallTarget, Layout},
     locals::{BindingKind, LocalLayout},
@@ -22,7 +28,13 @@ use super::{
 struct Context<'a> {
     name: &'a str,
     return_type: Type,
-    module: &'a Layout,
+    module: &'a Layout<'a>,
+    owner: BindingOwner,
+    // Fast membership covers declared dependencies and owner-local declarations.
+    available_callables: HashSet<CallableId>,
+    lexical_prefix: LexicalPrefix,
+    used_dependencies: BTreeSet<usize>,
+    value_return_syntax: bool,
     locals: LocalLayout,
     initialized: HashSet<VariableId>,
     next_temporary: Cell<u32>,
@@ -31,14 +43,14 @@ struct Context<'a> {
 }
 
 impl<'a> Context<'a> {
-    fn new(function: &'a TypedFunction, module: &'a Layout) -> Result<Self, CodegenError> {
-        let locals = LocalLayout::new(function)?;
-        let first_temporary = checked_u32(function.params.len(), "function parameter count")?
+    fn new(function: BodyOwner<'a>, module: &'a Layout<'a>) -> Result<Self, CodegenError> {
+        let locals = LocalLayout::for_owner(function)?;
+        let first_temporary = checked_u32(function.params().len(), "function parameter count")?
             .checked_add(checked_u32(locals.types.len(), "function local count")?)
             .ok_or(CodegenError::LimitExceeded {
                 what: "function local count",
             })?;
-        let temporary_types = temporaries::plan(function)?;
+        let temporary_types = temporaries::for_owner(function)?;
         first_temporary
             .checked_add(checked_u32(temporary_types.len(), "temporary local count")?)
             .ok_or(CodegenError::LimitExceeded {
@@ -46,15 +58,29 @@ impl<'a> Context<'a> {
             })?;
 
         Ok(Self {
-            name: &function.name,
-            return_type: function.return_type,
+            name: function.name(),
+            return_type: function.return_type(),
             module,
+            owner: function.owner(),
+            available_callables: HashSet::new(),
+            lexical_prefix: LexicalPrefix::default(),
+            used_dependencies: BTreeSet::new(),
+            value_return_syntax: false,
             locals,
-            initialized: function.params.iter().map(|param| param.id).collect(),
+            initialized: function.params().iter().map(|param| param.id).collect(),
             next_temporary: Cell::new(first_temporary),
             first_temporary,
             temporary_types,
         })
+    }
+
+    fn callable_available(&self, callable: CallableId) -> bool {
+        // An omitted dependency still receives normal body checks before the exact
+        // metadata check. The prefix distinguishes it from a lexically invalid call.
+        self.available_callables.contains(&callable)
+            || self
+                .lexical_prefix
+                .contains(callable, &self.module.callables)
     }
 
     fn helper(&self, helper: Helper) -> FunctionIndex {
@@ -171,7 +197,11 @@ pub(super) struct BodyEmitter<'a> {
 }
 
 impl<'a> BodyEmitter<'a> {
-    fn new(function: &'a TypedFunction, module: &'a Layout) -> Result<Self, CodegenError> {
+    fn new(function: &'a TypedFunction, module: &'a Layout<'a>) -> Result<Self, CodegenError> {
+        Self::for_owner(BodyOwner::Function(function), module)
+    }
+
+    fn for_owner(function: BodyOwner<'a>, module: &'a Layout<'a>) -> Result<Self, CodegenError> {
         let context = Context::new(function, module)?;
         let mut locals: Vec<_> = context.locals.types.iter().map(|ty| (1, *ty)).collect();
 
@@ -330,6 +360,69 @@ impl<'a> BodyEmitter<'a> {
         Ok(())
     }
 
+    fn use_dependency(&mut self, id: CallableId) {
+        let declaration = self.context.module.callables[id.0].declaration;
+        if matches!(self.context.owner, BindingOwner::Closure(_))
+            && declaration.owner != self.context.owner
+        {
+            self.context.used_dependencies.insert(id.0);
+        }
+    }
+
+    pub fn declare_callable(&mut self, closure: &TypedClosure) -> Result<(), CodegenError> {
+        let invalid = |reason| closures::invalid(reason, closure.span);
+        let plan = self
+            .context
+            .module
+            .callables
+            .get(closure.id.0)
+            .filter(|plan| std::ptr::eq(plan.declaration, closure))
+            .ok_or_else(|| invalid("invalid callable identity"))?;
+        if closure.owner != self.context.owner {
+            return Err(invalid("invalid closure ownership"));
+        }
+        if !closure.captures.is_empty() {
+            return Err(invalid("invalid capture metadata"));
+        }
+        let mut previous = None;
+        for &dependency in &closure.dependencies {
+            if previous.is_some_and(|id| dependency.0 <= id)
+                || dependency.0 >= closure.id.0
+                || !self.context.callable_available(dependency)
+            {
+                return Err(invalid("invalid callable dependency"));
+            }
+            previous = Some(dependency.0);
+            self.use_dependency(dependency);
+        }
+        plan.lexical_prefix.set(Some(self.context.lexical_prefix));
+        self.context.lexical_prefix.activate(closure.id);
+        self.context.available_callables.insert(closure.id);
+        Ok(())
+    }
+
+    pub fn callable(
+        &mut self,
+        id: CallableId,
+        span: Span,
+    ) -> Result<&'a CallablePlan<'a>, CodegenError> {
+        let plan = self
+            .context
+            .module
+            .callables
+            .get(id.0)
+            .ok_or_else(|| closures::invalid("invalid callable call", span))?;
+        if !self.context.callable_available(id) {
+            return Err(closures::invalid("invalid callable call", span));
+        }
+        self.use_dependency(id);
+        Ok(plan)
+    }
+
+    pub fn note_value_return(&mut self) {
+        self.context.value_return_syntax = true;
+    }
+
     pub fn initialize(&mut self, id: VariableId) {
         self.context.initialized.insert(id);
     }
@@ -339,9 +432,13 @@ impl<'a> BodyEmitter<'a> {
         emit: impl FnOnce(&mut Self) -> Result<T, CodegenError>,
     ) -> Result<T, CodegenError> {
         let initialized = self.context.initialized.clone();
+        let available_callables = self.context.available_callables.clone();
+        let lexical_prefix = self.context.lexical_prefix;
         let result = self.structured(emit);
 
         self.context.initialized = initialized;
+        self.context.available_callables = available_callables;
+        self.context.lexical_prefix = lexical_prefix;
 
         result
     }
@@ -480,31 +577,13 @@ impl<'a> BodyEmitter<'a> {
     }
 }
 
-pub(super) fn emit(function: &TypedFunction, module: &Layout) -> Result<Function, CodegenError> {
+pub(super) fn emit<'a>(
+    function: &'a TypedFunction,
+    module: &'a Layout<'a>,
+) -> Result<Function, CodegenError> {
     let mut emitter = BodyEmitter::new(function, module)?;
 
-    for param in &function.params {
-        if param.ty == Type::Range {
-            let index = emitter.resolve(param.id, param.ty, param.span)?;
-            emitter.local_get(index);
-            emitter.call(emitter.range_helper(range::Helper::Validate));
-            emitter.instruction(&Instruction::Drop);
-            continue;
-        }
-
-        let helper = match param.ty {
-            Type::String => Some(Helper::ValidateString),
-            Type::NumberArray => Some(Helper::ValidateArray),
-            _ => None,
-        };
-
-        if let Some(helper) = helper {
-            let index = emitter.resolve(param.id, param.ty, param.span)?;
-            emitter.local_get(index);
-            emitter.call(emitter.helper(helper));
-            emitter.instruction(&Instruction::Drop);
-        }
-    }
+    validate_parameters(&function.params, &mut emitter)?;
 
     let readable: Vec<_> = function.params.iter().map(|param| param.id).collect();
     for contract in &function.contracts {
@@ -538,16 +617,114 @@ pub(super) fn emit(function: &TypedFunction, module: &Layout) -> Result<Function
 
     // Contracts are assertions, not trusted flow facts, even when constant false.
     let flow = emitter.emit_block(&function.body)?;
-
     if function.return_type != Type::Void && !flow.returns_or_diverges() {
         return Err(CodegenError::MissingReturnValue {
             function: function.name.clone(),
             return_type: function.return_type,
         });
     }
-
     emitter.end();
+    Ok(emitter.body)
+}
 
+fn validate_parameters(
+    params: &[TypedParam],
+    emitter: &mut BodyEmitter<'_>,
+) -> Result<(), CodegenError> {
+    for param in params {
+        if param.ty == Type::Range {
+            let index = emitter.resolve(param.id, param.ty, param.span)?;
+            emitter.local_get(index);
+            emitter.call(emitter.range_helper(range::Helper::Validate));
+            emitter.instruction(&Instruction::Drop);
+            continue;
+        }
+
+        let helper = match param.ty {
+            Type::String => Some(Helper::ValidateString),
+            Type::NumberArray => Some(Helper::ValidateArray),
+            _ => None,
+        };
+
+        if let Some(helper) = helper {
+            let index = emitter.resolve(param.id, param.ty, param.span)?;
+            emitter.local_get(index);
+            emitter.call(emitter.helper(helper));
+            emitter.instruction(&Instruction::Drop);
+        }
+    }
+
+    Ok(())
+}
+
+pub(super) fn emit_closure<'a>(
+    closure: &'a TypedClosure,
+    module: &'a Layout<'a>,
+) -> Result<Function, CodegenError> {
+    let mut emitter = BodyEmitter::for_owner(BodyOwner::Closure(closure), module)?;
+    emitter.context.lexical_prefix = module.callables[closure.id.0]
+        .lexical_prefix
+        .get()
+        .ok_or_else(|| closures::invalid("invalid closure ownership", closure.span))?;
+    emitter.context.available_callables = closure.dependencies.iter().copied().collect();
+    validate_parameters(&closure.params, &mut emitter)?;
+    let (flow, result, has_tail) = match &closure.body {
+        TypedClosureBody::Expression(expr) => {
+            let flow = emitter.emit_expr(expr, closure.body_span)?;
+            (flow, expr.ty, true)
+        }
+        TypedClosureBody::Block(block) => {
+            let (flow, result) = expression::emit_value_contents(block, &mut emitter)?;
+            (flow, result, block.tail.is_some())
+        }
+    };
+    let tail = match &closure.body {
+        TypedClosureBody::Expression(expr) => Some(expr.as_ref()),
+        TypedClosureBody::Block(block) => block.tail.as_deref(),
+    };
+    if let Some(tail) = tail {
+        super::expect_operand("<closure>", closure.return_type, tail.ty, closure.body_span)?;
+    }
+    if flow.can_fall_through() {
+        if !has_tail && closure.return_type != Type::Void {
+            return Err(closures::invalid(
+                "invalid closure result",
+                closure.body_span,
+            ));
+        }
+        expect_result(
+            "<closure>",
+            closure.return_type.into(),
+            result,
+            closure.body_span,
+        )?;
+    }
+    let returned = flow
+        .return_type()
+        .map_err(|_| closures::invalid("invalid closure result", closure.body_span))?;
+    if returned.is_none()
+        && !flow.can_fall_through()
+        && (has_tail || closure.return_type != Type::Void || emitter.context.value_return_syntax)
+    {
+        return Err(closures::invalid(
+            "invalid closure result",
+            closure.body_span,
+        ));
+    }
+    let used: Vec<_> = emitter
+        .context
+        .used_dependencies
+        .iter()
+        .copied()
+        .map(CallableId)
+        .collect();
+    if used != closure.dependencies {
+        return Err(closures::invalid(
+            "invalid callable dependency",
+            closure.span,
+        ));
+    }
+    emitter.end();
     Ok(emitter.body)
 }
 

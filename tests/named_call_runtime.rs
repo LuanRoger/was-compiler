@@ -7,9 +7,9 @@ use was_compiler::{
     Compiler, ExportOptions, OptimizationLevel, Type,
     tokens::Span,
     typed_ast::{
-        CallBindingOrigin, ExprResult, FunctionRef, TypedBlock, TypedCallBinding, TypedExpr,
-        TypedExprKind, TypedNormalizedCall, TypedProgram, TypedStatementKind, TypedValueBlock,
-        VariableId,
+        CallBindingOrigin, ExprResult, FunctionRef, TypedBlock, TypedCallBinding, TypedClosureBody,
+        TypedExpr, TypedExprKind, TypedNormalizedCall, TypedProgram, TypedStatementKind,
+        TypedValueBlock, VariableId,
     },
 };
 use wasmparser::{Parser, Payload, Validator};
@@ -288,6 +288,15 @@ fn typed_fixture(compiler: &Compiler, fixture: &str) -> TypedProgram {
 fn normalize_block(block: &mut TypedBlock, next_id: &mut usize) {
     for statement in block {
         match &mut statement.kind {
+            TypedStatementKind::Closure(closure) => {
+                let mut helper_next_id = 10_000;
+                match &mut closure.body {
+                    TypedClosureBody::Expression(expr) => normalize_expr(expr, &mut helper_next_id),
+                    TypedClosureBody::Block(block) => {
+                        normalize_value_block(block, &mut helper_next_id)
+                    }
+                }
+            }
             TypedStatementKind::Let { value, .. }
             | TypedStatementKind::Expression(value)
             | TypedStatementKind::Return(Some(value))
@@ -417,7 +426,7 @@ fn normalize_expr(expr: &mut TypedExpr, next_id: &mut usize) {
                 normalize_expr(&mut arm.body, next_id);
             }
         }
-        TypedExprKind::Array(values) => {
+        TypedExprKind::LexicalCall { args: values, .. } | TypedExprKind::Array(values) => {
             for value in values {
                 normalize_expr(value, next_id);
             }

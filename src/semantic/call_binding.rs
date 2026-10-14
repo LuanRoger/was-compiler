@@ -22,6 +22,12 @@ impl SemanticAnalyzer {
         for (index, stage) in stages.iter().enumerate() {
             let name = &stage.name;
             let span = stage.span;
+            if matches!(self.lookup_binding(name), Some(LexicalBinding::Callable(_))) {
+                return Err(SemanticError::InvalidPipeline {
+                    message: "stages must name user-defined functions",
+                    span,
+                });
+            }
             if self.lookup_variable(name).is_some() {
                 return Err(SemanticError::NotCallable {
                     name: name.clone(),

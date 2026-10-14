@@ -13,6 +13,7 @@ use wasm_encoder::{
 
 mod abi;
 mod call;
+mod closures;
 mod control_flow;
 mod expression;
 mod function;
@@ -166,6 +167,9 @@ pub enum CodegenError {
         span: Span,
     },
 
+    #[error("invalid closure: {reason} at {span:?}")]
+    InvalidClosure { reason: &'static str, span: Span },
+
     #[error("invalid normalized call: {reason} at {span:?}")]
     InvalidNormalizedCall { reason: &'static str, span: Span },
 
@@ -273,6 +277,7 @@ impl CodegenError {
             | Self::UnknownFunctionReference { span, .. }
             | Self::ArgumentCountMismatch { span, .. }
             | Self::InvalidNormalizedCall { span, .. }
+            | Self::InvalidClosure { span, .. }
             | Self::InvalidContractExpression { span, .. }
             | Self::InvalidMatch { span, .. }
             | Self::UnsupportedBuiltin { span, .. }
@@ -419,6 +424,11 @@ fn assemble(validated: &validation::ValidatedProgram<'_>) -> Vec<u8> {
             functions.function(plan.type_index.raw());
             code.function(&range::emit(helper, allocator, validator));
         }
+    }
+
+    for (plan, body) in layout.callables.iter().zip(validated.callable_bodies()) {
+        functions.function(plan.type_index.raw());
+        code.function(body);
     }
 
     let mut module = Module::new();

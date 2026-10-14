@@ -86,7 +86,7 @@ impl SemanticAnalyzer {
                 self.check_pure_expression(left, span, context)?;
                 self.check_pure_expression(right, span, context)?;
             }
-            Expr::Call { func, args } => {
+            Expr::Call { func, args, .. } => {
                 if self.lookup_variable(func).is_some() {
                     return Err(SemanticError::NotCallable {
                         name: func.clone(),
@@ -108,6 +108,7 @@ impl SemanticAnalyzer {
                     self.check_pure_expression(&arg.value, span, context)?;
                 }
             }
+            Expr::Lambda(_) => return Err(invalid("closures are not allowed")),
             Expr::Pipeline { .. } => return Err(invalid("pipelines are not allowed")),
             Expr::Array(_) => return Err(invalid("array construction is not allowed")),
             Expr::Range { .. } => return Err(invalid("range construction is not allowed")),

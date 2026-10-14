@@ -933,6 +933,7 @@ fn raw_compound_assignments_reuse_identifier_rooted_place_checks() {
             Expr::String("text".into()),
             Expr::Array(vec![]),
             Expr::Call {
+                span: Span::new(0, 0),
                 func: "make".into(),
                 args: vec![],
             },
@@ -951,6 +952,7 @@ fn raw_compound_assignments_reuse_identifier_rooted_place_checks() {
             },
             Expr::Index {
                 expr: Box::new(Expr::Call {
+                    span: Span::new(0, 0),
                     func: "make".into(),
                     args: vec![],
                 }),
@@ -1951,6 +1953,7 @@ fn rejects_manually_constructed_invalid_assignment_targets() {
         Expr::String("text".into()),
         Expr::Array(Vec::new()),
         Expr::Call {
+            span: Span::new(0, 0),
             func: "len".into(),
             args: vec![crate::ast::CallArgument {
                 name: None,
@@ -1973,6 +1976,7 @@ fn rejects_manually_constructed_invalid_assignment_targets() {
         },
         Expr::Index {
             expr: Box::new(Expr::Call {
+                span: Span::new(0, 0),
                 func: "make".into(),
                 args: Vec::new(),
             }),
@@ -2014,6 +2018,7 @@ fn manually_constructed_index_expressions_can_read_nonidentifier_arrays() {
     for base in [
         Expr::Array(vec![Expr::Number("1".into())]),
         Expr::Call {
+            span: Span::new(0, 0),
             func: "make".into(),
             args: Vec::new(),
         },
@@ -2043,6 +2048,7 @@ fn manually_constructed_index_checks_void_base_and_preserves_statement_span() {
     program.functions[1].body[0] = Statement {
         kind: StatementKind::Expression(Expr::Index {
             expr: Box::new(Expr::Call {
+                span: Span::new(0, 0),
                 func: "noop".into(),
                 args: Vec::new(),
             }),

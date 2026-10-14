@@ -71,7 +71,10 @@ pub enum Expr {
     Call {
         func: String,
         args: Vec<CallArgument>,
+        span: Span,
     },
+
+    Lambda(Lambda),
 
     Loop {
         body: Block,
@@ -93,6 +96,20 @@ pub enum Expr {
         expr: Box<Expr>,
         index: Box<Expr>,
     },
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Lambda {
+    pub params: Vec<Param>,
+    pub body: LambdaBody,
+    pub span: Span,
+    pub body_span: Span,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum LambdaBody {
+    Expression(Box<Expr>),
+    Block(ValueBlock),
 }
 
 /// A literal-only match pattern with its original UTF-8 byte span.
@@ -159,6 +176,7 @@ pub struct ValueBlock {
 pub enum StatementKind {
     Let {
         name: String,
+        name_span: Span,
         ty: Option<Type>,
         value: Expr,
     },

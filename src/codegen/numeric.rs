@@ -17,7 +17,7 @@ pub(super) fn needs_remainder(program: &TypedProgram) -> bool {
 
 struct RemainderVisitor;
 
-impl Visitor for RemainderVisitor {
+impl Visitor<'_> for RemainderVisitor {
     type Break = ();
 
     fn enter_statement(&mut self, statement: &TypedStatement) -> ControlFlow<()> {

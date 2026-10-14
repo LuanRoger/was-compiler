@@ -3,8 +3,8 @@ use thiserror::Error;
 use crate::{
     ast::{
         BinaryOp, Block, CallArgument, ContractExpression, DefaultExpression, Expr, Function,
-        MatchArm, MatchPattern, MatchPatternKind, Param, PipelineStage, Program, Statement,
-        StatementKind, Type, UnaryOp, ValueBlock,
+        Lambda, LambdaBody, MatchArm, MatchPattern, MatchPatternKind, Param, PipelineStage,
+        Program, Statement, StatementKind, Type, UnaryOp, ValueBlock,
     },
     tokens::{Span, Token, TokenKind},
 };
@@ -30,6 +30,12 @@ impl ParseError {
             }
         }
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ValueBlockContext {
+    Expression,
+    Closure,
 }
 
 pub struct Parser<'tokens, 'source> {
@@ -226,6 +232,7 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
     fn parse_let(&mut self) -> Result<StatementKind, ParseError> {
         self.expect(TokenKind::Let)?;
 
+        let name_span = self.current_span();
         let name = self.parse_identifier()?;
         let ty = if self.consume(TokenKind::Colon) {
             Some(self.parse_type()?)
@@ -239,7 +246,12 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
 
         self.expect(TokenKind::Semicolon)?;
 
-        Ok(StatementKind::Let { name, ty, value })
+        Ok(StatementKind::Let {
+            name,
+            name_span,
+            ty,
+            value,
+        })
     }
 
     fn parse_if(&mut self) -> Result<StatementKind, ParseError> {
@@ -465,6 +477,13 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
     }
 
     fn parse_value_block(&mut self) -> Result<ValueBlock, ParseError> {
+        self.parse_value_block_in_context(ValueBlockContext::Expression)
+    }
+
+    fn parse_value_block_in_context(
+        &mut self,
+        context: ValueBlockContext,
+    ) -> Result<ValueBlock, ParseError> {
         let start = self.expect(TokenKind::LeftBrace)?.span.start();
         let mut statements = Vec::new();
         let mut tail = None;
@@ -533,6 +552,17 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
                     } else {
                         StatementKind::Expression(expr)
                     },
+                    span: self.span_since(statement_start),
+                });
+            } else if self.check(&TokenKind::RightBrace)
+                && starts_with_loop
+                && context == ValueBlockContext::Closure
+            {
+                let Expr::Loop { body } = expr else {
+                    unreachable!("a bare loop was parsed above");
+                };
+                statements.push(Statement {
+                    kind: StatementKind::Loop { body },
                     span: self.span_since(statement_start),
                 });
             } else if self.check(&TokenKind::RightBrace) {
@@ -820,12 +850,17 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
             Some(TokenKind::False) => Expr::Bool(false),
 
             Some(TokenKind::Identifier(_)) => {
+                let start = self.current_span().start();
                 let name = self.parse_identifier()?;
 
                 return if self.consume(TokenKind::LeftParen) {
                     let args = self.parse_call_arguments()?;
 
-                    Ok(Expr::Call { func: name, args })
+                    Ok(Expr::Call {
+                        func: name,
+                        args,
+                        span: self.span_since(start),
+                    })
                 } else if self.consume(TokenKind::LeftBracket) {
                     let index = Box::new(self.parse_expression()?);
 
@@ -858,6 +893,9 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
             }
 
             Some(TokenKind::LeftParen) => {
+                if self.starts_lambda() {
+                    return self.parse_lambda();
+                }
                 self.advance();
 
                 let expr = self.parse_expression()?;
@@ -873,6 +911,64 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
         self.advance();
 
         Ok(expr)
+    }
+
+    fn starts_lambda(&self) -> bool {
+        let mut depth = 0;
+        for (offset, token) in self.tokens[self.current..].iter().enumerate() {
+            match token.kind {
+                TokenKind::LeftParen => depth += 1,
+                TokenKind::RightParen => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return self
+                            .tokens
+                            .get(self.current + offset + 1)
+                            .is_some_and(|token| token.kind == TokenKind::FatArrow);
+                    }
+                }
+                TokenKind::Eof => break,
+                _ => {}
+            }
+        }
+        false
+    }
+
+    fn parse_lambda(&mut self) -> Result<Expr, ParseError> {
+        let start = self.current_span().start();
+        self.expect(TokenKind::LeftParen)?;
+        let mut params = Vec::new();
+        if !self.check(&TokenKind::RightParen) {
+            loop {
+                let param_start = self.current_span().start();
+                let name = self.parse_identifier()?;
+                self.expect(TokenKind::Colon)?;
+                let ty = self.parse_type()?;
+                params.push(Param {
+                    name,
+                    ty,
+                    default: None,
+                    span: self.span_since(param_start),
+                });
+                if !self.consume(TokenKind::Comma) {
+                    break;
+                }
+            }
+        }
+        self.expect(TokenKind::RightParen)?;
+        self.expect(TokenKind::FatArrow)?;
+        let body_start = self.current_span().start();
+        let body = if self.check(&TokenKind::LeftBrace) {
+            LambdaBody::Block(self.parse_value_block_in_context(ValueBlockContext::Closure)?)
+        } else {
+            LambdaBody::Expression(Box::new(self.parse_expression()?))
+        };
+        Ok(Expr::Lambda(Lambda {
+            params,
+            body,
+            span: self.span_since(start),
+            body_span: self.span_since(body_start),
+        }))
     }
 
     fn parse_call_arguments(&mut self) -> Result<Vec<CallArgument>, ParseError> {
@@ -1225,6 +1321,7 @@ mod tests {
             statements[0].kind,
             StatementKind::Let {
                 name: "xs".into(),
+                name_span: Span::new(24, 26),
                 ty: Some(Type::NumberArray),
                 value: Expr::Array(vec![number("1"), number("2")]),
             }
@@ -1275,6 +1372,7 @@ mod tests {
                         expr: Box::new(identifier("xs")),
                         index: Box::new(Expr::Call {
                             func: "index".into(),
+                            span: Span::new(31, 38),
                             args: vec![],
                         }),
                     },
@@ -1395,6 +1493,7 @@ mod tests {
                 "let/* note */n = 1;",
                 StatementKind::Let {
                     name: "n".into(),
+                    name_span: Span::new(33, 34),
                     ty: None,
                     value: number("1"),
                 },
@@ -1403,6 +1502,7 @@ mod tests {
                 "let flag: bool = true;",
                 StatementKind::Let {
                     name: "flag".into(),
+                    name_span: Span::new(44, 48),
                     ty: Some(Type::Bool),
                     value: Expr::Bool(true),
                 },
@@ -1411,6 +1511,7 @@ mod tests {
                 "let text = \"é\";",
                 StatementKind::Let {
                     name: "text".into(),
+                    name_span: Span::new(67, 71),
                     ty: None,
                     value: Expr::String("é".into()),
                 },
@@ -1419,6 +1520,7 @@ mod tests {
                 "let values = [];",
                 StatementKind::Let {
                     name: "values".into(),
+                    name_span: Span::new(84, 90),
                     ty: None,
                     value: Expr::Array(vec![]),
                 },
@@ -1731,11 +1833,13 @@ mod tests {
             expression("call(1, other(), xs[2 + 3], [true, false], \"hello\")"),
             Expr::Call {
                 func: "call".into(),
+                span: Span::new(0, 51),
                 args: vec![
                     (number("1"), Span::new(5, 6)),
                     (
                         Expr::Call {
                             func: "other".into(),
+                            span: Span::new(8, 15),
                             args: vec![]
                         },
                         Span::new(8, 15)
@@ -1773,6 +1877,7 @@ mod tests {
             program.functions[0].body[0].kind,
             StatementKind::Expression(Expr::Call {
                 func: "call".into(),
+                span: Span::new(20, 26),
                 args: vec![]
             })
         );
@@ -2467,7 +2572,7 @@ mod tests {
             };
 
             assert_if_arithmetic(value, op, &negate(negate(number("4"))));
-            let StatementKind::Expression(Expr::Call { func, args }) = &body[3].kind else {
+            let StatementKind::Expression(Expr::Call { func, args, .. }) = &body[3].kind else {
                 panic!("expected call");
             };
 
