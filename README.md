@@ -155,20 +155,24 @@ WP10 named-only pipelines support positional/named arguments, omitted trailing
 defaults, and final Void stages with discarded results (#27). Implementation is
 complete; [release gates passed](docs/was_language_extensions_plan.md#wp10-release-validation)
 on 2026-10-14, including current-source rebuilt-browser and full ignored runtime coverage.
-WP11's local callable subsets are implemented: capture-free declarations/calls
+WP11 local callables are implemented: capture-free declarations/calls
 (#29), immediate-creator shared parameter/let captures (#30), and captured numeric
 compounds (#31). #32 implements nested original-binding capture forwarding and
 earlier context-requiring callable dependencies in the frontend/backend;
 [#32 validation passed](docs/local-callable-interface.md#issue-32-validation-2026-10-14).
 #33 implements [read-only range/array iteration captures](docs/local-callable-interface.md#implemented-read-only-iteration-captures-33);
 [validation passed](docs/local-callable-interface.md#issue-33-validation-2026-10-15).
-Combined nested/transitive iteration-capture convergence and full WP11 release remain deferred.
+Nested read-only range/array captures and transitive live callable contexts compose
+with shared mutation and captured compounds. #34 adds recursion/reentry/trap lifetime
+coverage. WP11 is implemented; full native/browser
+[release gates passed on 2026-10-15](docs/local-callable-interface.md#issue-35-wp11-release-validation-2026-10-15)
+under #35. Earlier subset evidence retains its historical scope.
 [#30 subset validation passed](docs/local-callable-interface.md#issue-30-validation-2026-10-14),
 including rebuilt-browser and full ignored runtime coverage for #30, before #31.
 [#31 validation passed](docs/local-callable-interface.md#issue-31-validation-2026-10-14). WP12 placeholders and
 WP13 optimization are separately scoped.
 
-### Local callables and shared captures (WP11 subsets, #29–#33)
+### Local callables and shared captures (WP11; release gates passed)
 
 ```text
 fn main() -> number {
@@ -198,8 +202,9 @@ compound writes remain rejected, even in skipped/unreachable code. Each yielded
 captured binding gets a fresh eight-byte cell before the body, even if the closure
 declaration is skipped; empty/exhausted/failed yields allocate no cell. Cells are
 monotonic, not reused or reclaimed; environments allocate only at executed
-declarations. Combined nested/transitive iteration-capture convergence remains
-deferred. #31 supports `+=`, `-=`,
+declarations. Nested helpers forward the same original read-only iteration cell;
+transitive callable dependencies retain that iteration's live environment. Mutable
+shadowing lets remain distinct. #31 supports `+=`, `-=`,
 `*=`, `/=`, and `%=` on captured numbers and captured numeric-array elements,
 including creator-side promoted bindings. Updates preserve the original checked
 place and old value across RHS effects; ordinary indexed assignment also retains
@@ -207,8 +212,10 @@ its pre-RHS checked address.
 
 Callables cannot be aliased, reassigned, annotated with a value type, passed,
 returned or used as values. Immediate invocation, closure defaults/contracts/result
-annotations, placeholders and closure pipeline stages are not supported. Full WP11
-release remains deferred.
+annotations, placeholders and closure pipeline stages are not supported. WP12
+placeholder/callable-stage work and separately authorized WP13 optimization are
+outside WP11. WP11's [release gates passed on 2026-10-15](docs/local-callable-interface.md#issue-35-wp11-release-validation-2026-10-15),
+including current-source rebuilt-browser and full ignored runtime coverage.
 
 Generated helpers use direct calls, are never exported, and follow existing runtime
 helpers. Context-free callables add no environments, hidden arguments or memory
@@ -220,7 +227,7 @@ A helper needing either kind of context receives a hidden first `i32` argument.
 Allocation may grow memory or trap, is monotonic,
 and does not roll back earlier effects. Hosts must refresh views after possible
 memory growth. See [the private storage contract](docs/memory-abi.md#private-closure-storage-30)
-and [the public AST migration and subset contract](docs/local-callable-interface.md),
+and [the public AST migration and capture contracts](docs/local-callable-interface.md),
 including the new owner-qualified `TypedExprKind::Captured` variant.
 [#34 lifetime coverage](docs/local-callable-interface.md#capture-lifetime-across-recursion-reentry-and-traps-34)
 exercises distinct recursive/reentrant contexts, post-trap calls and persistent

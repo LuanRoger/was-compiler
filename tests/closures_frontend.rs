@@ -347,6 +347,362 @@ fn captured_compounds_check_invalid_types_targets_and_skipped_children() {
 }
 
 #[test]
+fn nested_iteration_convergence_preserves_original_capture_and_dependency_provenance() {
+    use was_compiler::OptimizationLevel;
+    use was_compiler::typed_ast::{
+        BindingOwner, CallableId, CaptureMutability, FunctionId, TypedCapture, TypedClosureBody,
+        TypedExprKind, VariableId,
+    };
+
+    let source = r#"
+        fn main() {
+            let total = 0;
+            let xs = [3, 4];
+            for r in 1..3 {
+                let base = () => r;
+                let relay = () => base();
+                let root = () => {
+                    for a in xs {
+                        let middle = () => {
+                            let leaf = () => {
+                                r;
+                                a;
+                                total += relay();
+                                xs[0] += { xs = [a]; r };
+                                total + a
+                            };
+                            leaf()
+                        };
+                        middle();
+                    }
+                    total
+                };
+                root();
+            }
+        }
+    "#;
+    let mut compiler = Compiler::new();
+    let mut baseline = None;
+    for level in [
+        OptimizationLevel::None,
+        OptimizationLevel::Basic,
+        OptimizationLevel::Standard,
+        OptimizationLevel::Aggressive,
+    ] {
+        compiler.set_optimization_level(level);
+        let program = compiler.analyze(source).unwrap();
+        let TypedStatementKind::For { variable, body, .. } = &program.functions[0].body[2].kind
+        else {
+            panic!("range for");
+        };
+        assert_eq!(*variable, VariableId(2));
+        let [base, relay, root, _] = body.as_slice() else {
+            panic!("range body");
+        };
+        let (
+            TypedStatementKind::Closure(base),
+            TypedStatementKind::Closure(relay),
+            TypedStatementKind::Closure(root),
+        ) = (&base.kind, &relay.kind, &root.kind)
+        else {
+            panic!("range callables");
+        };
+        let function = BindingOwner::Function(FunctionId(0));
+        let range_capture = TypedCapture {
+            owner: function,
+            variable: VariableId(2),
+            ty: Type::Number,
+            mutability: CaptureMutability::ReadOnly,
+        };
+        let original_captures = vec![
+            TypedCapture {
+                owner: function,
+                variable: VariableId(0),
+                ty: Type::Number,
+                mutability: CaptureMutability::Mutable,
+            },
+            TypedCapture {
+                owner: function,
+                variable: VariableId(1),
+                ty: Type::NumberArray,
+                mutability: CaptureMutability::Mutable,
+            },
+            range_capture.clone(),
+        ];
+        assert_eq!(base.id, CallableId(0));
+        assert_eq!(base.owner, function);
+        assert_eq!(base.captures, vec![range_capture]);
+        assert!(base.dependencies.is_empty());
+        assert_eq!(relay.id, CallableId(1));
+        assert_eq!(relay.owner, function);
+        assert!(relay.captures.is_empty());
+        assert_eq!(relay.dependencies, vec![CallableId(0)]);
+        assert_eq!(root.id, CallableId(2));
+        assert_eq!(root.owner, function);
+        assert_eq!(root.captures, original_captures);
+        assert_eq!(root.dependencies, vec![CallableId(1)]);
+        let TypedClosureBody::Block(root_body) = &root.body else {
+            panic!("root block");
+        };
+        let TypedStatementKind::For { variable, body, .. } = &root_body.statements[0].kind else {
+            panic!("array for");
+        };
+        assert_eq!(*variable, VariableId(0));
+        let TypedStatementKind::Closure(middle) = &body[0].kind else {
+            panic!("middle");
+        };
+        let TypedClosureBody::Block(middle_body) = &middle.body else {
+            panic!("middle block");
+        };
+        let TypedStatementKind::Closure(leaf) = &middle_body.statements[0].kind else {
+            panic!("leaf");
+        };
+        let mut nested_captures = original_captures;
+        nested_captures.push(TypedCapture {
+            owner: BindingOwner::Closure(CallableId(2)),
+            variable: VariableId(0),
+            ty: Type::Number,
+            mutability: CaptureMutability::ReadOnly,
+        });
+        for (helper, id, owner) in [
+            (middle, CallableId(3), BindingOwner::Closure(CallableId(2))),
+            (leaf, CallableId(4), BindingOwner::Closure(CallableId(3))),
+        ] {
+            assert_eq!(helper.id, id);
+            assert_eq!(helper.owner, owner);
+            assert_eq!(helper.captures, nested_captures);
+            assert_eq!(helper.dependencies, vec![CallableId(1)]);
+            assert_eq!(helper.return_type, Type::Number);
+        }
+        let TypedClosureBody::Block(leaf_body) = &leaf.body else {
+            panic!("leaf block");
+        };
+        for (statement, owner, id, name) in [
+            (&leaf_body.statements[0], function, VariableId(2), "r"),
+            (
+                &leaf_body.statements[1],
+                BindingOwner::Closure(CallableId(2)),
+                VariableId(0),
+                "a",
+            ),
+        ] {
+            let TypedStatementKind::Expression(expr) = &statement.kind else {
+                panic!("capture read");
+            };
+            assert_eq!(
+                expr.kind,
+                TypedExprKind::Captured {
+                    owner,
+                    id,
+                    name: name.into()
+                }
+            );
+        }
+        for (statement, id, name) in [
+            (&leaf_body.statements[2], VariableId(0), "total"),
+            (&leaf_body.statements[3], VariableId(1), "xs"),
+        ] {
+            let TypedStatementKind::CompoundAssignment { target, .. } = &statement.kind else {
+                panic!("compound place");
+            };
+            let base = match &target.kind {
+                TypedExprKind::Index { expr, .. } => expr.as_ref(),
+                _ => target,
+            };
+            assert_eq!(
+                base.kind,
+                TypedExprKind::Captured {
+                    owner: function,
+                    id,
+                    name: name.into()
+                }
+            );
+        }
+        let bytes = compiler.compile(&program).unwrap();
+        assert_eq!(compiler.compile_source(source).unwrap(), bytes);
+        if let Some((expected_program, expected_bytes)) = &baseline {
+            assert_eq!(&program, expected_program, "{level:?}");
+            assert_eq!(&bytes, expected_bytes, "{level:?}");
+        } else {
+            baseline = Some((program, bytes));
+        }
+    }
+}
+
+#[test]
+fn nested_iteration_convergence_dependency_only_helpers_do_not_recapture_shadowed_values() {
+    use was_compiler::OptimizationLevel;
+    use was_compiler::typed_ast::{
+        BindingOwner, CallableId, CaptureMutability, FunctionId, TypedCapture, TypedClosureBody,
+        VariableId,
+    };
+
+    let source = r#"
+        fn main() {
+            let total = 0;
+            for r in 2..=3 {
+                for a in [5, 7] {
+                    let base = () => { total += r + a; total };
+                    let relay = () => base();
+                    let outer = () => {
+                        let r = 100;
+                        let a = 200;
+                        let middle = () => {
+                            let leaf = () => relay();
+                            leaf() + leaf()
+                        };
+                        middle()
+                    };
+                    total += 1;
+                    outer();
+                }
+            }
+            return total;
+        }
+    "#;
+    let mut compiler = Compiler::new();
+    let expected = compiler.analyze(source).unwrap();
+    let expected_bytes = compiler.compile(&expected).unwrap();
+    for level in [
+        OptimizationLevel::None,
+        OptimizationLevel::Basic,
+        OptimizationLevel::Standard,
+        OptimizationLevel::Aggressive,
+    ] {
+        compiler.set_optimization_level(level);
+        let program = compiler.analyze(source).unwrap();
+        assert_eq!(program, expected, "{level:?}");
+        assert_eq!(
+            compiler.compile(&program).unwrap(),
+            expected_bytes,
+            "{level:?}"
+        );
+        let TypedStatementKind::For { body, .. } = &program.functions[0].body[1].kind else {
+            panic!("range for");
+        };
+        let TypedStatementKind::For { body, .. } = &body[0].kind else {
+            panic!("array for");
+        };
+        let TypedStatementKind::Closure(base) = &body[0].kind else {
+            panic!("base");
+        };
+        assert_eq!(base.id, CallableId(0));
+        assert_eq!(base.owner, BindingOwner::Function(FunctionId(0)));
+        assert_eq!(base.return_type, Type::Number);
+        assert!(base.dependencies.is_empty());
+        assert_eq!(
+            base.captures,
+            vec![
+                TypedCapture {
+                    owner: BindingOwner::Function(FunctionId(0)),
+                    variable: VariableId(0),
+                    ty: Type::Number,
+                    mutability: CaptureMutability::Mutable
+                },
+                TypedCapture {
+                    owner: BindingOwner::Function(FunctionId(0)),
+                    variable: VariableId(1),
+                    ty: Type::Number,
+                    mutability: CaptureMutability::ReadOnly
+                },
+                TypedCapture {
+                    owner: BindingOwner::Function(FunctionId(0)),
+                    variable: VariableId(2),
+                    ty: Type::Number,
+                    mutability: CaptureMutability::ReadOnly
+                },
+            ]
+        );
+        let TypedStatementKind::Closure(relay) = &body[1].kind else {
+            panic!("relay");
+        };
+        assert_eq!(relay.id, CallableId(1));
+        assert!(relay.captures.is_empty());
+        assert_eq!(relay.dependencies, vec![CallableId(0)]);
+        let TypedStatementKind::Closure(outer) = &body[2].kind else {
+            panic!("outer");
+        };
+        let TypedClosureBody::Block(outer_body) = &outer.body else {
+            panic!("outer block");
+        };
+        let TypedStatementKind::Closure(middle) = &outer_body.statements[2].kind else {
+            panic!("middle");
+        };
+        let TypedClosureBody::Block(middle_body) = &middle.body else {
+            panic!("middle block");
+        };
+        let TypedStatementKind::Closure(leaf) = &middle_body.statements[0].kind else {
+            panic!("leaf");
+        };
+        for (helper, id, owner) in [
+            (outer, CallableId(2), BindingOwner::Function(FunctionId(0))),
+            (middle, CallableId(3), BindingOwner::Closure(CallableId(2))),
+            (leaf, CallableId(4), BindingOwner::Closure(CallableId(3))),
+        ] {
+            assert_eq!(helper.id, id);
+            assert_eq!(helper.owner, owner);
+            assert_eq!(helper.return_type, Type::Number);
+            assert!(helper.captures.is_empty());
+            assert_eq!(helper.dependencies, vec![CallableId(1)]);
+        }
+    }
+}
+
+#[test]
+fn nested_iteration_convergence_rejects_skipped_and_unreachable_read_only_writes() {
+    use was_compiler::OptimizationLevel;
+
+    for (outer, inner) in [("1..3", "[4, 5]"), ("[4, 5]", "1..3")] {
+        for target in ["outer", "inner"] {
+            for operator in ["=", "+=", "-=", "*=", "/=", "%="] {
+                let write = format!("{target} {operator} 9;");
+                for body in [
+                    write.clone(),
+                    format!("return; {write}"),
+                    format!("false && {{ {write} true }};"),
+                    format!("if false {{ {write} }}"),
+                ] {
+                    let source = format!(
+                        "fn main() {{ for outer in {outer} {{
+                            let read = () => outer;
+                            let relay = () => read();
+                            let root = () => {{ for inner in {inner} {{
+                                let middle = () => {{
+                                    let leaf = () => {{ relay(); outer; inner; {body} }};
+                                }};
+                            }} }};
+                        }} }}"
+                    );
+                    for level in [
+                        OptimizationLevel::None,
+                        OptimizationLevel::Basic,
+                        OptimizationLevel::Standard,
+                        OptimizationLevel::Aggressive,
+                    ] {
+                        let mut compiler = Compiler::new();
+                        compiler.set_optimization_level(level);
+                        for error in [
+                            compiler.analyze(&source).unwrap_err(),
+                            compiler.compile_source(&source).unwrap_err(),
+                        ] {
+                            let CompileError::Semantic(error) = error else {
+                                panic!("expected semantic error: {source}");
+                            };
+                            assert!(
+                                matches!(&error, SemanticError::ReadOnlyVariable { name, .. } if name == target),
+                                "{level:?}: {error:?}: {source}"
+                            );
+                            let span = error.span().unwrap();
+                            assert_eq!(&source[span.start()..span.end()], write, "{level:?}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn iteration_captures_preserve_original_read_only_number_metadata() {
     use was_compiler::typed_ast::{BindingOwner, CaptureMutability, FunctionId, TypedCapture};
 

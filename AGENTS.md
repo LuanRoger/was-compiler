@@ -148,7 +148,10 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   with [validation passed](docs/local-callable-interface.md#issue-33-validation-2026-10-15).
   #34 adds [recursion/reentry/trap lifetime coverage](docs/local-callable-interface.md#capture-lifetime-across-recursion-reentry-and-traps-34)
   without changing compiler behavior or public contracts.
-  Combined nested/transitive iteration-capture convergence, full WP11 release and WP12 remain deferred. WP13
+  Nested read-only range/array captures and transitive live callable contexts compose
+  with captured compounds and invocation-local lifetime behavior. WP11 is implemented;
+  #35's full native/browser [release gates passed on 2026-10-15](docs/local-callable-interface.md#issue-35-wp11-release-validation-2026-10-15).
+  WP12 remains deferred; WP13
   optimization requires separate authorization.
   Preserve `target/wp7-inference` when cleaning generated output. Before changing defaults, call binding, or
   normalized lowering, read [the handoff](docs/wp6-wp7-development.md) and
@@ -214,10 +217,10 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
 
 ## Compatibility contracts
 
-### Local callables and shared captures (WP11 subsets, #29–#33)
+### Local callables and shared captures (WP11; release gates passed)
 
 - Before changing closure syntax, inference, capture ownership/storage, lexical calls,
-  helper planning or diagnostics, read [the subset and public migration](docs/local-callable-interface.md)
+  helper planning or diagnostics, read [the capture contracts and public migration](docs/local-callable-interface.md)
   and [spec §10](docs/was_language_extensions_spec.md#10-feature-specification-anonymous-functions-and-local-closures).
 - Dedicated typed declarations own helper bodies; lexical calls use program-wide
   source-preorder callable IDs. Return/loop/local/temporary contexts are owner-local.
@@ -228,7 +231,7 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   forward their original live environments, never callable values or snapshots.
 - Context-free declarations execute no body, allocate no environment and add no
   hidden argument or callable-only memory. Preserve ordinary handle validation.
-- #30 captures immediate-creator parameters/ordinary lets of all concrete types.
+- Captures share ancestor parameters/ordinary lets of all concrete types.
   Use owner-qualified `TypedExprKind::Captured` for helper reads/places/array bases;
   creator accesses remain `Identifier`. Preserve original type, initialization,
   shadowing and canonical owner/declaration ordering, independent of forged sparse IDs.
@@ -249,7 +252,9 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   source-preorder context-requiring dependency slots; context-free dependencies
   occupy no slots. Check complete/unique/canonical metadata and lexical availability
   independently for forged input, including sparse IDs and descendant-only requirements.
-  Combined nested/transitive iteration-capture convergence and full WP11 release remain deferred. [#30 evidence](docs/local-callable-interface.md#issue-30-validation-2026-10-14)
+  Nested read-only range/array captures use this same forwarding path; transitive
+  callable dependencies retain the original iteration's live environment. Full WP11
+  [release gates passed on 2026-10-15](docs/local-callable-interface.md#issue-35-wp11-release-validation-2026-10-15) under #35. [#30 evidence](docs/local-callable-interface.md#issue-30-validation-2026-10-14)
   covers shared storage before #31, not captured compounds; [#31 validation passed](docs/local-callable-interface.md#issue-31-validation-2026-10-14).
   Historical #29 results cover only capture-free callables.
 - Before changing iteration captures, read [the #33 contract and validation](docs/local-callable-interface.md#implemented-read-only-iteration-captures-33).
@@ -265,6 +270,12 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   lifetime behavior, read [the #34 lifetime coverage](docs/local-callable-interface.md#capture-lifetime-across-recursion-reentry-and-traps-34).
   Keep invocation-local contexts distinct, preserve completed effects after traps,
   and retain array/string offsets across later allocations; refresh host views after growth.
+- Keep local callables declaration-bound and directly invoked: no immediate
+  invocation, first-class values, aliases, passing/returning callables or callable
+  pipeline stages. WP12 placeholders/stages, reclamation and separately authorized
+  WP13 optimization are outside WP11. Use [#35's release evidence](docs/local-callable-interface.md#issue-35-wp11-release-validation-2026-10-15)
+  for full native/current-source browser validation; earlier subsets retain their
+  historical scope.
 - Keep `tests/closures_frontend.rs`, `tests/closures_lowering.rs`,
   `tests/closures_runtime.rs`, and `tests/closures_adapters.rs` at the confirmed
   compiler/typed-input/adapter seams. Runtime cases remain ignored by default.

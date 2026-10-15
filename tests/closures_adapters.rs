@@ -46,6 +46,26 @@ fn operations() -> number {
     };
     return work();
 }
+fn integrated() -> number {
+    let array = [10];
+    let alias = array;
+    let total = 0;
+    for x in 1..=2 {
+        let outer = () => {
+            for y in [3, 4] {
+                let read = () => x + y;
+                let chain = () => { let leaf = () => read(); leaf() };
+                let rhs = () => { array = [100]; chain() |> named };
+                let original = array;
+                let update = () => { array[0] += rhs(); };
+                update();
+                total += match true { true => mark(original[0]), false => 0 };
+            }
+        };
+        outer();
+    }
+    return total + alias[0];
+}
 "#;
 const SCALAR: &str = "fn main() -> number { let f = () => 7; let g = () => { let h = () => f(); h() }; return g(); }";
 const CAPTURED_COMPOUNDS: &str = r#"
@@ -113,6 +133,11 @@ enum ErrorKind {
 }
 
 const ERRORS: &[(&str, &str, ErrorKind)] = &[
+    (
+        "for x in 1..=2 { let outer = () => { for y in [3] { let read = () => x + y; let f = () => { let leaf = () => { return; x %= 2; }; leaf() }; } }; }",
+        "x %= 2;",
+        ErrorKind::ReadOnly,
+    ),
     (
         "for x in [1] { let f = () => { x = 2; }; }",
         "x = 2;",
@@ -237,7 +262,7 @@ fn cli_closure_wasm_and_wat_match_library_at_all_levels_and_export_selections() 
         (
             SOURCE,
             vec![
-                vec!["main", "text", "array", "operations"],
+                vec!["main", "text", "array", "operations", "integrated"],
                 vec!["main"],
                 vec![],
             ],
@@ -548,6 +573,91 @@ fn cli_semantic_errors_keep_focused_utf8_crlf_spans_and_existing_outputs() {
         .unwrap();
 }
 
+#[test]
+#[ignore = "requires Node.js on PATH"]
+fn cli_nested_iteration_contexts_keep_original_indexed_places() {
+    let scratch = Scratch::new();
+    fs::write(scratch.0.join("program.was"), SOURCE).unwrap();
+    let mut native = compiler();
+    native.set_exports(ExportOptions::Only(vec!["integrated".into()]));
+    for (flag, level) in LEVELS {
+        native.set_optimization_level(level);
+        let bytes = native.compile_source(SOURCE).unwrap();
+        let output = scratch.cli(&[
+            "program.was",
+            flag,
+            "-o",
+            "out.wasm",
+            "--export",
+            "integrated",
+            "--host",
+            "mark=env.mark(number)->number",
+        ]);
+        assert_eq!(output.status.code(), Some(0));
+        assert!(output.stdout.is_empty());
+        assert!(output.stderr.is_empty());
+        assert_eq!(fs::read(scratch.0.join("out.wasm")).unwrap(), bytes);
+        Validator::new().validate_all(&bytes).unwrap();
+        let script = r#"
+            const assert = require('node:assert/strict');
+            const bytes = require('node:fs').readFileSync(0), events = [];
+            const e = new WebAssembly.Instance(new WebAssembly.Module(bytes),
+                {env:{mark(n) {events.push(n); return n;}}}).exports;
+            for (let call = 0; call < 3; call++) {
+                assert.equal(e.integrated(), 373);
+                assert.deepEqual(events.splice(0), [19,111,111,113]);
+            }
+            assert.deepEqual(Object.keys(e).sort(), ['__alloc','integrated','memory']);
+        "#;
+        let output = test_process::output(
+            Command::new("node").args(["-e", script]),
+            Some(&bytes),
+            Duration::from_secs(30),
+        );
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+const EOF_SOURCE: &str = "// é😀\r\nfn main() {\r\n\tlet f = () => 1; // EOF";
+
+fn expected_eof_diagnostic() -> &'static str {
+    let error = compiler().compile_source(EOF_SOURCE).unwrap_err();
+    assert!(matches!(
+        error,
+        CompileError::Parse(was_compiler::parser::ParseError::UnexpectedToken {
+            expected: "}",
+            found: "end of input",
+            span,
+        }) if span == Span::new(48, 48)
+    ));
+    let expected = "bad.was:3:25: parse error: Unexpected token end of input (expected }) at Span { start: 48, end: 48 }\n  |\n3 |     let f = () => 1; // EOF\n  |                            ^";
+    assert_eq!(diagnostic::render("bad.was", EOF_SOURCE, &error), expected);
+    expected
+}
+
+#[test]
+fn cli_closure_eof_diagnostic_preserves_exact_byte_span_and_destination() {
+    let scratch = Scratch::new();
+    let expected = expected_eof_diagnostic();
+    fs::write(scratch.0.join("bad.was"), EOF_SOURCE).unwrap();
+    for (flag, _) in LEVELS {
+        fs::write(scratch.0.join("out.wasm"), b"keep").unwrap();
+        let output = scratch.cli(&["bad.was", flag, "-o", "out.wasm"]);
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        assert_eq!(
+            String::from_utf8(output.stderr).unwrap(),
+            format!("{expected}\n")
+        );
+        assert_eq!(fs::read(scratch.0.join("out.wasm")).unwrap(), b"keep");
+        assert_eq!(fs::read_dir(&scratch.0).unwrap().count(), 2);
+    }
+}
+
 fn field(input: &mut Vec<u8>, bytes: &[u8]) {
     input.extend_from_slice(&u32::try_from(bytes.len()).unwrap().to_le_bytes());
     input.extend_from_slice(bytes);
@@ -563,7 +673,7 @@ fn rebuilt_browser_closure_bytes_wat_execution_and_diagnostics_match_native() {
             "rebuild pkg before browser tests"
         );
     }
-    let names = ["main", "text", "array", "operations"];
+    let names = ["main", "text", "array", "operations", "integrated"];
     let mut input = Vec::new();
     field(&mut input, SOURCE.as_bytes());
     field(&mut input, names.join(",").as_bytes());
@@ -584,7 +694,7 @@ fn rebuilt_browser_closure_bytes_wat_execution_and_diagnostics_match_native() {
     }
     field(
         &mut input,
-        &u32::try_from(ERRORS.len()).unwrap().to_le_bytes(),
+        &u32::try_from(ERRORS.len() + 1).unwrap().to_le_bytes(),
     );
     for (body, origin, kind) in ERRORS {
         let source = format!("// Unicode é😀\r\nfn main() {{\r\n\t/*é😀*/ {body}\r\n}}\r\n");
@@ -592,6 +702,13 @@ fn rebuilt_browser_closure_bytes_wat_execution_and_diagnostics_match_native() {
         field(&mut input, source.as_bytes());
         field(&mut input, expected.as_bytes());
     }
+    field(&mut input, EOF_SOURCE.as_bytes());
+    field(
+        &mut input,
+        expected_eof_diagnostic()
+            .replace("bad.was:", "<browser>:")
+            .as_bytes(),
+    );
     let script = r#"
         const assert = require('node:assert/strict');
         const fs = require('node:fs'), path = require('node:path');
@@ -629,6 +746,8 @@ fn rebuilt_browser_closure_bytes_wat_execution_and_diagnostics_match_native() {
                         {env:{mark(n) {events.push(n); return n;}}}).exports;
                     assert.equal(e.main(), 6); assert.deepEqual(events.splice(0), [3,2]);
                     assert.equal(e.operations(), 1);
+                                        assert.equal(e.integrated(), 373);
+                                        assert.deepEqual(events.splice(0), [19,111,111,113]);
                     function contents(h, text = false) {
                         const v = new DataView(e.memory.buffer);
                         const p = v.getUint32(h >>> 0, true), n = v.getUint32((h >>> 0)+4, true);
@@ -637,7 +756,7 @@ fn rebuilt_browser_closure_bytes_wat_execution_and_diagnostics_match_native() {
                     }
                     assert.equal(contents(e.text(), true), 'hé😀');
                     assert.deepEqual(contents(e.array()), [1,2]);
-                    assert.deepEqual(Object.keys(e).sort(), ['__alloc','array','main','memory','operations','text']);
+                    assert.deepEqual(Object.keys(e).sort(), ['__alloc','array','integrated','main','memory','operations','text']);
                     for (const error of errors) {
                         for (const method of ['compile','compileWat']) {
                             assert.throws(() => compiler[method](error.source), e => e instanceof Error && e.message === error.message);

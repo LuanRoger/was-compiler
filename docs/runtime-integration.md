@@ -154,27 +154,32 @@ on 2026-10-14. WP11 implements capture-free local callables (#29) and
 immediate-creator shared parameter/let captures (#30), plus captured numeric
 compounds (#31). #32 adds nested parameter/let forwarding and live callable contexts;
 #33 adds read-only iteration captures, with [validation passed](local-callable-interface.md#issue-33-validation-2026-10-15).
-Combined nested/transitive iteration-capture convergence, full WP11 release and WP12 placeholders remain deferred.
+Nested read-only range/array captures and transitive live callable contexts compose
+with captured compounds and invocation-local lifetime behavior. WP11 is implemented;
+full native/browser [release gates passed on 2026-10-15](local-callable-interface.md#issue-35-wp11-release-validation-2026-10-15)
+under #35. WP12 placeholders and
+callable pipeline stages remain deferred.
 [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14),
 including rebuilt-browser and full ignored runtime coverage before #31.
 [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14). WP13 optimization
 requires separate authorization.
 
-## Local callables and shared captures (#29–#33)
+## Local callables and shared captures (WP11)
 
 The CLI and core accept `let twice = (x: number) => x * 2;` followed by
 `twice(21)`. Expression and tail-valued block bodies infer concrete results;
-zero-argument and Void helpers work too. #30 permits shared captures of immediate-
-creator parameters and ordinary lets of type `number`, `bool`, `string`, `number[]`
-or `range`. Reassignment from either side and ordinary indexed array mutation are
-supported. #32 forwards original ancestor parameter/let cells and earlier live
+zero-argument and Void helpers work too. Shared captures of ancestor
+parameters and ordinary lets of type `number`, `bool`, `string`, `number[]`
+or `range` are supported. Reassignment from either side and ordinary indexed array
+mutation are supported. #32 forwards original ancestor parameter/let cells and earlier live
 callable contexts. #33 permits read-only range/array iteration captures; ordinary
 and all numeric compound writes remain rejected even when skipped/unreachable.
 Each yielded captured binding receives a fresh eight-byte cell before the body,
 even if the closure declaration is skipped; empty/exhausted/failed yields allocate
 no cell. Cells are monotonic, never reused/reclaimed; environments allocate only
-at executed declarations. Combined nested/transitive iteration-capture convergence
-remains deferred. See [the #33 contract](local-callable-interface.md#implemented-read-only-iteration-captures-33). #31 supports all five numeric compounds on captured scalar/indexed
+at executed declarations. Nested helpers forward the same original read-only
+iteration cell; transitive dependencies retain its live callable environment.
+Mutable shadowing lets remain distinct. See [the #33 contract](local-callable-interface.md#implemented-read-only-iteration-captures-33). #31 supports all five numeric compounds on captured scalar/indexed
 places, including creator-side promoted bindings. The checked target and old value
 are retained before RHS effects, even if the RHS rebinds the array or grows memory.
 Ordinary indexed assignments also preserve their pre-RHS checked element address.
@@ -222,7 +227,13 @@ instance's memory limit or engine allocation failure causes a trap. The compiler
 provides neither reclamation nor isolation from a host that corrupts memory.
 See [the #34 coverage and validation](local-callable-interface.md#capture-lifetime-across-recursion-reentry-and-traps-34).
 
-Full WP11 release remains deferred. See the separate [#30 execution evidence](local-callable-interface.md#issue-30-validation-2026-10-14)
+Callables remain local lexical names, not first-class values: no aliasing,
+reassignment, argument/return storage, immediate invocation, or callable pipeline
+stages. Closure defaults/contracts/result annotations are unsupported. WP12 and
+separately authorized WP13 optimization are outside this contract.
+Full WP11 [release gates passed on 2026-10-15](local-callable-interface.md#issue-35-wp11-release-validation-2026-10-15)
+under #35, including current-source rebuilt-browser and full ignored runtime coverage.
+See the separate [#30 execution evidence](local-callable-interface.md#issue-30-validation-2026-10-14)
 for shared-storage validation before #31, not captured compounds. Historical #29
 results cover only capture-free callables.
 

@@ -1,4 +1,4 @@
-# Local callable interface — issues #29–#34
+# Local callable interface — issues #29–#35
 
 ## Frozen public interface and implementation ownership
 
@@ -14,7 +14,8 @@ The parent [issue #28](https://github.com/LuanRoger/was-compiler/issues/28)
 defines the full contract. #33 adds [read-only iteration captures](#implemented-read-only-iteration-captures-33).
 #34 adds [recursion, host-reentry and trap lifetime coverage](#capture-lifetime-across-recursion-reentry-and-traps-34)
 without changing the compiler, public AST or ABI.
-Combined nested/transitive iteration-capture convergence and full WP11 release remain deferred.
+#35 completes nested/transitive iteration-capture convergence and the full native/browser
+WP11 release; [release gates passed](#issue-35-wp11-release-validation-2026-10-15).
 [#30 subset validation passed](#issue-30-validation-2026-10-14); that record predates
 #31 and does not validate captured compounds. The historical #29 evidence below
 predates shared capture storage.
@@ -113,7 +114,8 @@ preserves its checked pre-RHS element address, without a compound old-value read
 
 No new AST form, scratch policy, cell/environment layout or public ABI is added.
 #32 extends parameter/let forwarding and #33 adds read-only iteration captures as
-described below. Full WP11 release remains deferred. [#31 validation passed](#issue-31-validation-2026-10-14).
+described below. [#35 release gates passed](#issue-35-wp11-release-validation-2026-10-15).
+[#31 validation passed](#issue-31-validation-2026-10-14).
 The #29/#30 records below retain their historical scope.
 
 ## Implemented nested captures and callable contexts (#32)
@@ -144,8 +146,8 @@ including requirements used only by descendants. Missing/extra entries, wrong
 owners/types/mutability, uninitialized or invisible bindings, invalid dependency
 visibility/order and forged sparse variable IDs retain checked diagnostics.
 Helpers remain borrowed, direct and unexported; no public typed shape changes.
-#33 adds the separate iteration-capture subset below; combined nested/transitive
-iteration-capture convergence and full WP11 release remain deferred.
+#33 adds iteration captures below; #35 validates their composition with nested
+forwarding and transitive live callable dependencies through the same storage path.
 
 ## Implemented read-only iteration captures (#33)
 
@@ -172,8 +174,8 @@ array loads, continue/break/return targets, array alias visibility and all exist
 loop/control semantics remain intact. There is no AST or ABI shape change; see
 [the private storage contract](memory-abi.md#private-closure-storage-30).
 
-Combined nested/transitive iteration-capture convergence and full WP11 release
-remain deferred. [#33 validation passed](#issue-33-validation-2026-10-15) for the
+#35 validates combined nested/transitive iteration captures in the full WP11 release.
+[#33 validation passed](#issue-33-validation-2026-10-15) for the earlier
 read-only iteration-capture subset, not the full WP11 contract.
 
 ## Capture lifetime across recursion, reentry and traps (#34)
@@ -197,8 +199,8 @@ from a host callback; retain offsets, not views into an old buffer.
 Repeated bounded calls can still consume unbounded cumulative storage until
 allocation fails. This is not garbage collection, transactional rollback, host
 isolation, guest fuel or process-tree cancellation. No separate frame allocator,
-new dependency or optimizer change is introduced. Full WP11 release and combined
-nested/transitive iteration-capture convergence remain deferred.
+new dependency or optimizer change is introduced. #35 validates these existing
+lifetime scenarios alongside nested/transitive iteration-capture convergence.
 
 Coverage at the confirmed seams:
 
@@ -247,6 +249,92 @@ found no missing requirements, wrong behavior or scope creep, and independently
 reran all four new tests successfully. This is #34 lifetime evidence, not full WP11
 release validation. No runtime prerequisite was missing.
 
+## Issue #35 WP11 release validation (2026-10-15)
+
+WP11 is implemented and release-validated through the core library, native CLI and
+freshly rebuilt browser adapter. #35 adds integration tests and reconciles documentation;
+the existing compiler required no behavior, AST or ABI changes. The accepted
+[ownership/storage ADR](adr/0004-local-callable-ownership-and-storage.md) and glossary
+remain authoritative. Earlier #29–#34 records retain their historical scope and counts.
+This closes the WP11 release gate only: WP12 placeholders/callable pipeline stages
+and separately authorized WP13 optimization remain outside this work. Immediate
+invocation, first-class/escaping callables, reclamation and heap rewind remain unsupported.
+
+### Integrated acceptance evidence
+
+- `tests/closures_frontend.rs`: 37 tests, including original owner/variable/type/read-only
+  provenance through nested range/array captures, canonical transitive dependencies,
+  shadowing and all six write forms rejected even when skipped/unreachable.
+- `tests/closures_lowering.rs`: 51 tests, including independent decoding of the complete
+  integrated 19-function signature/helper order, capture-before-context slots,
+  direct call targets, creator/helper local separation and source order despite
+  inference dependencies. Both iteration nesting directions receive forged metadata
+  and unreachable-write checks. Existing tests cover sparse IDs, host snapshots/import
+  order, external eligibility, memory exports/collisions, context-free memory omission,
+  no tables/indirect calls/helper exports and all-body checking.
+- `tests/closures_runtime.rs`: 27 ignored-by-default tests. New scenarios compose
+  nested range/array iteration captures, intermediate helpers, transitive original
+  live environments, all five scalar/indexed compounds and RHS array rebinding with
+  named/default calls, contracts, pipelines and matches. Literal expected events and
+  results supplement Wasm validation at all four optimization levels. Existing #34
+  recursion/reentry/trap/retained-handle/growth tests ran as part of the release.
+- `tests/closures_adapters.rs`: 7 tests, 4 ignored by default. CLI bytes/WAT match
+  library output and freshly rebuilt browser output across optimization/export
+  selections. The integrated range/array/dependency/indexed-rebinding scenario
+  executes repeatedly in CLI output and in browser-compiled Wasm, yielding `373`
+  and events `[19, 111, 111, 113]`. Nested read-only errors preserve variants/reasons
+  and independently located byte spans with Unicode, comments, tabs and CRLF.
+  A literal EOF error span `48..48` additionally checks native/browser rendering,
+  CLI exit `1`, unchanged destinations and no temporary artifacts. Existing lifetime
+  adapter execution also passed. Bounded subprocesses do not provide guest fuel,
+  process-tree cancellation or transactional rollback.
+- The complete default and include-ignored suites preserve ordinary features,
+  compatibility fixtures, export selection, host integration and option parity.
+  No fixtures were regenerated and no dependencies or tooling were installed.
+
+### Prerequisites and exact validation commands
+
+Windows native target `x86_64-pc-windows-msvc`; Node.js `v24.12.0`, cargo
+`1.98.0 (797e8a9bc 2026-08-05)`, rustc `1.98.0 (88d9e12ae 2026-08-18)`,
+wasm-pack `0.15.0`, installed `wasm32-unknown-unknown`, and cached Rust dependencies
+were available. `wasm-bindgen` was not on PATH; wasm-pack's existing local cache
+contained compatible `0.2.129` (also `0.2.128`). The offline/no-install rebuild
+succeeded; its progress text still said `Installing wasm-bindgen`, not evidence of
+an actual installation. No missing prerequisite or unrelated test failure blocked
+release. Initial adapter test authoring exposed a private-Span-field pattern and
+an incorrect hand-added expected sum (`473` rather than `373`); both test mistakes
+were corrected without changing production behavior.
+
+All commands below ran from the repository root, with bounded execution:
+
+| Exact command | Result |
+| --- | --- |
+| `cargo check --offline --all-targets` | Passed before and after integration |
+| `cargo test --offline --test closures_lowering nested_iteration` | Passed, 3 integrated tests |
+| `cargo test --offline --test closures_lowering` | Passed, 51 tests |
+| `cargo test --offline --test closures_adapters -- --include-ignored` | Passed, 7 tests |
+| `wasm-pack build browser --target web --out-dir ../pkg --out-name was_compiler --mode no-install --no-opt --offline` | Passed; current-source package rebuilt before browser/full ignored tests |
+| `node tests/browser.cjs pkg` | Passed, 25 tests |
+| `cargo test --offline --test closures_frontend --test closures_lowering --test closures_runtime --test closures_adapters -- --include-ignored` | Passed: 37 frontend, 51 lowering, 27 runtime, 7 adapter tests |
+| `cargo test --offline` | Passed complete default suite; runtime/browser ignore policy retained |
+| `cargo test --offline -- --include-ignored` | Passed complete suite, including runtime/browser coverage |
+| `cargo clippy --offline --all-targets -- -D warnings` | Passed |
+| `cargo clippy --offline -p was-compiler-browser --target wasm32-unknown-unknown --lib -- -D warnings` | Passed |
+| `rustfmt --edition 2024 --config skip_children=true tests/closures_frontend.rs tests/closures_lowering.rs tests/closures_runtime.rs tests/closures_adapters.rs` | Passed; edited files only |
+| `git --no-pager diff --check` | Passed; only Git LF/CRLF notices |
+
+Independent standards review found no documented-standard breaches and one optional
+low-priority repeated-switch smell in a new forged-metadata test. Its diagnostic
+reason and expected origin now come from one local match; the three integrated
+lowering tests and targeted Clippy passed again. Independent spec review found no
+missing requirement, wrong behavior or scope creep and reran integrated cases and
+all seven adapter tests successfully. The standards reviewer independently reran
+all 122 closure tests with ignored cases included. Review used the pre-task commit
+`96f5bf27a6bf9d8f37406a18a8129b34133bcea0` against the working tree.
+After the review adjustment, both full Cargo suites and both Clippy gates passed
+again. Final documentation checks resolved 499 local link paths and all 44 #35
+release-anchor references; whitespace/status review passed.
+
 ## Issue #33 validation (2026-10-15)
 
 Validation passed for #33's read-only range/array iteration-capture subset, as
@@ -283,9 +371,10 @@ include-ignored rerun passed after the strengthened lowering assertions and
 all-five-compound forged-write checks. Runtime/browser tests retain their
 ignored-by-default policy.
 
-This validates #33's read-only iteration-capture subset. Combined nested/transitive
-iteration-capture convergence and full WP11 release remain deferred. Earlier issue
-records below retain their historical scope.
+This validated #33's read-only iteration-capture subset. At that checkpoint,
+combined nested/transitive iteration-capture convergence and full WP11 release
+remained deferred; #35's later release record above supersedes that status.
+Earlier issue records below retain their historical scope.
 
 ## Issue #32 validation (2026-10-14)
 

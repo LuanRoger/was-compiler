@@ -19,3 +19,23 @@ proofs. Layouts are backend-private, not a public runtime callable ABI.
 These architecture decisions and final shared understanding were confirmed on
 2026-10-14; WP11 remains proposed. This ADR does not authorize implementation or
 claim release validation. The completed handoff records the accepted contract.
+
+## Status update — 2026-10-15
+
+WP11 is now implemented; full native/browser
+[release gates passed under #35](../local-callable-interface.md#issue-35-wp11-release-validation-2026-10-15)
+on 2026-10-15. This supersedes the proposed implementation status recorded above,
+not the accepted ownership/storage decision or the historical scope of earlier
+subset validation.
+
+Nested read-only range/array captures retain original binding identity, mutability
+and shared cells through intermediate helpers. Transitive lexical callable
+dependencies retain original live environments. These paths compose with captured
+numeric compounds and distinct recursive/reentrant invocation contexts; traps
+preserve completed effects and persistent array/string handles. The existing
+uniform eight-byte layout and monotonic allocation policy remain unchanged.
+
+This release adds no immediate invocation, first-class callable values, callable
+pipeline stages, reclamation or heap rewind. WP12 remains deferred and unauthorized;
+WP13 optimization requires separate authorization. The original rationale for
+shared cells, private environments and deferred reclamation still applies.

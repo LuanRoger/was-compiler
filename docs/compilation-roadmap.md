@@ -88,8 +88,10 @@ before #31; [#31 validation passed](local-callable-interface.md#issue-31-validat
 #32 adds nested parameter/let forwarding and live callable contexts (validation passed).
 #33 implements [read-only iteration captures](local-callable-interface.md#implemented-read-only-iteration-captures-33),
 with [validation passed](local-callable-interface.md#issue-33-validation-2026-10-15).
-Combined nested/transitive iteration-capture convergence and full WP11 release remain deferred. WP12 and WP13 are
-separately scoped. See [the local callable interface](local-callable-interface.md). See
+Nested read-only range/array captures and transitive live callable contexts compose
+with captured compounds and invocation-local lifetime behavior (#34). WP11 is
+implemented; full native/browser [release gates passed on 2026-10-15](local-callable-interface.md#issue-35-wp11-release-validation-2026-10-15)
+under #35. WP12 remains deferred and WP13 requires separate authorization. See [the local callable interface](local-callable-interface.md). See
 [the #14 inference contract](result-inference-development.md#issue-14-acyclic-chains-and-diamonds). See the
 [interface gate](named-call-interface.md) and [handoff](wp6-wp7-development.md).
 
@@ -120,7 +122,7 @@ The compiler emits bytes. The embedding application decides whether to write a
 | `src/codegen/match_.rs` | Private checked match lowering with a cached scrutinee, scoped arms and ordered comparison regions. |
 | `tests/match_frontend.rs`, `tests/match_lowering.rs` | Match frontend/inference and forged-tree/decoded lowering contracts. |
 | `src/codegen/abi.rs` | Internal language-type → Wasm-type mapping and signatures, separate from external eligibility checks for every host snapshot and selected user exports. |
-| `src/semantic/closures.rs` | Lexical bindings, immediate-creator captures, independent closure result/control contexts, and context-free callable dependencies. |
+| `src/semantic/closures.rs` | Lexical bindings, nested shared/read-only captures, independent closure result/control contexts, and transitive callable dependencies. |
 | `src/codegen/closures.rs` | Borrowed helper-body owners and source-preorder identity/ownership discovery. |
 | `src/codegen/layout.rs` | Deduplicate signatures, assign indices, and build the complete typed callee table before body emission. |
 | `src/codegen/validation.rs` | Borrow the typed AST, complete layout and existing body checks in diagnostic order, and retain checked bodies behind a private construction boundary. |
@@ -187,17 +189,22 @@ they explicitly update the corresponding metadata and references.
   scratch and control contexts are planned independently of their creator. Module
   discovery enters closure bodies, while owner-local planning excludes nested
   bodies. Dedicated `CallableId`s are not public user-function IDs or exports.
-  #30 adds owner-qualified `TypedExprKind::Captured` reads/places and canonical
-  original owner/declaration metadata for immediate-creator parameters/ordinary lets
-  of all concrete types; creator `Identifier` accesses use promoted storage.
+  Owner-qualified `TypedExprKind::Captured` reads/places retain canonical original
+  owner/declaration metadata for ancestor parameters/ordinary lets of all concrete
+  types and read-only range/array iteration bindings. Nested forwarding preserves
+  original cells and transitive live callable contexts; creator `Identifier`
+  accesses use promoted storage.
   Captured parameter cells allocate in formal order after validation/contracts,
   captured let cells after completing initialization, and nonempty environments
-  only at executed declarations. Capturing helpers have a hidden first `i32`;
+  only at executed declarations. Each successful captured iteration yield allocates
+  a fresh cell before the body. Helpers requiring captures or callable contexts
+  have a hidden first `i32`;
   context-free helpers retain no environment argument/allocation. See
   [private uniform eight-byte storage and monotonic lifetime rules](memory-abi.md#private-closure-storage-30).
 - Type indices are separate from function indices. Identical signatures share
   one Type-section entry, including signatures shared by hosts and users.
-- `VariableId` is function-local. The local layout places parameters first, then
+- `VariableId` is owner-local (named function or closure). Capture identity also
+  includes the original `BindingOwner`. The local layout places parameters first, then
   declarations in traversal order, including nested blocks. Each resolved ID maps
   explicitly to one dense Wasm slot; names and sparse IDs do not affect the slot.
   Shadowed bindings get distinct slots, and IDs are never looked up across functions.
@@ -838,7 +845,9 @@ are implemented (#27), with [release validation passed](was_language_extensions_
 WP11's #29–#33 subsets implement local callables, shared parameter/let captures,
 captured numeric compounds, nested parameter/let and live callable-context forwarding,
 and read-only iteration captures ([#33 validation passed](local-callable-interface.md#issue-33-validation-2026-10-15)).
-Combined nested/transitive iteration-capture convergence, full WP11 release and WP12 remain deferred.
+Nested read-only range/array captures and transitive contexts are supported;
+full WP11 [release gates passed on 2026-10-15](local-callable-interface.md#issue-35-wp11-release-validation-2026-10-15)
+under #35. WP12 remains deferred.
 [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14)
 before #31; [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14). WP13 requires separate authorization.
 External range signatures, range equality, and allocation-free range optimization
@@ -879,7 +888,9 @@ WP9 match is implemented as described below; WP10 named-only pipelines are
 implemented with [#27 release validation passed](was_language_extensions_plan.md#wp10-release-validation).
 WP11's #29–#33 subsets are implemented ([#33 validation passed](local-callable-interface.md#issue-33-validation-2026-10-15));
 [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14).
-Full WP11 release and WP12 placeholders remain deferred. Optional refinement/check elimination belongs to
+Full WP11 [release gates passed on 2026-10-15](local-callable-interface.md#issue-35-wp11-release-validation-2026-10-15)
+under #35; WP12 placeholders remain
+deferred. Optional refinement/check elimination belongs to
 separately authorized future optimization.
 
 ## Implemented language extension: match statements/values (WP9)
@@ -972,7 +983,50 @@ bindings. The plan's
 [#26](was_language_extensions_plan.md#issue-26-subset-validation-2026-10-14) records
 are historical subset validation, not final-Void release evidence. WP11's #29–#33
 subsets are implemented ([#33 validation passed](local-callable-interface.md#issue-33-validation-2026-10-15)); [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14).
-Full WP11 release and WP12 remain deferred, and WP13 requires separate authorization.
+Full WP11 [release gates passed on 2026-10-15](local-callable-interface.md#issue-35-wp11-release-validation-2026-10-15)
+under #35; WP12 remains deferred,
+and WP13 requires separate authorization.
+
+## Implemented language extension: local callables and shared captures (WP11)
+
+Local lambda declarations and direct positional lexical calls support typed
+parameters, inferred concrete results, and independent return/loop contexts.
+Ancestor parameters/ordinary lets share original typed mutable cells; nested helpers
+forward those cells, including descendant-only requirements. Earlier visible local
+callable dependencies transitively forward their original live environments.
+Read-only range/array iteration captures use the same nested forwarding path,
+preserving original provenance and mutability. Each successful captured yield gets
+a fresh cell before the body; skipped declarations still cause eager promotion,
+while empty/exhausted/failed yields allocate none. Mutable shadowing lets are distinct.
+
+Captured scalar/indexed compounds and creator-side promoted places preserve the
+checked target and old value before RHS effects, including array rebinding, calls
+and memory growth. Ordinary indexed assignment retains its checked pre-RHS address.
+Backend metadata checks independently retain original ownership, type/mutability,
+canonical ordering, initialization and lexical availability for forged typed input.
+
+Helpers are borrowed, checked/cached, private direct functions after runtime helpers.
+Context-free declarations add no callable-only memory or hidden parameter; captures
+or context-requiring dependencies use a hidden first `i32` environment argument.
+Uniform eight-byte cells/slots use monotonic allocation, without reclamation, heap
+rewind or rollback. Recursive/reentrant invocations have distinct live contexts;
+completed effects and persistent array/string handles survive traps and later calls.
+Hosts refresh views after possible memory growth. See [the capture and lifetime
+contracts](local-callable-interface.md) and [private storage](memory-abi.md#private-closure-storage-30).
+
+WP11 is implemented; issue #35 completes native/browser convergence, with
+[release gates passed on 2026-10-15](local-callable-interface.md#issue-35-wp11-release-validation-2026-10-15).
+Validation includes the all-target check, current-source browser rebuild and tests,
+full default/include-ignored suites, and all-target/browser-target Clippy with
+warnings denied. Focused coverage passed: 37 frontend, 51 lowering, 27 runtime and
+7 adapter tests. Integrated browser cases cover nested range/array read-only
+captures and transitive contexts, indexed rebinding, and EOF literal spans with
+Unicode/comments/tabs/CRLF. Historical #29–#34 records retain their original scope.
+
+WP11 excludes immediate invocation, first-class callable values, aliases, callable
+arguments/results/storage/imports/exports, closure defaults/contracts/result
+annotations, and self/forward closure hoisting. WP12 placeholders/callable pipeline
+stages and separately authorized WP13 optimization remain outside this package.
 
 ## Remaining work
 

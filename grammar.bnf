@@ -302,15 +302,23 @@
 
 <lambda_parameter> ::= <identifier> <ws> ":" <ws> <type>
 
-# Issue #29 accepts capture-free lambdas only as unannotated local initializers.
+# WP11 accepts lambdas only as unannotated local callable initializers.
 # Parentheses are transparent; invocation is identifier-led and positional only.
 # Callable bindings cannot be values, aliases, assignment targets or pipeline stages.
 # Parameters and loop/return contexts belong to the lambda, not its creator.
-# Reading/writing outer value bindings is rejected: capturing outer bindings is
-# not supported in this subset. Earlier context-free callable dependencies work.
+# Ancestor parameters/ordinary lets share original typed mutable bindings, including
+# ordinary and numeric compound writes. Range/array for bindings remain read-only,
+# including through nested helpers; ordinary/all compound writes are rejected even
+# when skipped/unreachable. Each yielded captured iteration binding gets a fresh cell.
+# Nested captures forward original cells; earlier visible callable dependencies
+# forward their live contexts transitively, without callable values or self/forward hoisting.
 # A bare final loop in a lambda's braced body remains a statement loop, so
 # () => { loop {} } has a Void signature; parenthesize a value-loop tail there.
 # No result annotations, defaults, contracts or immediate invocation are added.
+# No first-class callables, placeholder/callable pipeline stages (WP12), reclamation
+# or optimization (WP13) are added. WP11 is implemented; release gates passed on
+# 2026-10-15. Evidence:
+# docs/local-callable-interface.md#issue-35-wp11-release-validation-2026-10-15.
 
 <argument_list> ::= <argument>
                     ( <ws> "," <ws> <argument> )*

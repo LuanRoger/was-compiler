@@ -219,6 +219,444 @@ fn recursive_contexts_keep_local_environment_pointers_and_only_allocator_writes_
 }
 
 #[test]
+fn nested_iteration_convergence_preserves_cells_contexts_and_full_module_order() {
+    use wasmparser::ValType::{F64, I32};
+
+    // main depends on later's inferred result, but its helpers must still come first.
+    let source = r#"
+        fn main() {
+            for x in 1..3 {
+                for y in [1, 2] {
+                    let first = () => x;
+                    let bridge = () => first();
+                    let outer = () => {
+                        let middle = () => {
+                            let leaf = () => if y in 0..3 {
+                                x + y + bridge() + 7 % 2
+                            } else { 0 };
+                            leaf()
+                        };
+                        middle()
+                    };
+                    outer();
+                }
+            }
+            return later();
+        }
+        fn later() { let marker = () => 91; return marker(); }
+    "#;
+    let compiler = Compiler::new();
+    let bytes = compiler.compile_source(source).unwrap();
+    assert_eq!(compiler.compile_source(source).unwrap(), bytes);
+    assert_eq!(
+        compiler
+            .compile(&compiler.analyze(source).unwrap())
+            .unwrap(),
+        bytes
+    );
+    Validator::new().validate_all(&bytes).unwrap();
+
+    let mut types = vec![];
+    let mut functions = vec![];
+    let mut bodies = vec![];
+    for payload in Parser::new(0).parse_all(&bytes) {
+        match payload.unwrap() {
+            Payload::TypeSection(section) => {
+                types.extend(section.into_iter_err_on_gc_types().map(Result::unwrap));
+            }
+            Payload::FunctionSection(section) => {
+                functions.extend(section.into_iter().map(Result::unwrap));
+            }
+            Payload::CodeSectionEntry(body) => bodies.push(body),
+            _ => {}
+        }
+    }
+    // Two source functions; all seven memory helpers; remainder; Construct,
+    // Validate, Contains; then first/bridge/outer/middle/leaf/marker in preorder.
+    let signatures = [
+        (vec![], vec![F64]),
+        (vec![], vec![F64]),
+        (vec![I32], vec![I32]),
+        (vec![I32], vec![I32]),
+        (vec![I32], vec![I32]),
+        (vec![I32, F64], vec![I32]),
+        (vec![I32], vec![F64]),
+        (vec![I32, I32], vec![I32]),
+        (vec![I32, I32], vec![I32]),
+        (vec![F64, F64], vec![F64]),
+        (vec![F64, F64, F64, I32], vec![I32]),
+        (vec![I32], vec![I32]),
+        (vec![F64, I32], vec![I32]),
+        (vec![I32], vec![F64]),
+        (vec![I32], vec![F64]),
+        (vec![I32], vec![F64]),
+        (vec![I32], vec![F64]),
+        (vec![I32], vec![F64]),
+        (vec![], vec![F64]),
+    ];
+    assert_eq!(functions.len(), 19);
+    assert_eq!(bodies.len(), 19);
+    for (index, (params, results)) in signatures.iter().enumerate() {
+        let signature = &types[functions[index] as usize];
+        assert_eq!(signature.params(), params, "function {index}");
+        assert_eq!(signature.results(), results, "function {index}");
+    }
+    let calls = |index| {
+        operators(&bytes, index)
+            .iter()
+            .filter_map(|op| match op {
+                Operator::Call { function_index } => Some(*function_index),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    // Exact call lists distinguish same-signature runtime helpers, not just valid Wasm.
+    for (index, expected) in [
+        (2, vec![]),
+        (3, vec![]),
+        (4, vec![]),
+        (5, vec![4]),
+        (6, vec![4]),
+        (7, vec![3, 3]),
+        (8, vec![4, 4]),
+        (9, vec![]),
+        (10, vec![2]),
+        (11, vec![]),
+        (12, vec![11]),
+        (13, vec![]),
+        (14, vec![13]),
+        (15, vec![2, 16]),
+        (16, vec![2, 17]),
+        (17, vec![10, 12, 14, 9]),
+        (18, vec![]),
+        (1, vec![18]),
+    ] {
+        assert_eq!(calls(index), expected, "body {index}");
+    }
+    assert_eq!(calls(0), [10, 11, 2, 2, 4, 5, 2, 2, 2, 2, 15, 1]);
+    assert!(
+        matches!(operators(&bytes, 18)[0], Operator::F64Const { value } if value.bits() == 0x4056_c000_0000_0000)
+    );
+
+    let creator = operators(&bytes, 0);
+    let allocations: Vec<_> = creator
+        .iter()
+        .enumerate()
+        .filter_map(|(i, op)| matches!(op, Operator::Call { function_index: 2 }).then_some(i))
+        .collect();
+    let sizes: Vec<_> = allocations
+        .iter()
+        .map(|&i| match creator[i - 1] {
+            Operator::I32Const { value } => value,
+            _ => panic!("literal cell/environment/array allocation size"),
+        })
+        .collect();
+    assert_eq!(sizes, [8, 24, 8, 8, 8, 24]);
+    let allocation_local = |at| match creator[allocations[at] + 1] {
+        Operator::LocalSet { local_index } | Operator::LocalTee { local_index } => local_index,
+        _ => panic!("invocation-local allocation pointer"),
+    };
+    let x = allocation_local(0);
+    let y = allocation_local(2);
+    let first = allocation_local(3);
+    let bridge = allocation_local(4);
+    let outer = allocation_local(5);
+    // The original yield cells go into both first and outer, never copied values.
+    for (environment, pointer, offset) in [
+        (first, x, 0),
+        (bridge, first, 0),
+        (outer, x, 0),
+        (outer, y, 8),
+        (outer, bridge, 16),
+    ] {
+        assert!(creator.windows(3).any(|ops| matches!(ops,
+            [Operator::LocalGet { local_index: dest }, Operator::LocalGet { local_index: src },
+             Operator::I32Store { memarg }]
+            if *dest == environment && *src == pointer && memarg.offset == offset)));
+    }
+    // Both intermediate helpers allocate only the descendant environment and
+    // forward original cell/context pointers in capture-before-context order.
+    for index in [15, 16] {
+        let ops = operators(&bytes, index);
+        assert!(matches!(ops[0], Operator::I32Const { value: 24 }));
+        let forwarded: Vec<_> = ops
+            .windows(3)
+            .filter_map(|ops| match ops {
+                [
+                    Operator::LocalGet { local_index: 0 },
+                    Operator::I32Load { memarg: load },
+                    Operator::I32Store { memarg: store },
+                ] => Some((load.offset, store.offset)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(forwarded, [(0, 0), (8, 8), (16, 16)]);
+        assert!(!ops.iter().any(|op| matches!(op, Operator::F64Store { .. })));
+        // Hidden environment is parameter 0; only the new environment is local 1.
+        assert_eq!(
+            bodies[index]
+                .get_locals_reader()
+                .unwrap()
+                .into_iter()
+                .map(Result::unwrap)
+                .collect::<Vec<_>>(),
+            [(1, I32)]
+        );
+    }
+    let leaf = operators(&bytes, 17);
+    for offset in [0, 8] {
+        assert!(leaf.windows(3).any(|ops| matches!(ops,
+            [Operator::LocalGet { local_index: 0 }, Operator::I32Load { memarg },
+             Operator::F64Load { .. }] if memarg.offset == offset)));
+    }
+    assert!(leaf.windows(3).any(|ops| matches!(ops,
+        [Operator::LocalGet { local_index: 0 }, Operator::I32Load { memarg },
+         Operator::Call { function_index: 14 }] if memarg.offset == 16)));
+    for index in [1, 13, 14, 17, 18] {
+        assert_eq!(bodies[index].get_locals_reader().unwrap().get_count(), 0);
+    }
+}
+
+fn nested_iteration_fixture(outer_iterable: &str, inner_iterable: &str) -> TypedProgram {
+    Compiler::new()
+        .analyze(&format!(
+            "fn main() {{
+                for x in {outer_iterable} {{
+                    let earlier = () => x;
+                    let outer = () => {{
+                        for y in {inner_iterable} {{
+                            let middle = () => {{
+                                let leaf = () => x + y + earlier();
+                                leaf()
+                            }};
+                            middle();
+                        }}
+                        0
+                    }};
+                    outer();
+                }}
+            }}"
+        ))
+        .unwrap()
+}
+
+#[test]
+fn nested_iteration_metadata_checks_original_owners_at_every_forwarding_boundary() {
+    for (outer_iterable, inner_iterable) in [("1..3", "[1, 2]"), ("[1, 2]", "1..3")] {
+        let original = nested_iteration_fixture(outer_iterable, inner_iterable);
+        Validator::new()
+            .validate_all(&Compiler::new().compile(&original).unwrap())
+            .unwrap();
+        for mutation in 0..14 {
+            let mut forged = original.clone();
+            let TypedStatementKind::For { body, .. } = &mut forged.functions[0].body[0].kind else {
+                panic!();
+            };
+            let TypedStatementKind::Closure(outer) = &mut body[1].kind else {
+                panic!();
+            };
+            let TypedClosureBody::Block(outer_body) = &mut outer.body else {
+                panic!();
+            };
+            let TypedStatementKind::For { body, .. } = &mut outer_body.statements[0].kind else {
+                panic!();
+            };
+            let TypedStatementKind::Closure(middle) = &mut body[0].kind else {
+                panic!();
+            };
+            let TypedClosureBody::Block(middle_body) = &mut middle.body else {
+                panic!();
+            };
+            let TypedStatementKind::Closure(leaf) = &mut middle_body.statements[0].kind else {
+                panic!();
+            };
+            // x and y have the same owner-local ID; their owners, not that ID,
+            // distinguish the two original read-only iteration bindings.
+            assert_eq!(middle.captures[0].variable, middle.captures[1].variable);
+            assert_ne!(middle.captures[0].owner, middle.captures[1].owner);
+            // Missing inherited requirements fail when the child is declared;
+            // unused extra requirements fail when the parent's body completes.
+            let (reason, origin) = match mutation {
+                0 => {
+                    outer.captures.clear();
+                    ("invalid capture metadata", middle.span)
+                }
+                1 => {
+                    outer.captures[0].mutability = CaptureMutability::Mutable;
+                    ("invalid capture metadata", outer.span)
+                }
+                2 => {
+                    middle.captures.remove(0);
+                    ("invalid capture metadata", outer.span)
+                }
+                3 => {
+                    middle.captures[1].mutability = CaptureMutability::Mutable;
+                    ("invalid capture metadata", middle.span)
+                }
+                4 => {
+                    leaf.captures[0].mutability = CaptureMutability::Mutable;
+                    ("invalid capture metadata", leaf.span)
+                }
+                5 => {
+                    leaf.captures.remove(1);
+                    ("invalid capture metadata", middle.span)
+                }
+                6 => {
+                    // A real binding with the same numeric ID is not a substitute.
+                    leaf.captures[0].owner = leaf.captures[1].owner;
+                    ("invalid capture metadata", leaf.span)
+                }
+                7 => {
+                    leaf.captures.swap(0, 1);
+                    ("invalid capture metadata", leaf.span)
+                }
+                8 => {
+                    middle.captures.push(middle.captures[1].clone());
+                    ("invalid capture metadata", middle.span)
+                }
+                9 => {
+                    outer.dependencies.clear();
+                    ("invalid callable dependency", outer.span)
+                }
+                10 => {
+                    middle.dependencies.clear();
+                    ("invalid callable dependency", outer.span)
+                }
+                11 => {
+                    leaf.dependencies.clear();
+                    ("invalid callable dependency", middle.span)
+                }
+                12 => {
+                    let origin = middle.span;
+                    // Keep the binding's identity/type/initialization, but replace
+                    // its original iteration provenance with an ordinary mutable let.
+                    let TypedStatementKind::For {
+                        variable,
+                        name,
+                        body,
+                        ..
+                    } = outer_body.statements.remove(0).kind
+                    else {
+                        panic!();
+                    };
+                    outer_body
+                        .statements
+                        .push(statement(TypedStatementKind::Let {
+                            id: variable,
+                            name,
+                            ty: Type::Number,
+                            value: number("1"),
+                        }));
+                    outer_body.statements.extend(body);
+                    ("invalid capture metadata", origin)
+                }
+                13 => {
+                    let origin = middle.span;
+                    // The original binding still exists, but its iteration scope
+                    // has ended before this descendant-requiring declaration.
+                    let declarations_and_calls = std::mem::take(body);
+                    outer_body.statements.extend(declarations_and_calls);
+                    ("invalid capture metadata", origin)
+                }
+                _ => unreachable!(),
+            };
+            let error = Compiler::new().compile(&forged).unwrap_err();
+            assert!(
+                matches!(&error,
+                CodegenError::InvalidClosure { reason: actual, span }
+                if *actual == reason && *span == origin),
+                "mutation {mutation}: {error:?}; expected {reason} at {origin:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn nested_iteration_original_provenance_rejects_writes_in_unreachable_leaf_bodies() {
+    use was_compiler::ast::BinaryOp;
+
+    for (outer_iterable, inner_iterable) in [("1..3", "[1, 2]"), ("[1, 2]", "1..3")] {
+        let original = nested_iteration_fixture(outer_iterable, inner_iterable);
+        for captured_index in [0, 1] {
+            for compound in [
+                None,
+                Some(BinaryOp::Add),
+                Some(BinaryOp::Subtract),
+                Some(BinaryOp::Multiply),
+                Some(BinaryOp::Divide),
+                Some(BinaryOp::Remainder),
+            ] {
+                let mut forged = original.clone();
+                let TypedStatementKind::For { body, .. } = &mut forged.functions[0].body[0].kind
+                else {
+                    panic!();
+                };
+                let TypedStatementKind::Closure(outer) = &mut body[1].kind else {
+                    panic!();
+                };
+                let TypedClosureBody::Block(outer_body) = &mut outer.body else {
+                    panic!();
+                };
+                let TypedStatementKind::For { body, .. } = &mut outer_body.statements[0].kind
+                else {
+                    panic!();
+                };
+                let TypedStatementKind::Closure(middle) = &mut body[0].kind else {
+                    panic!();
+                };
+                let TypedClosureBody::Block(middle_body) = &mut middle.body else {
+                    panic!();
+                };
+                let TypedStatementKind::Closure(leaf) = &mut middle_body.statements[0].kind else {
+                    panic!();
+                };
+                let capture = &leaf.captures[captured_index];
+                let id = capture.variable;
+                let target = TypedExpr {
+                    kind: TypedExprKind::Captured {
+                        owner: capture.owner,
+                        id,
+                        name: if captured_index == 0 { "x" } else { "y" }.into(),
+                    },
+                    ty: Type::Number.into(),
+                };
+                let write = statement(if let Some(op) = compound {
+                    TypedStatementKind::CompoundAssignment {
+                        target,
+                        op,
+                        value: number("1"),
+                    }
+                } else {
+                    TypedStatementKind::Assignment {
+                        target,
+                        value: number("1"),
+                    }
+                });
+                // Retain the original expression to keep both capture and live
+                // dependency requirements complete after replacing the leaf body.
+                let TypedClosureBody::Expression(value) = &leaf.body else {
+                    panic!();
+                };
+                leaf.body = block(
+                    vec![
+                        statement(TypedStatementKind::Return(Some(value.as_ref().clone()))),
+                        write,
+                    ],
+                    None,
+                );
+                let error = Compiler::new().compile(&forged).unwrap_err();
+                assert!(
+                    matches!(error,
+                    CodegenError::ReadOnlyVariable { id: actual, span: actual_span, .. }
+                    if actual == id && actual_span == span()),
+                    "{error:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn iteration_cells_allocate_inside_the_yield_region_before_the_body() {
     for iterable in ["1..3", "[1, 2]"] {
         let source = format!(

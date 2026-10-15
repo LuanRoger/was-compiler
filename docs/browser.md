@@ -277,14 +277,18 @@ on 2026-10-14. WP11 implements capture-free local callables (#29) and
 immediate-creator shared parameter/let captures (#30), plus captured numeric
 compounds (#31). #32 adds nested parameter/let forwarding and live callable contexts;
 #33 adds read-only iteration captures, with [validation passed](local-callable-interface.md#issue-33-validation-2026-10-15).
-Combined nested/transitive iteration-capture convergence, full WP11 release and WP12 placeholders remain deferred. WP13 optimization requires separate
+Nested read-only range/array captures and transitive live callable contexts compose
+with captured compounds and invocation-local lifetime behavior. WP11 is implemented;
+full native/browser [release gates passed on 2026-10-15](local-callable-interface.md#issue-35-wp11-release-validation-2026-10-15)
+under #35. WP12 placeholders and
+callable pipeline stages remain deferred; WP13 optimization requires separate
 authorization. [#30 validation passed](local-callable-interface.md#issue-30-validation-2026-10-14),
 including rebuilt-browser coverage at the #30 checkpoint, before #31.
 [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14). Rebuild `pkg/` after future
 core changes before browser validation.
 
 The shared core accepts `let twice = (x: number) => x * 2;` and direct positional
-lexical calls, plus shared captures of immediate-creator parameters/ordinary lets
+lexical calls, plus shared captures of ancestor parameters/ordinary lets
 of type `number`, `bool`, `string`, `number[]` or `range`. Captured reassignment and
 ordinary indexed array mutation preserve original bindings and alias semantics.
 #32 forwards original ancestor parameter/let cells and earlier live callable
@@ -294,11 +298,13 @@ binding receives a fresh eight-byte cell before the body, even if the capturing
 declaration is skipped; empty/exhausted/failed yields allocate no cell. Environments
 allocate only at executed declarations; cells are monotonic, never reused/reclaimed.
 See [the #33 contract](local-callable-interface.md#implemented-read-only-iteration-captures-33).
-Combined nested/transitive iteration-capture convergence remains deferred. #31 adds all five numeric compounds on captured scalar/indexed
+Nested helpers forward the original read-only iteration cell; transitive dependencies
+retain its live callable environment. Mutable shadowing lets remain distinct.
+#31 adds all five numeric compounds on captured scalar/indexed
 places and creator-side promoted bindings, preserving the original checked target
 and old value across RHS effects. Ordinary indexed assignments also preserve
 their pre-RHS checked address.
-See [the subset and public `Captured` AST migration](local-callable-interface.md).
+See [the capture contracts and public `Captured` AST migration](local-callable-interface.md).
 
 Helpers are private, with no callable exports or JavaScript callback ABI.
 Context-free declarations add no environment, hidden argument or callable-only
@@ -316,7 +322,24 @@ browser compiler's own Wasm instance memory. Existing explicit string/array
 marshaling, descriptor obligations and external range restrictions are unchanged.
 Use the separate [#30 browser/runtime evidence](local-callable-interface.md#issue-30-validation-2026-10-14)
 for the shared-storage checkpoint before #31, not captured compounds. Historical
-#29 results cover only capture-free callables; full WP11 release remains deferred.
+#29 results cover only capture-free callables. Full WP11
+[release gates passed on 2026-10-15](local-callable-interface.md#issue-35-wp11-release-validation-2026-10-15)
+under #35, including freshly rebuilt browser bindings, the full ignored suite and
+browser-target Clippy. Integrated browser coverage includes nested read-only
+range/array captures, transitive live contexts, indexed rebinding and EOF literal
+spans with Unicode, comments, tabs and CRLF. Earlier records retain their historical
+scope.
+
+Recursive creators and synchronous host reentry use distinct invocation-local cells
+and environments. Traps retain completed effects and successful allocations; retained
+array/string offsets remain valid under the existing host contract. Refresh views
+also after possible growth during host reentry. See [the #34 lifetime coverage](local-callable-interface.md#capture-lifetime-across-recursion-reentry-and-traps-34).
+No reclamation or heap rewind is added.
+
+Callables are local lexical names, not first-class values: aliasing, reassignment,
+passing/returning them, immediate invocation and callable pipeline stages remain
+unsupported. Closure defaults/contracts/result annotations remain unsupported;
+WP12 and WP13 are outside WP11.
 
 ## Named-only pipelines (WP10; release gates passed)
 

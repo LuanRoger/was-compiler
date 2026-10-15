@@ -248,6 +248,126 @@ fn reentrant_live_contexts_and_retained_handles_survive_inner_traps_and_growth()
 
 #[test]
 #[ignore = "requires Node.js on PATH"]
+fn nested_iteration_convergence_keeps_live_dependencies_and_original_compound_places() {
+    for (operator, operand, expected, total, reads, results) in [
+        ("+=", 3, 23, 245, [54, 64, 55, 65], [55, 66, 57, 67]),
+        ("-=", 3, 17, 221, [48, 58, 49, 59], [49, 60, 51, 61]),
+        ("*=", 3, 60, 393, [91, 101, 92, 102], [92, 103, 94, 104]),
+        ("/=", 4, 5, 173, [36, 46, 37, 47], [37, 48, 39, 49]),
+        ("%=", 6, 2, 161, [33, 43, 34, 44], [34, 45, 36, 46]),
+    ] {
+        let source = format!(
+            r#"
+            fn add(value: number, delta: number = 2) -> number
+                requires value > 0 requires delta > 0 {{ return value + delta; }}
+            fn main() -> number[] {{
+                let scalar = 20;
+                let xs = [20];
+                let alias = xs;
+                let items = [3, 4];
+                let total = 0;
+                for r in 1..3 {{
+                    let root = () => {{
+                        for a in items {{
+                            let base = () => mark(a * 10 + r + scalar);
+                            let relay = () => base();
+                            let middle = () => {{
+                                let leaf = () => {{
+                                    scalar = 20;
+                                    scalar {operator} {{ scalar = 100; mark(a); {operand} }};
+                                    xs = alias;
+                                    alias[0] = 20;
+                                    xs[0] {operator} {{
+                                        alias[0] = 100;
+                                        xs = [80];
+                                        mark(r);
+                                        {operand}
+                                    }};
+                                    mark(scalar); mark(alias[0]); mark(xs[0]);
+                                    let result = match a {{
+                                        3 => relay() |> add(delta: r),
+                                        _ => add(value: relay()),
+                                    }};
+                                    total += mark(result);
+                                }};
+                                leaf();
+                            }};
+                            middle();
+                        }}
+                    }};
+                    root();
+                }}
+                return [total, scalar, alias[0], xs[0]];
+            }}
+            "#
+        );
+        run(
+            &source,
+            &["main"],
+            &format!(
+                r#"
+                for (let call = 0; call < 2; call++) {{
+                    assert.deepEqual(contents(e.main()), [{total},{expected},{expected},80]);
+                    assert.deepEqual(events.splice(0), [
+                        3,1,{expected},{expected},80,{read0},{result0},
+                        4,1,{expected},{expected},80,{read1},{result1},
+                        3,2,{expected},{expected},80,{read2},{result2},
+                        4,2,{expected},{expected},80,{read3},{result3}
+                    ]);
+                }}
+                "#,
+                read0 = reads[0],
+                read1 = reads[1],
+                read2 = reads[2],
+                read3 = reads[3],
+                result0 = results[0],
+                result1 = results[1],
+                result2 = results[2],
+                result3 = results[3],
+            ),
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires Node.js on PATH"]
+fn nested_iteration_convergence_dependency_only_helpers_keep_original_live_contexts() {
+    run(
+        r#"
+        fn main() -> number {
+            let total = 0;
+            for r in 2..=3 {
+                for a in [5, 7] {
+                    let base = () => { total += r + a; mark(total) };
+                    let relay = () => base();
+                    let outer = () => {
+                        let r = 100;
+                        let a = 200;
+                        let middle = () => {
+                            let leaf = () => relay();
+                            leaf() + leaf()
+                        };
+                        middle()
+                    };
+                    total += 1;
+                    mark(outer());
+                }
+            }
+            return total;
+        }
+        "#,
+        &["main"],
+        r#"
+        for (let call = 0; call < 2; call++) {
+            assert.equal(e.main(), 72);
+            assert.deepEqual(events.splice(0), [8,15,23,25,34,59,43,51,94,62,72,134]);
+        }
+        "#,
+    );
+}
+
+#[test]
+#[ignore = "requires Node.js on PATH"]
 fn captured_range_iterations_keep_fresh_monotonic_eight_byte_cells() {
     run(
         r#"

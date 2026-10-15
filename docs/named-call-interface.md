@@ -34,8 +34,10 @@ including captured numeric compounds (#31), nested parameter/let and live callab
 forwarding (#32), and [read-only iteration captures (#33)](local-callable-interface.md#implemented-read-only-iteration-captures-33).
 [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14);
 [#33 validation passed](local-callable-interface.md#issue-33-validation-2026-10-15).
-Combined nested/transitive iteration-capture convergence, full WP11 release and WP12 remain deferred; see [the subset interface](local-callable-interface.md)
-for current support and historical #29/#30 evidence. WP13 requires separate
+Nested/transitive read-only iteration captures compose with captured compounds and
+invocation-local lifetimes; [#35 WP11 release gates passed](local-callable-interface.md#issue-35-wp11-release-validation-2026-10-15).
+See [the interface](local-callable-interface.md) for current support and historical
+subset evidence. WP12 remains deferred. WP13 requires separate
 authorization; later packages
 reuse the approved interfaces only after their ordered integration/release gates.
 

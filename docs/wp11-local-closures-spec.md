@@ -1,3 +1,10 @@
+# WP11 implementation specification (historical acceptance contract)
+
+This is the original acceptance contract synthesized for parent #28. Its proposal
+wording below records that point in time, not current support. WP11 is implemented;
+[#35 release gates passed on 2026-10-15](local-callable-interface.md#issue-35-wp11-release-validation-2026-10-15).
+WP12/WP13 remain separately scoped. The parent issue is not changed by this record.
+
 ## Problem Statement
 
 WAS users can organize code into named functions but cannot declare a local helper

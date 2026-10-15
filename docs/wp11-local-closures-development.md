@@ -1,9 +1,9 @@
 # WP11 local closures: design interview
 
-WP11 remains proposed. This document records accepted design-interview decisions;
-it does not authorize implementation or claim release validation. All substantive
-decisions and final shared understanding were confirmed on 2026-10-14. The design
-interview is complete.
+This historical design interview records the accepted decisions confirmed on
+2026-10-14; it did not itself authorize implementation or establish release evidence.
+WP11 is now implemented with [#35 release gates passed on 2026-10-15](local-callable-interface.md#issue-35-wp11-release-validation-2026-10-15).
+The design interview is complete; WP12 and WP13 remain separately scoped.
 
 References: [extension plan](was_language_extensions_plan.md#wp11--local-only-shared-binding-closuresdirect-helpers-spec-10),
 [closure specification](was_language_extensions_spec.md#10-feature-specification-anonymous-functions-and-local-closures),

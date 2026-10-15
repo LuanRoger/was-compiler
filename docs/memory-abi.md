@@ -6,7 +6,7 @@ and registered host-function parameters/results. Language types remain distinct
 in semantic analysis even though both lower to `i32`; descriptors have no runtime
 type tag. Hosts must supply the type declared in their registration.
 
-## Local callable subsets (#29–#33)
+## Local callables and shared captures (WP11)
 
 Context-free helpers use direct calls with only explicit parameters. Their declarations
 allocate no environment or cells and do not execute helper bodies. Ordinary
@@ -15,8 +15,9 @@ helpers and entry validation. #30 adds shared captures of immediate-creator
 parameters and ordinary lets of every concrete type; #31 adds captured numeric
 compounds without changing this storage layout. #32 adds nested original-cell
 forwarding and earlier live callable-context dependency slots;
-[validation passed](local-callable-interface.md#issue-32-validation-2026-10-14). Full WP11 release remains
-deferred. See [the subset interface and public migration](local-callable-interface.md).
+[validation passed](local-callable-interface.md#issue-32-validation-2026-10-14). WP11 is implemented;
+full native/browser [release gates passed on 2026-10-15](local-callable-interface.md#issue-35-wp11-release-validation-2026-10-15)
+under #35. See [the capture contracts and public migration](local-callable-interface.md).
 See [#30 storage/runtime validation](local-callable-interface.md#issue-30-validation-2026-10-14)
 for historical shared-storage evidence before #31; [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14).
 Historical #29 results do not cover shared storage.
@@ -101,8 +102,18 @@ Cells are monotonic, never reused or reclaimed; environments still allocate only
 at executed declarations. Existing loop/control/alias semantics are unchanged.
 See [the #33 contract](local-callable-interface.md#implemented-read-only-iteration-captures-33)
 and [validation passed](local-callable-interface.md#issue-33-validation-2026-10-15).
-Combined nested/transitive iteration-capture convergence and full WP11 release
-remain deferred.
+Nested helpers forward each original read-only iteration cell through every
+intermediate helper, including descendant-only requirements, preserving original
+owner-qualified identity and mutability. Transitive callable dependencies retain
+that iteration's original live environment, not a snapshot or reconstructed context.
+This composes with captured scalar/indexed compounds on mutable bindings and
+invocation-local recursion/reentry/trap lifetimes without changing this layout,
+allocation timing or host contract. Read-only iteration writes remain rejected;
+mutable shadowing lets remain distinct.
+Full WP11 [release gates passed on 2026-10-15](local-callable-interface.md#issue-35-wp11-release-validation-2026-10-15)
+under #35. Earlier subset evidence retains its historical scope; reclamation,
+WP12 placeholders/callable stages and separately authorized WP13 optimization
+remain outside WP11.
 
 ## Descriptor layout
 
