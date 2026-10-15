@@ -1,0 +1,11 @@
+[package]
+name = "was-compiler-downstream-contract"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Exercise a real external consumer, not another member sharing workspace settings.
+[workspace]
+
+[dependencies]
+was-compiler = { path = "../../../crates/compiler" }

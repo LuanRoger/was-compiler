@@ -1,0 +1,17 @@
+[package]
+name = "was-compiler"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+wasm-encoder.workspace = true
+
+[[bench]]
+name = "compiler"
+harness = false
+
+[dev-dependencies]
+divan = "0.1.21"
+wasmparser.workspace = true
+wasmprinter.workspace = true

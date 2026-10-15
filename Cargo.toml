@@ -1,22 +1,15 @@
-[package]
-name = "was-compiler"
+[workspace]
+members = ["crates/compiler", "crates/cli", "crates/browser"]
+default-members = ["crates/compiler", "crates/cli"]
+resolver = "3"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 
-[workspace]
-members = ["browser"]
-default-members = ["."]
-resolver = "3"
-
-[dependencies]
-
+[workspace.dependencies]
+was-compiler = { path = "crates/compiler" }
 thiserror = "2.0.21"
 wasm-encoder = "0.261.0"
-
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-anyhow = "1.0.104"
-clap = { version = "4.5", features = ["derive"] }
 wasmprinter = "0.261.0"
-
-[dev-dependencies]
 wasmparser = { version = "0.261.0", default-features = false, features = ["std", "validate", "features"] }

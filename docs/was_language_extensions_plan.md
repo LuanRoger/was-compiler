@@ -1,5 +1,13 @@
 # WAS language extensions implementation plan
 
+**Workspace relocation (2026-10-15):** Historical evidence below retains the paths
+and commands used at each checkpoint. Current compiler sources are under
+`crates/compiler/src`, CLI sources under `crates/cli/src`, and browser sources
+under `crates/browser/src`. Integration suites now belong to their owning package;
+mixed adapter suites were split. Shared fixtures/support remain at root `tests/`.
+Use [current validation](validation.md) for package selection and rebuild commands;
+[the roadmap](compilation-roadmap.md#structure) lists current source locations.
+
 **Status:** WP1–WP9 implemented; WP5, WP6 (#13), WP7 (#16), and WP8 release gates passed (exact evidence in §5). WP9 frontend/backend are integrated and [release gates passed](#wp9-release-validation). WP10 named-only pipelines, including positional/named/default binding and final-Void discard support (#27), are implemented with [release gates passed](#wp10-release-validation). WP11's local callable (#29), immediate-creator shared parameter/let capture (#30), captured numeric compound (#31), and nested capture/live callable-context forwarding (#32) subsets are implemented in the frontend/backend; [#32 validation passed](local-callable-interface.md#issue-32-validation-2026-10-14); [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14); [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14). #33 implements [read-only iteration captures](local-callable-interface.md#implemented-read-only-iteration-captures-33) ([validation passed](local-callable-interface.md#issue-33-validation-2026-10-15)); nested read-only range/array captures and transitive live callable contexts compose with captured compounds and invocation-local lifetime behavior (#34). WP11 is implemented; full native/browser [release gates passed on 2026-10-15](local-callable-interface.md#issue-35-wp11-release-validation-2026-10-15) under #35. Earlier subset evidence retains its historical scope. WP12 remains deferred and unauthorized; WP13 requires separate authorization.
 **Baseline:** Extension specification v0.3.
 

@@ -8,6 +8,12 @@ are separate commands, and runtime callbacks must be supplied explicitly.
 Run these commands from the repository root. Rust dependencies must already be
 available locally for `--offline`; runtime examples require Node.js.
 
+The native adapter is package `was-compiler-cli` in `crates/cli/`, depending on
+`was-compiler` in `crates/compiler/`. Root `cargo run` still selects the single
+`was-compiler` executable. For local installation use
+`cargo install --offline --path crates/cli`; the virtual root is not installable.
+See [workspace validation and Bacon](validation.md) for development checks.
+
 ## Quick start
 
 Compile the checked-in array example, exporting only `main`:
@@ -142,8 +148,8 @@ including rebuilt-browser and full ignored runtime coverage. See
 [WP8 suites and frozen contracts](was_language_extensions_plan.md#wp8--whitelist-contracts-spec-13).
 WP9 match statements/values are implemented with [release gates passed](was_language_extensions_plan.md#wp9-release-validation),
 including bounded Node execution and current-source rebuilt-browser/full ignored
-validation. `tests/match_runtime.rs` covers effects, first-match overlaps, strings,
-fractional/NaN cases and transfers; `tests/match_adapters.rs` covers native/browser
+validation. `crates/compiler/tests/match_runtime.rs` covers effects, first-match overlaps, strings,
+fractional/NaN cases and transfers; `crates/cli/tests/match_adapters.rs`, `crates/browser/tests/match_adapters.rs` covers native/browser
 compatibility. Node/browser cases retain their default ignored policy. Match uses
 the existing raw ABI and explicit marshaling, with no new host callback or helper
 kind; its scrutinee runs once and only the first matching arm executes. See
@@ -340,10 +346,10 @@ Issue #6 adds adapter/cross-feature coverage, including private host-signature
 rejection and export selection across optimization levels. Range host declarations
 fail with exit status `1` and supported-type guidance; registration failures leave
 existing output files unchanged. Browser validation requires rebuilt bindings.
-`tests/array_for_loops.rs` is the array-for suite; cross-feature execution coverage
+`crates/compiler/tests/array_for_loops.rs` is the array-for suite; cross-feature execution coverage
 is detailed in the [WP5 checkpoint](was_language_extensions_plan.md#wp5--safe-ranges-rangearray-for-membership-spec-56).
-`tests/for_frontend.rs` covers frontend contracts, `tests/for_lowering.rs` covers
-forged input and decoded lowering, and `tests/for_loops.rs` covers deterministic
+`crates/compiler/tests/for_frontend.rs` covers frontend contracts, `crates/compiler/tests/for_lowering.rs` covers
+forged input and decoded lowering, and `crates/compiler/tests/for_loops.rs` covers deterministic
 layout/imports/exports and bounded Node execution at all optimization levels.
 The runtime cases check exact yields/exhaustion, effects, transfers, record validation
 and caching. They are ignored by default; default Cargo success alone does not
