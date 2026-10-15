@@ -66,6 +66,367 @@ fn run(source: &str, selected: &[&str], assertions: &str) {
 
 #[test]
 #[ignore = "requires Node.js on PATH"]
+fn captured_range_iterations_keep_fresh_monotonic_eight_byte_cells() {
+    run(
+        r#"
+        fn main() -> number {
+            let total = 0;
+            for value in 2..5 {
+                let read = () => value;
+                total += read();
+            }
+            return total;
+        }
+        "#,
+        &["main"],
+        r#"
+        const retained = [];
+        for (let call = 0; call < 2; call++) {
+            const before = e.__alloc(8) >>> 0;
+            assert.equal(e.main(), 9);
+            const after = e.__alloc(8) >>> 0;
+            // One 32-byte range record, then three distinct cell/environment pairs.
+            assert.equal(after - before - 8, 80);
+            const cells = [before + 40, before + 56, before + 72];
+            const view = new DataView(e.memory.buffer);
+            assert.deepEqual(cells.map(p => view.getFloat64(p, true)), [2,3,4]);
+            assert.deepEqual(cells.map(p => view.getUint32(p + 8, true)), cells);
+            retained.push(...cells);
+        }
+        const view = new DataView(e.memory.buffer);
+        assert.deepEqual(retained.map(p => view.getFloat64(p, true)), [2,3,4,2,3,4]);
+        assert.equal(new Set(retained).size, 6);
+        "#,
+    );
+}
+
+#[test]
+#[ignore = "requires Node.js on PATH"]
+fn captured_array_iterations_keep_distinct_cells_shared_by_same_iteration_readers() {
+    run(
+        r#"
+        fn array() -> number[] { return [2, 0, 0, 0]; }
+        fn scan(xs: number[]) -> number {
+            let count = 0;
+            for value in xs {
+                let first = () => value;
+                let second = () => value;
+                mark(first()); mark(second());
+                count += 1;
+            }
+            return count;
+        }
+        "#,
+        &["array", "scan"],
+        r#"
+        const xs = e.array();
+        const data = new DataView(e.memory.buffer).getUint32(xs, true);
+        const input = new DataView(e.memory.buffer);
+        input.setFloat64(data + 8, -0, true);
+        input.setFloat64(data + 16, NaN, true);
+        input.setFloat64(data + 24, Infinity, true);
+        const retained = [];
+        for (let call = 0; call < 2; call++) {
+            const before = e.__alloc(8) >>> 0;
+            assert.equal(e.scan(xs), 4);
+            assert.deepEqual(events.splice(0), [2,2,-0,-0,NaN,NaN,Infinity,Infinity]);
+            assert.equal((e.__alloc(8) >>> 0) - before - 8, 96);
+            const cells = [before + 8, before + 32, before + 56, before + 80];
+            const view = new DataView(e.memory.buffer);
+            // Each yield owns one cell; both declarations point to that same cell.
+            assert.deepEqual(cells.map(p => view.getUint32(p + 8, true)), cells);
+            assert.deepEqual(cells.map(p => view.getUint32(p + 16, true)), cells);
+            retained.push(...cells);
+        }
+        const view = new DataView(e.memory.buffer);
+        assert.deepEqual(retained.map(p => view.getFloat64(p, true)),
+            [2,-0,NaN,Infinity,2,-0,NaN,Infinity]);
+        assert.equal(new Set(retained).size, 8);
+        "#,
+    );
+}
+
+#[test]
+#[ignore = "requires Node.js on PATH"]
+fn captured_iterations_allocate_only_successful_yields_even_when_declarations_are_skipped() {
+    run(
+        r#"
+        fn array() -> number[] { return [2, 3, 4]; }
+        fn empty() -> number[] { return []; }
+        fn ranged(start: number, end: number, mode: number) -> number {
+            for value in start..end {
+                mark(value);
+                if mode == 1 { continue; }
+                if mode == 2 { break; }
+                let unused = () => { mark(99); value };
+            }
+            return 7;
+        }
+        fn arrayed(xs: number[], mode: number) -> number {
+            for value in xs {
+                mark(value);
+                if mode == 1 { continue; }
+                if mode == 2 { break; }
+                let unused = () => { mark(99); value };
+            }
+            return 7;
+        }
+        "#,
+        &["array", "empty", "ranged", "arrayed"],
+        r#"
+        const xs = e.array(), empty = e.empty();
+        function check(action, bytes, values, prefix, stride) {
+            const before = e.__alloc(8) >>> 0;
+            let iteration = 0;
+            onMark = value => {
+                // The cell is initialized before the first body effect, even if
+                // control flow skips the capturing declaration and its environment.
+                const p = before + 8 + prefix + stride * iteration++;
+                assert.equal(new DataView(e.memory.buffer).getFloat64(p, true), value);
+            };
+            assert.equal(action(), 7);
+            onMark = () => {};
+            assert.equal((e.__alloc(8) >>> 0) - before - 8, bytes);
+            assert.equal(iteration, values.length);
+            assert.deepEqual(events.splice(0), values);
+        }
+        check(() => e.ranged(2, 5, 0), 80, [2,3,4], 32, 16);
+        check(() => e.ranged(2, 5, 1), 56, [2,3,4], 32, 8);
+        check(() => e.ranged(2, 5, 2), 40, [2], 32, 8);
+        check(() => e.ranged(2, 2, 0), 32, [], 32, 16);
+        check(() => e.ranged(5, 2, 1), 32, [], 32, 8);
+        check(() => e.ranged(2, 3, 0), 48, [2], 32, 16);
+        check(() => e.arrayed(xs, 0), 48, [2,3,4], 0, 16);
+        check(() => e.arrayed(xs, 1), 24, [2,3,4], 0, 8);
+        check(() => e.arrayed(xs, 2), 8, [2], 0, 8);
+        check(() => e.arrayed(empty, 0), 0, [], 0, 16);
+        check(() => e.arrayed(empty, 1), 0, [], 0, 8);
+        "#,
+    );
+}
+
+#[test]
+#[ignore = "requires Node.js on PATH"]
+fn captured_iterations_preserve_iterable_effects_rebinding_alias_mutations_and_mutable_shadowing() {
+    run(
+        r#"
+        fn array() -> number[] { return [1, 2, 3, 4]; }
+        fn arrayed(xs: number[]) -> number[] {
+            let original = xs;
+            for value in { mark(10); xs } {
+                let read = () => value;
+                mark(read());
+                if value == 1 {
+                    original[0] = 99;
+                    original[1] = 20;
+                    xs = [100, 200];
+                    {
+                        let value = 7;
+                        let update = () => { value += 1; value };
+                        mark(update()); mark(value);
+                    };
+                    mark(read());
+                    continue;
+                }
+                if value == 20 {
+                    original[2] = 30;
+                    mark(read());
+                    continue;
+                }
+                mark(read());
+                break;
+            }
+            mark(len(xs)); mark(xs[0]);
+            return original;
+        }
+        fn ranged() -> number {
+            let source = 1..5;
+            let total = 0;
+            for value in { mark(40); source } {
+                let read = () => value;
+                mark(read()); total += read();
+                source = 99..100;
+                if value == 1 { continue; }
+                if value == 3 { break; }
+            }
+            if 99 in source { return total; }
+            return 0;
+        }
+        fn descending() -> void {
+            for value in 3..=1 by -1 {
+                let read = () => value;
+                mark(read());
+            }
+        }
+        "#,
+        &["array", "arrayed", "ranged", "descending"],
+        r#"
+        const xs = e.array();
+        assert.equal(e.arrayed(xs), xs);
+        assert.deepEqual(events.splice(0), [10,1,8,8,1,20,20,30,30,2,100]);
+        // Iteration keeps the original handle, observes later alias writes, but
+        // does not reload the already yielded value after its element is changed.
+        assert.deepEqual(contents(xs), [99,20,30,4]);
+        assert.equal(e.ranged(), 6);
+        assert.deepEqual(events.splice(0), [40,1,2,3]);
+        e.descending();
+        assert.deepEqual(events.splice(0), [3,2,1]);
+        "#,
+    );
+}
+
+#[test]
+#[ignore = "requires Node.js on PATH"]
+fn captured_array_iterations_check_each_yield_before_allocating_its_cell() {
+    run(
+        r#"
+        fn array() -> number[] { return [2, 3]; }
+        fn scan(xs: number[]) -> void {
+            for value in xs {
+                mark(value);
+                let read = () => value;
+                mark(read() + 100);
+            }
+        }
+        fn iterable_effect(xs: number[]) -> void {
+            for value in { mark(90); xs } {
+                let read = () => value;
+                mark(read());
+            }
+        }
+        "#,
+        &["array", "scan", "iterable_effect"],
+        r#"
+        const xs = e.array();
+        const payload = new DataView(e.memory.buffer).getUint32(xs, true);
+        function restore() {
+            const view = new DataView(e.memory.buffer);
+            view.setUint32(xs, payload, true);
+            view.setUint32(xs + 4, 2, true);
+        }
+        function allocated(action, expected) {
+            const before = e.__alloc(8) >>> 0;
+            action();
+            assert.equal((e.__alloc(8) >>> 0) - before - 8, expected);
+            return before + 8;
+        }
+        allocated(() => assert.throws(() => e.scan(0), WebAssembly.RuntimeError), 0);
+        assert.deepEqual(events.splice(0), []);
+        // A truncated length fails index 1 against the cached original length;
+        // an invalid pointer fails descriptor validation on that next access.
+        for (const corrupt of [
+            () => new DataView(e.memory.buffer).setUint32(xs + 4, 1, true),
+            () => new DataView(e.memory.buffer).setUint32(xs, 0, true)
+        ]) {
+            onMark = n => { if (n === 102) corrupt(); };
+            const cell = allocated(
+                () => assert.throws(() => e.scan(xs), WebAssembly.RuntimeError), 16);
+            onMark = () => {};
+            assert.deepEqual(events.splice(0), [2,102]);
+            const view = new DataView(e.memory.buffer);
+            assert.equal(view.getFloat64(cell, true), 2);
+            assert.equal(view.getUint32(cell + 8, true), cell);
+            restore();
+            allocated(() => e.scan(xs), 32);
+            assert.deepEqual(events.splice(0), [2,102,3,103]);
+            assert.equal(new DataView(e.memory.buffer).getFloat64(cell, true), 2);
+        }
+        onMark = n => {
+            if (n === 90) new DataView(e.memory.buffer).setUint32(xs, 0, true);
+        };
+        allocated(() => assert.throws(() => e.iterable_effect(xs), WebAssembly.RuntimeError), 0);
+        assert.deepEqual(events.splice(0), [90]);
+        onMark = () => {};
+        restore();
+        allocated(() => e.iterable_effect(xs), 32);
+        assert.deepEqual(events.splice(0), [90,2,3]);
+        "#,
+    );
+}
+
+#[test]
+#[ignore = "requires Node.js on PATH"]
+fn captured_iteration_storage_grows_before_body_or_helper_effects_and_survives_traps() {
+    run(
+        r#"
+        fn array() -> number[] { return [11, 22, 33]; }
+        fn scan(xs: number[], skip: bool, fail: bool) -> number {
+            let total = 0;
+            for value in xs {
+                mark(value);
+                if skip { continue; }
+                let read = () => { mark(value + 100); value };
+                total += read();
+                if fail { xs[99]; }
+            }
+            return total;
+        }
+        "#,
+        &["array", "scan"],
+        r#"
+        const xs = e.array();
+        function padToPageEnd(reserved) {
+            const next = (e.__alloc(8) >>> 0) + 8;
+            const target = e.memory.buffer.byteLength - reserved;
+            assert.ok(target >= next);
+            if (target > next) assert.equal(e.__alloc(target - next) >>> 0, next);
+            return target;
+        }
+        // With declarations skipped, the first cell itself crosses the page end.
+        const cellsStart = padToPageEnd(0);
+        const oldBuffer = e.memory.buffer, oldView = new DataView(oldBuffer);
+        let iteration = 0;
+        onMark = value => {
+            assert.notEqual(e.memory.buffer, oldBuffer);
+            assert.equal(new DataView(e.memory.buffer).getFloat64(cellsStart + 8 * iteration++, true), value);
+        };
+        assert.equal(e.scan(xs, 1, 0), 0);
+        onMark = () => {};
+        assert.equal(e.__alloc(8) >>> 0, cellsStart + 24);
+        assert.deepEqual(events.splice(0), [11,22,33]);
+        assert.equal(oldBuffer.byteLength, 0);
+        assert.throws(() => oldView.getFloat64(0, true), TypeError);
+        // Leave room for exactly the first cell: its body effect precedes growth,
+        // while the environment allocation grows memory before helper execution.
+        const firstCell = padToPageEnd(8);
+        const beforeEnvironment = e.memory.buffer;
+        onMark = value => {
+            if (value === 11) assert.equal(e.memory.buffer, beforeEnvironment);
+            if (value === 111) assert.notEqual(e.memory.buffer, beforeEnvironment);
+        };
+        assert.equal(e.scan(xs, 0, 0), 66);
+        onMark = () => {};
+        assert.equal(e.__alloc(8) >>> 0, firstCell + 48);
+        assert.deepEqual(events.splice(0), [11,111,22,122,33,133]);
+        // A bounded allocator-overflow trap at the first body effect preserves
+        // its completed cell, but skips the environment and all later yields.
+        const beforeTrap = e.__alloc(8) >>> 0;
+        onMark = () => { e.__alloc(0xfffffff8); };
+        assert.throws(() => e.scan(xs, 0, 0), WebAssembly.RuntimeError);
+        onMark = () => {};
+        assert.equal(e.__alloc(8) >>> 0, beforeTrap + 16);
+        assert.deepEqual(events.splice(0), [11]);
+        const trappedCell = beforeTrap + 8;
+        assert.equal(new DataView(e.memory.buffer).getFloat64(trappedCell, true), 11);
+        const beforeBodyTrap = e.__alloc(8) >>> 0;
+        assert.throws(() => e.scan(xs, 0, 1), WebAssembly.RuntimeError);
+        assert.equal(e.__alloc(8) >>> 0, beforeBodyTrap + 24);
+        assert.deepEqual(events.splice(0), [11,111]);
+        assert.equal(e.scan(xs, 0, 0), 66);
+        assert.deepEqual(events.splice(0), [11,111,22,122,33,133]);
+        const view = new DataView(e.memory.buffer);
+        assert.deepEqual([0,8,16].map(offset => view.getFloat64(cellsStart + offset, true)), [11,22,33]);
+        assert.deepEqual([0,16,32].map(offset => view.getFloat64(firstCell + offset, true)), [11,22,33]);
+        assert.equal(view.getFloat64(trappedCell, true), 11);
+        assert.equal(view.getFloat64(beforeBodyTrap + 8, true), 11);
+        assert.equal(view.getUint32(beforeBodyTrap + 16, true), beforeBodyTrap + 8);
+        assert.deepEqual(contents(xs), [11,22,33]);
+        "#,
+    );
+}
+
+#[test]
+#[ignore = "requires Node.js on PATH"]
 fn nested_helpers_share_original_cells_across_shadowing_and_owner_local_bindings() {
     run(
         r#"

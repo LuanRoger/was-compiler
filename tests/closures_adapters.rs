@@ -109,18 +109,19 @@ enum ErrorKind {
     Arity,
     Named,
     MissingReturn,
+    ReadOnly,
 }
 
 const ERRORS: &[(&str, &str, ErrorKind)] = &[
     (
-        "for x in [1] { let f = () => { let g = () => x; g() }; }",
-        "x",
-        ErrorKind::Invalid("capturing for bindings is not supported in this subset"),
+        "for x in [1] { let f = () => { x = 2; }; }",
+        "x = 2;",
+        ErrorKind::ReadOnly,
     ),
     (
-        "for x in [1] { let f = () => x; }",
-        "x",
-        ErrorKind::Invalid("capturing for bindings is not supported in this subset"),
+        "for x in 1..2 { let f = () => { return; x += 2; }; }",
+        "x += 2;",
+        ErrorKind::ReadOnly,
     ),
     (
         "let f: number = (() => missing);",
@@ -189,6 +190,7 @@ fn expected_diagnostic(source: &str, origin: &str, kind: &ErrorKind) -> String {
         | (ErrorKind::MissingReturn, SemanticError::MissingReturn { name, .. }) => {
             name == "<closure>"
         }
+        (ErrorKind::ReadOnly, SemanticError::ReadOnlyVariable { name, .. }) => name == "x",
         _ => false,
     };
     assert!(matches, "expected {kind:?}, got {error:?}");
@@ -242,6 +244,10 @@ fn cli_closure_wasm_and_wat_match_library_at_all_levels_and_export_selections() 
         ),
         (SCALAR, vec![vec!["main"], vec![]]),
         (CAPTURED_COMPOUNDS, vec![vec!["main"], vec![]]),
+        (
+            "fn main() -> number { let sum = 0; for x in 1..4 { let f = () => x; sum += f(); } for x in [4,5] { let f = () => x; sum += f(); } return sum; }",
+            vec![vec!["main"], vec![]],
+        ),
     ] {
         fs::write(scratch.0.join("program.was"), source).unwrap();
         for names in selections {

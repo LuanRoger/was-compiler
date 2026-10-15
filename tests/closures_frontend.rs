@@ -347,35 +347,63 @@ fn captured_compounds_check_invalid_types_targets_and_skipped_children() {
 }
 
 #[test]
-fn for_capture_limit_remains_explicit_through_nested_helpers() {
-    for (source, expected) in [
-        (
-            "fn main() { for x in 1..2 { let f = () => x; } }",
-            "capturing for bindings is not supported in this subset",
-        ),
-        (
-            "fn main() { for x in [1] { let f = () => { let g = () => x; }; } }",
-            "capturing for bindings is not supported in this subset",
-        ),
-        (
-            "fn main() { for x in [1] { let f = () => { let g = () => { x += 1; }; }; } }",
-            "capturing for bindings is not supported in this subset",
-        ),
-    ] {
-        assert!(
-            matches!(
-                semantic_error(source),
-                SemanticError::InvalidClosure {
-                    reason,
-                    ..
-                } if reason == expected
-            ),
-            "{source}"
+fn iteration_captures_preserve_original_read_only_number_metadata() {
+    use was_compiler::typed_ast::{BindingOwner, CaptureMutability, FunctionId, TypedCapture};
+
+    for iterable in ["1..2", "[1]", "2..1", "[]"] {
+        let source = format!("fn main() {{ for x in {iterable} {{ let f = () => x; f(); }} }}");
+        let program = Compiler::new().analyze(&source).unwrap();
+        let TypedStatementKind::For { variable, body, .. } = &program.functions[0].body[0].kind
+        else {
+            panic!("for");
+        };
+        let TypedStatementKind::Closure(c) = &body[0].kind else {
+            panic!("closure");
+        };
+        assert_eq!(
+            c.captures,
+            vec![TypedCapture {
+                owner: BindingOwner::Function(FunctionId(0)),
+                variable: *variable,
+                ty: Type::Number,
+                mutability: CaptureMutability::ReadOnly,
+            }]
         );
+        assert_eq!(c.return_type, Type::Number);
     }
-    Compiler::new()
-        .analyze("fn main(x: number) { let f = (x: number) => x; let g = () => { let x = 2; x }; }")
-        .unwrap();
+}
+
+#[test]
+fn iteration_capture_writes_are_rejected_without_weakening_shadowing_or_transfer_boundaries() {
+    for iterable in ["0..2", "[1, 2]"] {
+        for write in [
+            "x = 3;", "x += 3;", "x -= 3;", "x *= 3;", "x /= 3;", "x %= 3;",
+        ] {
+            for body in [
+                write.to_string(),
+                format!("return; {write}"),
+                format!("false && {{ {write} true }};"),
+            ] {
+                let source = format!(
+                    "fn main() {{ for x in {iterable} {{ let f = () => {{ {body} }}; }} }}"
+                );
+                let error = semantic_error(&source);
+                assert!(
+                    matches!(&error, SemanticError::ReadOnlyVariable { name, .. } if name == "x"),
+                    "{error:?}"
+                );
+                let span = error.span().unwrap();
+                assert_eq!(&source[span.start()..span.end()], write);
+            }
+        }
+        Compiler::new().compile_source(&format!("fn main() {{ for x in {iterable} {{ let read = () => x; let update = () => {{ let x = x; x += 1; x }}; read(); update(); }} }}")).unwrap();
+        for transfer in ["break;", "continue;"] {
+            let source = format!(
+                "fn main() {{ for x in {iterable} {{ let f = () => {{ x; {transfer} }}; }} }}"
+            );
+            assert!(Compiler::new().analyze(&source).is_err(), "{source}");
+        }
+    }
 }
 
 #[test]
@@ -977,7 +1005,7 @@ fn analysis_and_diagnostics_are_identical_at_all_optimization_levels() {
     use was_compiler::{CompilerOptions, OptimizationLevel};
     let source = "fn main() { let factor = 2; let f = (x: number) => x * factor; let outer = () => { let inner = () => factor + f(21); inner() }; return outer(); }";
     let expected = Compiler::new().analyze(source).unwrap();
-    let invalid = "fn main() { for x in [1] { let f = () => { let g = () => x; }; } }";
+    let invalid = "fn main() { for x in [1] { let f = () => { x += 1; }; } }";
     let expected_error = Compiler::new().analyze(invalid).unwrap_err();
     for optimization_level in [
         OptimizationLevel::None,

@@ -395,6 +395,36 @@ impl<'a> BodyEmitter<'a> {
         Ok(())
     }
 
+    pub fn check_capture_writable(
+        &self,
+        owner: BindingOwner,
+        id: VariableId,
+        span: Span,
+    ) -> Result<(), CodegenError> {
+        let invalid = || closures::invalid("invalid capture metadata", span);
+        let BindingOwner::Closure(callable) = self.context.owner else {
+            return Err(invalid());
+        };
+        let slot = *self
+            .context
+            .capture_slots
+            .get(&(owner, id))
+            .ok_or_else(invalid)?;
+        // Creator checking has reconstructed this mutability from the original
+        // declaration's provenance before any helper body is lowered.
+        let capture = &self.context.module.callables[callable.0]
+            .declaration
+            .captures[slot];
+        if capture.mutability == crate::typed_ast::CaptureMutability::ReadOnly {
+            return Err(CodegenError::ReadOnlyVariable {
+                function: self.name().into(),
+                id,
+                span,
+            });
+        }
+        Ok(())
+    }
+
     fn use_dependency(&mut self, id: CallableId) {
         let declaration = self.context.module.callables[id.0].declaration;
         if matches!(self.context.owner, BindingOwner::Closure(_))
@@ -425,9 +455,13 @@ impl<'a> BodyEmitter<'a> {
                     .locals
                     .get(capture.variable)
                     .ok_or_else(|| invalid("invalid capture metadata"))?;
+                let mutability = match local.kind {
+                    BindingKind::Mutable => crate::typed_ast::CaptureMutability::Mutable,
+                    BindingKind::Iteration => crate::typed_ast::CaptureMutability::ReadOnly,
+                    BindingKind::Call => return Err(invalid("invalid capture metadata")),
+                };
                 if local.ty != capture.ty
-                    || local.kind != BindingKind::Mutable
-                    || capture.mutability != crate::typed_ast::CaptureMutability::Mutable
+                    || capture.mutability != mutability
                     || !self.context.initialized.contains(&capture.variable)
                 {
                     return Err(invalid("invalid capture metadata"));

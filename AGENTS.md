@@ -144,7 +144,9 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   before #31; [#31 validation passed](docs/local-callable-interface.md#issue-31-validation-2026-10-14).
   #32 implements nested original-binding capture forwarding and earlier live
   callable-context dependencies in the frontend/backend; [validation passed](docs/local-callable-interface.md#issue-32-validation-2026-10-14).
-  Captured `for` bindings, full WP11 release and WP12 remain deferred. WP13
+  #33 implements [read-only iteration captures](docs/local-callable-interface.md#implemented-read-only-iteration-captures-33),
+  with [validation passed](docs/local-callable-interface.md#issue-33-validation-2026-10-15).
+  Combined nested/transitive iteration-capture convergence, full WP11 release and WP12 remain deferred. WP13
   optimization requires separate authorization.
   Preserve `target/wp7-inference` when cleaning generated output. Before changing defaults, call binding, or
   normalized lowering, read [the handoff](docs/wp6-wp7-development.md) and
@@ -210,7 +212,7 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
 
 ## Compatibility contracts
 
-### Local callables and shared captures (WP11 subsets, #29–#32)
+### Local callables and shared captures (WP11 subsets, #29–#33)
 
 - Before changing closure syntax, inference, capture ownership/storage, lexical calls,
   helper planning or diagnostics, read [the subset and public migration](docs/local-callable-interface.md)
@@ -245,10 +247,18 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   source-preorder context-requiring dependency slots; context-free dependencies
   occupy no slots. Check complete/unique/canonical metadata and lexical availability
   independently for forged input, including sparse IDs and descendant-only requirements.
-  Reject captured `for` bindings with the [stable subset reason](docs/local-callable-interface.md#implemented-shared-capture-subset-30).
-  Full WP11 release remains deferred. [#30 evidence](docs/local-callable-interface.md#issue-30-validation-2026-10-14)
+  Combined nested/transitive iteration-capture convergence and full WP11 release remain deferred. [#30 evidence](docs/local-callable-interface.md#issue-30-validation-2026-10-14)
   covers shared storage before #31, not captured compounds; [#31 validation passed](docs/local-callable-interface.md#issue-31-validation-2026-10-14).
   Historical #29 results cover only capture-free callables.
+- Before changing iteration captures, read [the #33 contract and validation](docs/local-callable-interface.md#implemented-read-only-iteration-captures-33).
+  Frontend records `CaptureMutability::ReadOnly`; backend derives it independently
+  from original `For` / `BindingKind::Iteration` provenance and checks metadata
+  before helper lowering. Reject ordinary/all numeric compound writes even when
+  skipped/unreachable. Promote after successful range endpoint-before-conversion
+  yield or checked array load/local set, before the body: fresh uniform eight-byte
+  cell per yield, eager even for skipped declarations, none on empty/exhausted/failed
+  yields. Cells are monotonic, never reused/reclaimed; environments allocate only
+  at executed declarations. Preserve loop/control/alias semantics and AST/ABI shapes.
 - Keep `tests/closures_frontend.rs`, `tests/closures_lowering.rs`,
   `tests/closures_runtime.rs`, and `tests/closures_adapters.rs` at the confirmed
   compiler/typed-input/adapter seams. Runtime cases remain ignored by default.

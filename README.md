@@ -160,13 +160,15 @@ WP11's local callable subsets are implemented: capture-free declarations/calls
 compounds (#31). #32 implements nested original-binding capture forwarding and
 earlier context-requiring callable dependencies in the frontend/backend;
 [#32 validation passed](docs/local-callable-interface.md#issue-32-validation-2026-10-14).
-Captured `for` bindings and full WP11 release remain deferred.
+#33 implements [read-only range/array iteration captures](docs/local-callable-interface.md#implemented-read-only-iteration-captures-33);
+[validation passed](docs/local-callable-interface.md#issue-33-validation-2026-10-15).
+Combined nested/transitive iteration-capture convergence and full WP11 release remain deferred.
 [#30 subset validation passed](docs/local-callable-interface.md#issue-30-validation-2026-10-14),
 including rebuilt-browser and full ignored runtime coverage for #30, before #31.
 [#31 validation passed](docs/local-callable-interface.md#issue-31-validation-2026-10-14). WP12 placeholders and
 WP13 optimization are separately scoped.
 
-### Local callables and shared captures (WP11 subsets, #29–#32)
+### Local callables and shared captures (WP11 subsets, #29–#33)
 
 ```text
 fn main() -> number {
@@ -190,8 +192,14 @@ Closures may share ancestor parameters and ordinary lets of type
 visible to the other; ordinary indexed array writes retain alias semantics. #32
 forwards each original binding through every intermediate helper, without copying
 its value or allocating another cell. Earlier context-requiring callable dependencies
-forward their original live environments, not snapshots. Capture of `for` bindings
-remains deferred. #31 supports `+=`, `-=`,
+forward their original live environments, not snapshots. #33 allows read-only
+captures of the numeric binding in range/array `for` loops; ordinary and all numeric
+compound writes remain rejected, even in skipped/unreachable code. Each yielded
+captured binding gets a fresh eight-byte cell before the body, even if the closure
+declaration is skipped; empty/exhausted/failed yields allocate no cell. Cells are
+monotonic, not reused or reclaimed; environments allocate only at executed
+declarations. Combined nested/transitive iteration-capture convergence remains
+deferred. #31 supports `+=`, `-=`,
 `*=`, `/=`, and `%=` on captured numbers and captured numeric-array elements,
 including creator-side promoted bindings. Updates preserve the original checked
 place and old value across RHS effects; ordinary indexed assignment also retains

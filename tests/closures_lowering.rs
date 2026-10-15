@@ -85,6 +85,285 @@ fn assert_invalid(program: &TypedProgram, reason: &str, expected_span: Span) {
 }
 
 #[test]
+fn iteration_cells_allocate_inside_the_yield_region_before_the_body() {
+    for iterable in ["1..3", "[1, 2]"] {
+        let source = format!(
+            "fn main() {{ for x in {iterable} {{
+                let f = () => x; f();
+                if true && {{ if false {{ continue; }} else {{}} true }} {{
+                    {{ if true {{ break; }} else {{}} }};
+                }}
+                continue;
+            }} }}"
+        );
+        let bytes = Compiler::new().compile_source(&source).unwrap();
+        let ops = operators(&bytes, 0);
+        let loop_start = ops
+            .iter()
+            .position(|op| matches!(op, Operator::Loop { .. }))
+            .unwrap();
+        let exit = loop_start
+            + ops[loop_start..]
+                .iter()
+                .position(|op| matches!(op, Operator::BrIf { relative_depth: 1 }))
+                .unwrap();
+        let yield_at = exit
+            + ops[exit..]
+                .iter()
+                .position(|op| {
+                    if iterable.starts_with('[') {
+                        matches!(op, Operator::F64Load { .. })
+                    } else {
+                        matches!(op, Operator::F64ConvertI64S)
+                    }
+                })
+                .unwrap();
+        // Alloc is the first runtime helper after the sole user function.
+        let allocations: Vec<_> = ops
+            .iter()
+            .enumerate()
+            .filter_map(|(i, op)| matches!(op, Operator::Call { function_index: 1 }).then_some(i))
+            .collect();
+        let cell = *allocations.iter().find(|&&i| i > yield_at).unwrap();
+        let env = *allocations.iter().find(|&&i| i > cell).unwrap();
+        assert!(exit < yield_at && yield_at < cell && cell < env);
+        assert!(matches!(ops[cell - 1], Operator::I32Const { value: 8 }));
+        let Operator::LocalSet {
+            local_index: cell_local,
+        } = ops[cell + 1]
+        else {
+            panic!("cell destination");
+        };
+        assert!(
+            matches!(ops[cell + 2], Operator::LocalGet { local_index } if local_index == cell_local)
+        );
+        assert!(
+            matches!(ops[cell + 4], Operator::F64Store { memarg } if memarg.offset == 0 && memarg.align == 3)
+        );
+        assert!(
+            ops[cell + 5..env]
+                .iter()
+                .any(|op| matches!(op, Operator::Block { .. }))
+        );
+        assert!(
+            matches!(ops[env + 3], Operator::LocalGet { local_index } if local_index == cell_local)
+        );
+        assert!(matches!(ops[env + 4], Operator::I32Store { memarg } if memarg.offset == 0));
+        // Distinguish nested continue/break from the final continue and backedge.
+        let branches: Vec<_> = ops
+            .iter()
+            .filter_map(|op| match op {
+                Operator::BrIf { relative_depth } => Some((true, *relative_depth)),
+                Operator::Br { relative_depth } => Some((false, *relative_depth)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            branches,
+            [(true, 1), (false, 3), (false, 5), (false, 0), (false, 0)]
+        );
+        let backedge = ops
+            .iter()
+            .rposition(|op| matches!(op, Operator::Br { .. }))
+            .unwrap();
+        assert!(matches!(
+            ops[backedge - 6],
+            Operator::Br { relative_depth: 0 }
+        ));
+        assert!(matches!(ops[backedge - 5], Operator::End)); // body latch
+        let Operator::LocalGet {
+            local_index: induction,
+        } = ops[backedge - 4]
+        else {
+            panic!("induction read");
+        };
+        assert!(
+            matches!(ops[backedge - 1], Operator::LocalSet { local_index } if local_index == induction)
+        );
+        if iterable.starts_with('[') {
+            assert!(
+                matches!(ops[exit - 3], Operator::LocalGet { local_index } if local_index == induction)
+            );
+            assert!(matches!(ops[backedge - 3], Operator::I32Const { value: 1 }));
+            assert!(matches!(ops[backedge - 2], Operator::I32Add));
+        } else {
+            assert!(
+                matches!(ops[yield_at - 1], Operator::LocalGet { local_index } if local_index == induction)
+            );
+            assert!(matches!(ops[backedge - 3], Operator::LocalGet { .. }));
+            assert!(matches!(ops[backedge - 2], Operator::I64Add));
+        }
+        assert!(matches!(ops[backedge + 1], Operator::End)); // loop retest
+        assert!(matches!(ops[backedge + 2], Operator::End)); // exit block
+        assert_eq!(
+            ops.iter()
+                .filter(|op| matches!(op, Operator::Call { function_index: 1 }))
+                .count(),
+            if iterable.starts_with('[') { 3 } else { 2 }
+        );
+    }
+}
+
+#[test]
+fn iteration_captures_reject_forged_writes_even_after_return_or_in_skipped_operands() {
+    use was_compiler::ast::BinaryOp;
+    let compiler = Compiler::new();
+    let original = compiler
+        .analyze("fn main() { for x in [1] { let f = () => x; } }")
+        .unwrap();
+    for compound in [
+        None,
+        Some(BinaryOp::Add),
+        Some(BinaryOp::Subtract),
+        Some(BinaryOp::Multiply),
+        Some(BinaryOp::Divide),
+        Some(BinaryOp::Remainder),
+    ] {
+        for skipped in [false, true] {
+            let mut forged = original.clone();
+            let TypedStatementKind::For { body, .. } = &mut forged.functions[0].body[0].kind else {
+                panic!();
+            };
+            let TypedStatementKind::Closure(c) = &mut body[0].kind else {
+                panic!();
+            };
+            let TypedClosureBody::Expression(target) = &c.body else {
+                panic!();
+            };
+            let target = target.as_ref().clone();
+            let id = c.captures[0].variable;
+            let write = statement(if let Some(op) = compound {
+                TypedStatementKind::CompoundAssignment {
+                    target,
+                    op,
+                    value: number("1"),
+                }
+            } else {
+                TypedStatementKind::Assignment {
+                    target,
+                    value: number("1"),
+                }
+            });
+            c.body = if skipped {
+                block(
+                    vec![statement(TypedStatementKind::Expression(TypedExpr {
+                        kind: TypedExprKind::Binary {
+                            left: Box::new(TypedExpr {
+                                kind: TypedExprKind::Bool(false),
+                                ty: Type::Bool.into(),
+                            }),
+                            op: BinaryOp::And,
+                            right: Box::new(TypedExpr {
+                                kind: TypedExprKind::Block(TypedValueBlock {
+                                    statements: vec![write],
+                                    tail: Some(Box::new(TypedExpr {
+                                        kind: TypedExprKind::Bool(true),
+                                        ty: Type::Bool.into(),
+                                    })),
+                                    span: span(),
+                                }),
+                                ty: Type::Bool.into(),
+                            }),
+                        },
+                        ty: Type::Bool.into(),
+                    }))],
+                    Some(number("0")),
+                )
+            } else {
+                block(
+                    vec![
+                        statement(TypedStatementKind::Return(Some(number("0")))),
+                        write,
+                    ],
+                    None,
+                )
+            };
+            let error = compiler.compile(&forged).unwrap_err();
+            assert!(
+                matches!(error, CodegenError::ReadOnlyVariable { id: actual, span: actual_span, .. } if actual == id && actual_span == span()),
+                "{error:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn iteration_capture_metadata_is_derived_from_live_original_provenance() {
+    let compiler = Compiler::new();
+    for iterable in ["1..3", "[1, 2]"] {
+        let original = compiler
+            .analyze(&format!(
+                "fn main() {{ for x in {iterable} {{ let f = () => x; }} }}"
+            ))
+            .unwrap();
+        for mutation in 0..6 {
+            let mut forged = original.clone();
+            let TypedStatementKind::For { variable, body, .. } =
+                &mut forged.functions[0].body[0].kind
+            else {
+                panic!();
+            };
+            let TypedStatementKind::Closure(c) = &mut body[0].kind else {
+                panic!();
+            };
+            let origin = c.span;
+            match mutation {
+                0 => c.captures[0].mutability = CaptureMutability::Mutable,
+                1 => c.captures[0].ty = Type::Bool,
+                2 => c.captures[0].owner = BindingOwner::Closure(c.id),
+                3 => c.captures[0].variable = VariableId(999),
+                4 => {
+                    // Sparse identities are valid, but must agree at declaration,
+                    // metadata and use sites; numeric order is not provenance.
+                    *variable = VariableId(999);
+                    c.captures[0].variable = *variable;
+                    let TypedClosureBody::Expression(expr) = &mut c.body else {
+                        panic!();
+                    };
+                    let TypedExprKind::Captured { id, .. } = &mut expr.kind else {
+                        panic!();
+                    };
+                    *id = *variable;
+                }
+                5 => {
+                    let declaration = body.remove(0);
+                    forged.functions[0].body.push(declaration);
+                }
+                _ => unreachable!(),
+            }
+            if mutation == 4 {
+                Validator::new()
+                    .validate_all(&compiler.compile(&forged).unwrap())
+                    .unwrap();
+            } else {
+                assert_invalid(&forged, "invalid capture metadata", origin);
+            }
+        }
+        // The iterable is evaluated before the iteration binding initializes.
+        let mut early = original.clone();
+        let TypedStatementKind::For { iterable, body, .. } = &mut early.functions[0].body[0].kind
+        else {
+            panic!();
+        };
+        let declaration = body.remove(0);
+        let TypedStatementKind::Closure(c) = &declaration.kind else {
+            panic!();
+        };
+        let origin = c.span;
+        let tail = iterable.as_ref().clone();
+        **iterable = TypedExpr {
+            ty: tail.ty,
+            kind: TypedExprKind::Block(TypedValueBlock {
+                statements: vec![declaration],
+                tail: Some(Box::new(tail)),
+                span: span(),
+            }),
+        };
+        assert_invalid(&early, "invalid capture metadata", origin);
+    }
+}
+
+#[test]
 fn many_captures_with_repeated_accesses_preserve_canonical_slots_and_metadata_checks() {
     use std::fmt::Write;
 
@@ -2109,7 +2388,7 @@ fn forged_capture_places_support_all_compounds_in_creator_and_helper() {
 }
 
 #[test]
-fn captures_reject_out_of_scope_uninitialized_iteration_and_synthetic_originals() {
+fn captures_reject_out_of_scope_uninitialized_unused_and_synthetic_originals() {
     let compiler = Compiler::new();
     let source = "fn main() -> number { let value = 1; let read = () => value; return read(); }";
     let original = compiler.analyze(source).unwrap();

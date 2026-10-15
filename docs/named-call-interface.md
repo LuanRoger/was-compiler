@@ -29,9 +29,12 @@ outside the shared pure-expression whitelist, including forged typed defaults.
 WP10 named-only pipelines are implemented, including named/default stage binding
 and #27 final-Void discard support;
 [release gates passed](was_language_extensions_plan.md#wp10-release-validation)
-on 2026-10-14. WP11's #29–#31 local callable/shared-capture subsets are implemented,
-including captured numeric compounds (#31); [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14). Full WP11
-release and WP12 remain deferred; see [the subset interface](local-callable-interface.md)
+on 2026-10-14. WP11's #29–#33 local callable/shared-capture subsets are implemented,
+including captured numeric compounds (#31), nested parameter/let and live callable-context
+forwarding (#32), and [read-only iteration captures (#33)](local-callable-interface.md#implemented-read-only-iteration-captures-33).
+[#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14);
+[#33 validation passed](local-callable-interface.md#issue-33-validation-2026-10-15).
+Combined nested/transitive iteration-capture convergence, full WP11 release and WP12 remain deferred; see [the subset interface](local-callable-interface.md)
 for current support and historical #29/#30 evidence. WP13 requires separate
 authorization; later packages
 reuse the approved interfaces only after their ordered integration/release gates.

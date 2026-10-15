@@ -170,6 +170,7 @@ pub(super) fn emit_for(
         emitter.local_get(current);
         emitter.instruction(&Instruction::F64ConvertI64S);
         emitter.local_set(binding);
+        emitter.promote(variable, Type::Number, span)?;
         emitter.initialize(variable);
 
         let continue_label = emitter.begin_block()?;
@@ -245,6 +246,7 @@ fn emit_array_for(
             memory_index: 0,
         }));
         emitter.local_set(binding);
+        emitter.promote(variable, Type::Number, span)?;
         emitter.initialize(variable);
 
         let continue_label = emitter.begin_block()?;

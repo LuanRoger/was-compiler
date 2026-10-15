@@ -47,12 +47,6 @@ impl SemanticAnalyzer {
             }),
             Some(LexicalBinding::Value(binding)) if binding.owner != self.owner => {
                 let binding = *binding;
-                if binding.mutability == BindingMutability::ReadOnly {
-                    return Err(SemanticError::InvalidClosure {
-                        reason: "capturing for bindings is not supported in this subset",
-                        span,
-                    });
-                }
 
                 let owner = binding.owner.expect("captured bindings have an owner");
                 // Every intervening helper must forward the original cell, but
@@ -68,7 +62,10 @@ impl SemanticAnalyzer {
                             owner,
                             variable: binding.id,
                             ty: binding.ty,
-                            mutability: CaptureMutability::Mutable,
+                            mutability: match binding.mutability {
+                                BindingMutability::Mutable => CaptureMutability::Mutable,
+                                BindingMutability::ReadOnly => CaptureMutability::ReadOnly,
+                            },
                         });
                 }
                 Ok(())

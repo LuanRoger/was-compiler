@@ -49,7 +49,9 @@ parameter/let captures (#30), plus captured numeric compounds (#31).
 before #31; [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14).
 #32 implements nested original-binding forwarding and earlier context-requiring
 callable dependencies in the frontend/backend; [validation passed](local-callable-interface.md#issue-32-validation-2026-10-14).
-Captured `for` bindings and full WP11 release remain deferred. WP12 and WP13 remain separately scoped.
+#33 implements [read-only iteration captures](local-callable-interface.md#implemented-read-only-iteration-captures-33),
+with [validation passed](local-callable-interface.md#issue-33-validation-2026-10-15).
+Combined nested/transitive iteration-capture convergence and full WP11 release remain deferred. WP12 and WP13 remain separately scoped.
 See [the #14 contract](result-inference-development.md#issue-14-acyclic-chains-and-diamonds) and the
 [named/default interface](named-call-interface.md) for migration and the
 [development handoff](wp6-wp7-development.md) for historical worktree evidence.
@@ -79,7 +81,7 @@ The plan's #25/#26 validation records remain historical subset evidence, not
 full-release evidence; [#27 release validation passed](was_language_extensions_plan.md#wp10-release-validation)
 for complete WP10 support.
 
-### Local callable and shared-capture restrictions (#29–#32)
+### Local callable and shared-capture restrictions (#29–#33)
 
 Only lambda-initialized local bindings and direct positional calls are supported.
 Parentheses around initializers are transparent. Callables cannot be used as
@@ -93,11 +95,13 @@ concrete type (`number`, `bool`, `string`, `number[]`, `range`). Captures preser
 original bindings and observe reassignment from either side, including ordinary
 array indexed mutation and array-binding reassignment. #32 forwards original cells
 through every intermediate helper and original live environments for earlier
-context-requiring callable dependencies. Capture of `for` bindings remains
-explicitly rejected. #31 supports all five numeric compound operators on captured
+context-requiring callable dependencies. #33 allows read-only range/array iteration
+captures; ordinary and all numeric compound writes are rejected even when skipped
+or unreachable. Combined nested/transitive iteration-capture convergence remains
+deferred. #31 supports all five numeric compound operators on captured
 numbers and numeric-array elements, including creator-side promoted bindings
 before or after the capturing declaration. The original checked place and old
-value survive RHS effects; ordinary indexed assignment retains its pre-RHS address. See [the stable subset reasons](local-callable-interface.md#implemented-shared-capture-subset-30).
+value survive RHS effects; ordinary indexed assignment retains its pre-RHS address. See [the capture contracts](local-callable-interface.md#implemented-read-only-iteration-captures-33).
 
 Earlier visible callable dependencies are allowed, including nested composition.
 Capture slots precede context-requiring dependency slots in canonical source order;
@@ -321,8 +325,9 @@ describe implemented language support alongside WP10 pipelines with
 [release validation passed](was_language_extensions_plan.md#wp10-release-validation);
 local callables and immediate-creator shared parameter/let captures are implemented
 as the #29/#30 subsets, with captured numeric compounds added by #31 and nested
-capture/context forwarding by #32 (validation passed). Captured `for`
-bindings, full WP11 release and placeholders remain deferred.
+capture/context forwarding by #32 (validation passed). #33 adds read-only iteration
+captures (validation passed). Combined nested/transitive iteration-capture
+convergence, full WP11 release and placeholders remain deferred.
 
 - Scrutinees that complete must be number/bool/string, not arrays, ranges or Void.
   Patterns are wildcard, exact scalar literals, numeric comparisons and constant

@@ -84,8 +84,11 @@ retain source spans and stage dependency syntax.
 on 2026-10-14. WP11 implements capture-free local callables (#29) and
 immediate-creator shared parameter/let captures (#30), plus captured numeric
 compounds (#31). [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14)
-before #31; [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14). Nested forwarding, context-requiring
-dependencies, captured `for` bindings and full WP11 release remain deferred. WP12 and WP13 are
+before #31; [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14).
+#32 adds nested parameter/let forwarding and live callable contexts (validation passed).
+#33 implements [read-only iteration captures](local-callable-interface.md#implemented-read-only-iteration-captures-33),
+with [validation passed](local-callable-interface.md#issue-33-validation-2026-10-15).
+Combined nested/transitive iteration-capture convergence and full WP11 release remain deferred. WP12 and WP13 are
 separately scoped. See [the local callable interface](local-callable-interface.md). See
 [the #14 inference contract](result-inference-development.md#issue-14-acyclic-chains-and-diamonds). See the
 [interface gate](named-call-interface.md) and [handoff](wp6-wp7-development.md).
@@ -832,9 +835,10 @@ are complete; WP8 contracts and their runtime/browser release gates are also com
 WP9 frontend/backend are integrated with [release gates passed](was_language_extensions_plan.md#wp9-release-validation);
 WP10 named-only pipelines, including named/default and final-Void discard support,
 are implemented (#27), with [release validation passed](was_language_extensions_plan.md#wp10-release-validation).
-WP11's #29–#31 subsets implement local callables, immediate-creator shared
-parameter/let captures and captured numeric compounds; broader captures, full
-WP11 release and WP12 remain deferred.
+WP11's #29–#33 subsets implement local callables, shared parameter/let captures,
+captured numeric compounds, nested parameter/let and live callable-context forwarding,
+and read-only iteration captures ([#33 validation passed](local-callable-interface.md#issue-33-validation-2026-10-15)).
+Combined nested/transitive iteration-capture convergence, full WP11 release and WP12 remain deferred.
 [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14)
 before #31; [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14). WP13 requires separate authorization.
 External range signatures, range equality, and allocation-free range optimization
@@ -873,7 +877,7 @@ including current-source rebuilt-browser and full ignored runtime coverage. See
 and [spec §13](was_language_extensions_spec.md#13-feature-specification-function-preconditionscontracts).
 WP9 match is implemented as described below; WP10 named-only pipelines are
 implemented with [#27 release validation passed](was_language_extensions_plan.md#wp10-release-validation).
-WP11's #29–#31 subsets are implemented;
+WP11's #29–#33 subsets are implemented ([#33 validation passed](local-callable-interface.md#issue-33-validation-2026-10-15));
 [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14).
 Full WP11 release and WP12 placeholders remain deferred. Optional refinement/check elimination belongs to
 separately authorized future optimization.
@@ -966,8 +970,8 @@ include-ignored suite. Focused suites passed with 23 frontend, 25 lowering,
 bindings. The plan's
 [#25](was_language_extensions_plan.md#issue-25-subset-validation-2026-10-14) and
 [#26](was_language_extensions_plan.md#issue-26-subset-validation-2026-10-14) records
-are historical subset validation, not final-Void release evidence. WP11's #29–#31
-subsets are implemented; [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14).
+are historical subset validation, not final-Void release evidence. WP11's #29–#33
+subsets are implemented ([#33 validation passed](local-callable-interface.md#issue-33-validation-2026-10-15)); [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14).
 Full WP11 release and WP12 remain deferred, and WP13 requires separate authorization.
 
 ## Remaining work

@@ -1,4 +1,4 @@
-# Local callable interface — issues #29–#32
+# Local callable interface — issues #29–#33
 
 ## Frozen public interface and implementation ownership
 
@@ -11,7 +11,8 @@ creator-side promoted bindings. Issue #32 implements nested original-binding
 capture forwarding and earlier context-requiring callable dependencies in the
 frontend/backend; [validation passed](#issue-32-validation-2026-10-14).
 The parent [issue #28](https://github.com/LuanRoger/was-compiler/issues/28)
-defines the full contract. Captured `for` bindings and full WP11 release remain deferred.
+defines the full contract. #33 adds [read-only iteration captures](#implemented-read-only-iteration-captures-33).
+Combined nested/transitive iteration-capture convergence and full WP11 release remain deferred.
 [#30 subset validation passed](#issue-30-validation-2026-10-14); that record predates
 #31 and does not validate captured compounds. The historical #29 evidence below
 predates shared capture storage.
@@ -38,8 +39,9 @@ Public AST consumers must migrate as follows:
   is introduced.
 - `TypedCapture` identifies an original owner/variable/type/mutability.
   `CaptureMutability` distinguishes mutable locals/parameters and read-only for
-  bindings; #30 accepts mutable immediate-creator parameters/ordinary lets, and
-    #32 forwards original ancestor bindings through every intermediate helper.
+  bindings; #30 accepts mutable immediate-creator parameters/ordinary lets,
+  #32 forwards original ancestor parameter/let bindings through every intermediate
+  helper, and #33 records `ReadOnly` for captured iteration bindings.
   Captures are unique and canonical by original owner/declaration order, with
   parameters before locals. Checked lowering derives declaration order independently
   of numeric `VariableId` values, since public typed input may use sparse IDs.
@@ -68,11 +70,9 @@ independent parameter/local/return/loop contexts. #30 initially supported only
 immediate-creator captures and earlier context-free callable composition; #32
 extends these limits as described below.
 
-The remaining staged semantic `InvalidClosure` reason is stable:
-
-| Deferred case | Reason |
-| --- | --- |
-| Capture of a `for` iteration binding | `capturing for bindings is not supported in this subset` |
+#33 removes the former `capturing for bindings is not supported in this subset`
+rejection; see [the read-only iteration-capture contract](#implemented-read-only-iteration-captures-33).
+Ordinary read-only-write checks now apply to those captures.
 
 #32 removes the former `nested capture forwarding is not supported in this subset`
 and `context-requiring callable dependencies are not supported in this subset`
@@ -110,8 +110,8 @@ preserves its checked pre-RHS element address, without a compound old-value read
 `%=` uses the existing exact floating remainder helper.
 
 No new AST form, scratch policy, cell/environment layout or public ABI is added.
-#32 extends forwarding as described below; captured `for` bindings and full WP11
-release remain deferred. [#31 validation passed](#issue-31-validation-2026-10-14).
+#32 extends parameter/let forwarding and #33 adds read-only iteration captures as
+described below. Full WP11 release remains deferred. [#31 validation passed](#issue-31-validation-2026-10-14).
 The #29/#30 records below retain their historical scope.
 
 ## Implemented nested captures and callable contexts (#32)
@@ -142,7 +142,77 @@ including requirements used only by descendants. Missing/extra entries, wrong
 owners/types/mutability, uninitialized or invisible bindings, invalid dependency
 visibility/order and forged sparse variable IDs retain checked diagnostics.
 Helpers remain borrowed, direct and unexported; no public typed shape changes.
-Captured `for` bindings and full WP11 release remain deferred.
+#33 adds the separate iteration-capture subset below; combined nested/transitive
+iteration-capture convergence and full WP11 release remain deferred.
+
+## Implemented read-only iteration captures (#33)
+
+Closures may read the numeric iteration binding of a `range` or `number[]` `for`.
+The frontend records `CaptureMutability::ReadOnly`. Before lowering helpers, the
+backend independently derives mutability from the original `For` binding's
+`BindingKind::Iteration` provenance and checks capture metadata against it; public
+metadata cannot grant write permission. Ordinary assignment and all five numeric
+compound writes (`+=`, `-=`, `*=`, `/=`, `%=`) to captured iteration bindings are
+rejected, including skipped and unreachable writes. Distinct shadowing lets retain
+their own mutability.
+
+The existing promotion path runs for each successfully yielded captured binding,
+before the body: after the range endpoint test and conversion/local set, or after
+the checked array element load/local set. It allocates a fresh uniform eight-byte
+cell for every yielded iteration, rather than reusing a previous iteration's cell.
+Promotion is eager and structural even if the capturing declaration is skipped.
+Empty/exhausted loops and failed yields allocate no iteration cell. Nonempty
+environments still allocate only when their declarations execute.
+
+Cells remain monotonic: they are neither reused nor reclaimed. Allocation may grow
+memory or trap without rollback. Endpoint-before-conversion range behavior, checked
+array loads, continue/break/return targets, array alias visibility and all existing
+loop/control semantics remain intact. There is no AST or ABI shape change; see
+[the private storage contract](memory-abi.md#private-closure-storage-30).
+
+Combined nested/transitive iteration-capture convergence and full WP11 release
+remain deferred. [#33 validation passed](#issue-33-validation-2026-10-15) for the
+read-only iteration-capture subset, not the full WP11 contract.
+
+## Issue #33 validation (2026-10-15)
+
+Validation passed for #33's read-only range/array iteration-capture subset, as
+reported by the integration owner and runtime-suite agent. Node.js v24.12.0 and
+wasm-pack 0.15.0 were available; no tools were installed. The browser build used
+`--mode no-install` and cached wasm-bindgen tooling even though its output included
+`Installing wasm-bindgen`. Current-source browser bindings were rebuilt before
+browser validation and the full include-ignored run.
+
+| Exact command (repository root) | Result |
+| --- | --- |
+| `cargo check --offline` | Passed during implementation slices |
+| `cargo check --offline --all-targets` | Passed; passed again after the review-driven assertion change |
+| `cargo test --offline --test closures_frontend --test closures_lowering --test closures_adapters` | Passed: 34 frontend, 47 lowering, 2 default adapter tests; 2 adapter tests ignored by default |
+| `cargo test --offline --test closures_runtime -- --ignored` | Runtime-suite agent reported 23 passed, exercising all four optimization levels |
+| `cargo test --offline --test closures_frontend --test closures_lowering --test closures_runtime --test closures_adapters -- --include-ignored` | Passed final focused run: 34 frontend, 47 lowering, 23 runtime and 4 adapter tests |
+| `wasm-pack build browser --target web --out-dir ../pkg --out-name was_compiler --mode no-install --no-opt --offline` | Passed; rebuilt current-source browser package |
+| `node tests/browser.cjs pkg` | Passed |
+| `cargo test --offline` | Passed complete default suite |
+| `cargo test --offline -- --include-ignored` | Passed complete suite including ignored runtime/browser cases |
+| `cargo clippy --offline --all-targets -- -D warnings` | Passed |
+| `cargo clippy --offline -p was-compiler-browser --target wasm32-unknown-unknown --lib -- -D warnings` | Passed |
+| `git --no-pager diff --check` | Passed |
+
+Independent review found no behavioral defect or standards violation, only optional
+code smells. One weak branch-depth assertion was strengthened to require the exact
+nested-region sequence `[BrIf1, Br3, Br5, Br0, Br0]`, plus an explicit continue latch
+followed by induction add/set/backedge. The subsequent `closures_lowering` rerun
+passed all 47 tests, and the all-target check passed again. This was a test-strength
+improvement, not a compiler behavior fix.
+
+The final focused include-ignored run and a subsequent full repository
+include-ignored rerun passed after the strengthened lowering assertions and
+all-five-compound forged-write checks. Runtime/browser tests retain their
+ignored-by-default policy.
+
+This validates #33's read-only iteration-capture subset. Combined nested/transitive
+iteration-capture convergence and full WP11 release remain deferred. Earlier issue
+records below retain their historical scope.
 
 ## Issue #32 validation (2026-10-14)
 

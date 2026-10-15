@@ -1,11 +1,11 @@
 # WAS Language Extensions — Unified Design and Implementation Specification
 
-**Status:** Design baseline with the 13 approved decisions and implementation clarifications (WP1–WP5 implementation complete: compound assignments, while transfers, block/if values, internal Never, statement/value loops, and range construction/internal calls, numeric membership, and range/array statement for; issue #6 adapter/interaction support implemented, all WP5 release gates passed (exact evidence in plan §5), WP6 named/default parameters are implemented and #13 release validation passed; WP7 acyclic result inference and named/default integration are implemented and #16 release validation passed; WP8 whitelist contracts are implemented and release gates passed (exact evidence in plan §5); WP9 match statements/values are implemented with frontend/backend integrated and [release gates passed](was_language_extensions_plan.md#wp9-release-validation); WP10 named-only pipelines are implemented, including positional/named/default binding and final-Void discard support (#27), with [release gates passed](was_language_extensions_plan.md#wp10-release-validation) on 2026-10-14; WP11's local callable (#29), immediate-creator shared parameter/let capture (#30), captured numeric compound (#31), and nested capture/live callable-context forwarding (#32) subsets are implemented in the frontend/backend; [#32 validation passed](local-callable-interface.md#issue-32-validation-2026-10-14); [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14); [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14), captured `for` bindings/full WP11 release remain deferred, WP12 remains proposed and WP13 requires separate authorization)
+**Status:** Design baseline with the 13 approved decisions and implementation clarifications (WP1–WP5 implementation complete: compound assignments, while transfers, block/if values, internal Never, statement/value loops, and range construction/internal calls, numeric membership, and range/array statement for; issue #6 adapter/interaction support implemented, all WP5 release gates passed (exact evidence in plan §5), WP6 named/default parameters are implemented and #13 release validation passed; WP7 acyclic result inference and named/default integration are implemented and #16 release validation passed; WP8 whitelist contracts are implemented and release gates passed (exact evidence in plan §5); WP9 match statements/values are implemented with frontend/backend integrated and [release gates passed](was_language_extensions_plan.md#wp9-release-validation); WP10 named-only pipelines are implemented, including positional/named/default binding and final-Void discard support (#27), with [release gates passed](was_language_extensions_plan.md#wp10-release-validation) on 2026-10-14; WP11's local callable (#29), immediate-creator shared parameter/let capture (#30), captured numeric compound (#31), and nested capture/live callable-context forwarding (#32) subsets are implemented in the frontend/backend; [#32 validation passed](local-callable-interface.md#issue-32-validation-2026-10-14); [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14); [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14). #33 implements [read-only iteration captures](local-callable-interface.md#implemented-read-only-iteration-captures-33) ([validation passed](local-callable-interface.md#issue-33-validation-2026-10-15)); combined nested/transitive iteration-capture convergence and full WP11 release remain deferred, WP12 remains proposed and WP13 requires separate authorization)
 **Version:** 0.3 — 9 October 2026 (implementation clarification update)  
 **Target:** Core WebAssembly, initially the MVP-compatible instruction set already used by `was-compiler`, with optional optimizations gated by Wasm features.  
 **Repository:** https://github.com/LuanRoger/was-compiler
 
-> **Normative language.** **MUST**, **SHOULD**, and **MAY** describe requirements, strong recommendations, and optional implementation choices. This document establishes a coherent semantic model, distinguishing implemented support from proposed extensions. Decisions tagged **Open decision** need confirmation before being frozen as language guarantees. Compound assignments (§4/WP1), bare `while` transfers (§7/WP2), block/if values with internal Never (§§3.2, 8.1/WP3), and statement/value loops (§7/WP4) are implemented. Range construction, internal calls, exact numeric membership (§5/WP5), and range/array statement `for` (§6/issues #4–#5) are also implemented, with adapter/interaction support under issue #6; all WP5 release gates passed (exact evidence in plan §5). WP6 user-function named/mixed-prefix calls and trailing pure defaults (§14/issues #10/#12) are implemented, and [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation). WP7 acyclic result inference (§9) and its named/default integration are implemented, and [#16 release validation passed](was_language_extensions_plan.md#issue-16-wp7-release-validation). Every recursive component member requires an explicit result in this initial release. WP8 whitelist contracts (§13) are implemented and [release gates passed](was_language_extensions_plan.md#wp8-release-validation), including rebuilt-browser and full ignored runtime coverage. WP9 match statements/values (§8.2–§8.3) are implemented with frontend/backend integrated and [release gates passed](was_language_extensions_plan.md#wp9-release-validation). WP10 named-only pipelines (§12) implement positional/named/default stage binding and final Void stages with discarded results (#27); implementation is complete and [release gates passed](was_language_extensions_plan.md#wp10-release-validation), including current-source rebuilt-browser and full ignored runtime coverage. WP11 local callables (#29), immediate-creator shared parameter/let captures (#30), captured numeric compounds (#31), and nested capture/live callable-context forwarding (#32) are implemented in the frontend/backend; [#32 validation passed](local-callable-interface.md#issue-32-validation-2026-10-14). Captured `for` bindings and full WP11 release remain deferred. [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14); #30 evidence predates it. [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14); captured `for` binding and WP12 placeholder examples remain proposed `.was` syntax.
+> **Normative language.** **MUST**, **SHOULD**, and **MAY** describe requirements, strong recommendations, and optional implementation choices. This document establishes a coherent semantic model, distinguishing implemented support from proposed extensions. Decisions tagged **Open decision** need confirmation before being frozen as language guarantees. Compound assignments (§4/WP1), bare `while` transfers (§7/WP2), block/if values with internal Never (§§3.2, 8.1/WP3), and statement/value loops (§7/WP4) are implemented. Range construction, internal calls, exact numeric membership (§5/WP5), and range/array statement `for` (§6/issues #4–#5) are also implemented, with adapter/interaction support under issue #6; all WP5 release gates passed (exact evidence in plan §5). WP6 user-function named/mixed-prefix calls and trailing pure defaults (§14/issues #10/#12) are implemented, and [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation). WP7 acyclic result inference (§9) and its named/default integration are implemented, and [#16 release validation passed](was_language_extensions_plan.md#issue-16-wp7-release-validation). Every recursive component member requires an explicit result in this initial release. WP8 whitelist contracts (§13) are implemented and [release gates passed](was_language_extensions_plan.md#wp8-release-validation), including rebuilt-browser and full ignored runtime coverage. WP9 match statements/values (§8.2–§8.3) are implemented with frontend/backend integrated and [release gates passed](was_language_extensions_plan.md#wp9-release-validation). WP10 named-only pipelines (§12) implement positional/named/default stage binding and final Void stages with discarded results (#27); implementation is complete and [release gates passed](was_language_extensions_plan.md#wp10-release-validation), including current-source rebuilt-browser and full ignored runtime coverage. WP11 local callables (#29), immediate-creator shared parameter/let captures (#30), captured numeric compounds (#31), and nested capture/live callable-context forwarding (#32) are implemented in the frontend/backend; [#32 validation passed](local-callable-interface.md#issue-32-validation-2026-10-14). #33 implements [read-only iteration captures](local-callable-interface.md#implemented-read-only-iteration-captures-33), with [validation passed](local-callable-interface.md#issue-33-validation-2026-10-15). Combined nested/transitive iteration-capture convergence and full WP11 release remain deferred. [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14); #30 evidence predates it. [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14); combined nested/transitive iteration-capture convergence remains deferred and WP12 placeholder examples remain proposed `.was` syntax.
 
 The [concrete implementation plan](was_language_extensions_plan.md) maps this
 specification to ordered work packages, repository files, acceptance tests, and
@@ -16,7 +16,7 @@ and bare `while` transfers (§7/WP2), followed by block/if values and internal N
 (§§3.2, 8.1/WP3) and statement/value loops (§7/WP4), are implemented;
 WP5's construction/internal-call, numeric membership, range-for, and array-for checkpoints are implemented;
 issue #6 completes adapter/interaction implementation and all release gates passed.
-Exact evidence is recorded in [plan §5](was_language_extensions_plan.md#5-documentation-and-validation-workflow). WP6 named/default parameters are implemented on main, and [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation). WP7 acyclic result inference and combined-feature integration are implemented, with [#16 release validation](was_language_extensions_plan.md#issue-16-wp7-release-validation). WP8 whitelist contracts are implemented, with [release gates passed](was_language_extensions_plan.md#wp8-release-validation). WP9 match statements/values are implemented with [release gates passed](was_language_extensions_plan.md#wp9-release-validation). WP10 named-only pipelines are implemented with named/default binding and final-Void discard support (#27); [release validation passed](was_language_extensions_plan.md#wp10-release-validation); WP11's local callable (#29), immediate-creator shared parameter/let capture (#30), captured numeric compound (#31), and nested capture/live callable-context forwarding (#32) subsets are implemented in the frontend/backend ([#32 validation passed](local-callable-interface.md#issue-32-validation-2026-10-14)), while captured `for` bindings/full WP11 release and WP12 remain deferred; [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14); [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14); WP13 requires separate authorization.
+Exact evidence is recorded in [plan §5](was_language_extensions_plan.md#5-documentation-and-validation-workflow). WP6 named/default parameters are implemented on main, and [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation). WP7 acyclic result inference and combined-feature integration are implemented, with [#16 release validation](was_language_extensions_plan.md#issue-16-wp7-release-validation). WP8 whitelist contracts are implemented, with [release gates passed](was_language_extensions_plan.md#wp8-release-validation). WP9 match statements/values are implemented with [release gates passed](was_language_extensions_plan.md#wp9-release-validation). WP10 named-only pipelines are implemented with named/default binding and final-Void discard support (#27); [release validation passed](was_language_extensions_plan.md#wp10-release-validation); WP11's local callable (#29), immediate-creator shared parameter/let capture (#30), captured numeric compound (#31), and nested capture/live callable-context forwarding (#32) subsets are implemented in the frontend/backend ([#32 validation passed](local-callable-interface.md#issue-32-validation-2026-10-14)). #33 implements [read-only iteration captures](local-callable-interface.md#implemented-read-only-iteration-captures-33) ([validation passed](local-callable-interface.md#issue-33-validation-2026-10-15)); combined nested/transitive iteration-capture convergence, full WP11 release and WP12 remain deferred; [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14); [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14); WP13 requires separate authorization.
 
 ## 1. Goals and non-goals
 
@@ -841,7 +841,7 @@ uses `Function.return_type: Option<Type>`; typed signatures remain concrete/full
 Anonymous local callables (#29) and immediate-creator shared parameter/let captures
 (#30), plus captured numeric compounds (#31) and nested capture/live callable-context
 forwarding (#32), are implemented in the frontend/backend; [#32 validation passed](local-callable-interface.md#issue-32-validation-2026-10-14).
-Captured `for` bindings/full WP11 release and optimization remain deferred; [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14).
+#33 implements [read-only iteration captures](local-callable-interface.md#implemented-read-only-iteration-captures-33) ([validation passed](local-callable-interface.md#issue-33-validation-2026-10-15)); combined nested/transitive iteration-capture convergence, full WP11 release and optimization remain deferred; [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14).
 
 ### 9.1 Syntax
 
@@ -919,7 +919,7 @@ Return inference is complete **before module type section emission**. It does no
 
 ## 10. Feature specification: anonymous functions and local closures
 
-**Implemented frontend/backend subsets (#29–#32):** explicitly typed positional/zero-argument local
+**Implemented frontend/backend subsets (#29–#33):** explicitly typed positional/zero-argument local
 callables, expression/tail-valued block/Void bodies, transparent initializer
 parentheses, direct lexical calls including earlier visible callable dependencies,
 and shared captures of ancestor parameters/ordinary lets of all concrete
@@ -929,7 +929,7 @@ places and creator-side promoted bindings, including before capturing declaratio
 with the checked-place rules in §4. #32 forwards original-binding captures through
 every intermediate helper and original live environments for earlier context-requiring
 callable dependencies; [validation passed](local-callable-interface.md#issue-32-validation-2026-10-14).
-Captured `for` bindings and full WP11 release remain deferred. [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14). [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14);
+#33 implements [read-only iteration captures](local-callable-interface.md#implemented-read-only-iteration-captures-33), with [validation passed](local-callable-interface.md#issue-33-validation-2026-10-15). Combined nested/transitive iteration-capture convergence and full WP11 release remain deferred. [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14). [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14);
 that evidence predates #31. The historical #29 record does not validate shared storage. The authoritative parent
 [issue #28](https://github.com/LuanRoger/was-compiler/issues/28) fixes the full
 contract; deferred portions below describe that target, not implemented support.
@@ -978,8 +978,10 @@ Rejected in v1: `fn apply(f: fn(number) -> number)`, `return multiply;`, `return
 #30 implements shared immediate-creator parameter/ordinary-let captures; #31 adds
 captured numeric compounds. #32 implements nested original-binding forwarding and
 earlier live callable-context dependencies in the frontend/backend, with
-validation passed. `for` captures remain future scope; references to them describe
-the accepted full WP11 contract only.
+validation passed. #33 implements read-only range/array iteration captures;
+[validation passed](local-callable-interface.md#issue-33-validation-2026-10-15).
+Combined nested/transitive iteration-capture convergence and full WP11 release
+remain deferred.
 
 **Decision: captures observe and can mutate the original lexical binding.** This overrides the former capture-by-value proposal.
 
@@ -994,8 +996,11 @@ the accepted full WP11 contract only.
   parameters/lets may be reassigned, with effects visible in outer code. #31 supports
   all five numeric compounds on captured scalar/indexed places and creator-side
   promoted bindings, preserving the original checked place and old value before
-  RHS effects. Capture of read-only `for` bindings remains deferred under full WP11,
-  retaining their write restriction. No implicit Rust-style immutable `let`
+  RHS effects. #33 allows read-only range/array `for` captures while rejecting
+  ordinary and all numeric compound writes, including skipped/unreachable writes.
+  Frontend records `CaptureMutability::ReadOnly`; before helper lowering, backend
+  independently derives it from original `For` / `BindingKind::Iteration` provenance
+  and checks metadata. No implicit Rust-style immutable `let`
   semantics are introduced.
 - Closures MUST NOT escape their enclosing **function invocation** in this release;
   that restriction does not weaken permitted shared mutation or lexical visibility.
@@ -1022,7 +1027,14 @@ a cell even if a later capturing declaration is skipped. Nonempty environments
 allocate only when their declarations execute; declarations never execute helper
 bodies. Cells and environment slots are uniformly eight-byte aligned/sized, with
 `f64` number or `i32` bool/handle cell payloads and `i32` cell-address slots.
-See [the authoritative private layout](memory-abi.md#private-closure-storage-30).
+#33 uses the existing promotion path after a successful range yield (endpoint test
+before conversion/local set) or checked array element load/local set, before the
+body. Each yielded captured iteration binding gets a fresh uniform eight-byte cell,
+eagerly even if the capturing declaration is skipped; empty/exhausted/failed yields
+allocate none. Cells are monotonic, never reused/reclaimed; environments allocate
+only at executed declarations. Existing loop/control/alias semantics and AST/ABI
+shapes are unchanged. See [the #33 contract](local-callable-interface.md#implemented-read-only-iteration-captures-33)
+and [the authoritative private layout](memory-abi.md#private-closure-storage-30).
 
 `TypedExprKind::Captured { owner, id, name }` qualifies helper reads, assignment
 targets and indexed array bases; creator accesses remain `Identifier`. Canonical
@@ -1075,7 +1087,8 @@ Semantic `InvalidClosure` uses stable reasons for placement (`a closure must ini
 value use (`a local callable binding cannot be used as a value; invoke it directly or use a named function`),
 reassignment (`a local callable binding cannot be reassigned`), and annotation
 (`a local callable binding cannot have a value type annotation`).
-The remaining staged reason is `capturing for bindings is not supported in this subset`.
+#33 removes the former `capturing for bindings is not supported in this subset`
+rejection; ordinary read-only-write checks apply instead.
 #32 removes the former nested-forwarding and context-requiring-dependency rejections;
 #31 removes the former captured-compound rejection. Ordinary scope, numeric and
 mutability checks remain.
@@ -1619,7 +1632,7 @@ WP11's local callable (#29), immediate-creator shared parameter/let capture
 (#30), captured numeric compound (#31), and nested capture/live callable-context
 forwarding (#32) subsets are implemented in the frontend/backend;
 [#32 validation passed](local-callable-interface.md#issue-32-validation-2026-10-14).
-Captured `for` bindings, full WP11 release and WP12 placeholders remain deferred. [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14); [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14).
+#33 implements [read-only iteration captures](local-callable-interface.md#implemented-read-only-iteration-captures-33) ([validation passed](local-callable-interface.md#issue-33-validation-2026-10-15)); combined nested/transitive iteration-capture convergence, full WP11 release and WP12 placeholders remain deferred. [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14); [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14).
 
 | Optimization | Feature(s) | Preconditions / warning |
 |---|---|---|

@@ -6,7 +6,7 @@ and registered host-function parameters/results. Language types remain distinct
 in semantic analysis even though both lower to `i32`; descriptors have no runtime
 type tag. Hosts must supply the type declared in their registration.
 
-## Local callable subsets (#29–#32)
+## Local callable subsets (#29–#33)
 
 Context-free helpers use direct calls with only explicit parameters. Their declarations
 allocate no environment or cells and do not execute helper bodies. Ordinary
@@ -84,8 +84,20 @@ precede RHS evaluation. No new storage layout or public ABI is introduced.
 helper and forwards earlier context-requiring callable environments transitively.
 Checked lowering verifies complete, unique, canonical capture/dependency metadata,
 lexical availability, original types/mutability and initialization, including forged
-sparse IDs. Capture of `for` bindings and full WP11 release remain deferred; no
-iteration cells are implemented.
+sparse IDs.
+
+#33 adds read-only captured iteration bindings for range/array `for`, with no AST
+or ABI shape change. A fresh uniform eight-byte `f64` cell allocates for each
+successfully yielded captured binding before the body: after the range endpoint
+test and conversion/local set, or the checked array element load/local set. The
+existing promotion path is structural and eager even when the capturing declaration
+is skipped. Empty/exhausted loops and failed yields allocate no iteration cell.
+Cells are monotonic, never reused or reclaimed; environments still allocate only
+at executed declarations. Existing loop/control/alias semantics are unchanged.
+See [the #33 contract](local-callable-interface.md#implemented-read-only-iteration-captures-33)
+and [validation passed](local-callable-interface.md#issue-33-validation-2026-10-15).
+Combined nested/transitive iteration-capture convergence and full WP11 release
+remain deferred.
 
 ## Descriptor layout
 

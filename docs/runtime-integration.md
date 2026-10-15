@@ -152,24 +152,29 @@ WP10 named-only pipelines are implemented (#27), with
 [release gates passed](was_language_extensions_plan.md#wp10-release-validation)
 on 2026-10-14. WP11 implements capture-free local callables (#29) and
 immediate-creator shared parameter/let captures (#30), plus captured numeric
-compounds (#31). Broader captures/full WP11
-release and WP12 placeholders remain deferred.
+compounds (#31). #32 adds nested parameter/let forwarding and live callable contexts;
+#33 adds read-only iteration captures, with [validation passed](local-callable-interface.md#issue-33-validation-2026-10-15).
+Combined nested/transitive iteration-capture convergence, full WP11 release and WP12 placeholders remain deferred.
 [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14),
 including rebuilt-browser and full ignored runtime coverage before #31.
 [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14). WP13 optimization
 requires separate authorization.
 
-## Local callables and shared captures (#29–#31)
+## Local callables and shared captures (#29–#33)
 
 The CLI and core accept `let twice = (x: number) => x * 2;` followed by
 `twice(21)`. Expression and tail-valued block bodies infer concrete results;
 zero-argument and Void helpers work too. #30 permits shared captures of immediate-
 creator parameters and ordinary lets of type `number`, `bool`, `string`, `number[]`
 or `range`. Reassignment from either side and ordinary indexed array mutation are
-supported. Earlier context-free callable composition remains supported. Nested
-helpers may capture their immediate creator's own bindings, not forward ancestor
-captures. Context-requiring callable dependencies and captured `for` bindings are
-deferred. #31 supports all five numeric compounds on captured scalar/indexed
+supported. #32 forwards original ancestor parameter/let cells and earlier live
+callable contexts. #33 permits read-only range/array iteration captures; ordinary
+and all numeric compound writes remain rejected even when skipped/unreachable.
+Each yielded captured binding receives a fresh eight-byte cell before the body,
+even if the closure declaration is skipped; empty/exhausted/failed yields allocate
+no cell. Cells are monotonic, never reused/reclaimed; environments allocate only
+at executed declarations. Combined nested/transitive iteration-capture convergence
+remains deferred. See [the #33 contract](local-callable-interface.md#implemented-read-only-iteration-captures-33). #31 supports all five numeric compounds on captured scalar/indexed
 places, including creator-side promoted bindings. The checked target and old value
 are retained before RHS effects, even if the RHS rebinds the array or grows memory.
 Ordinary indexed assignments also preserve their pre-RHS checked element address.

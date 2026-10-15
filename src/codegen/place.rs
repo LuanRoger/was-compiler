@@ -37,7 +37,8 @@ impl<'a> Place<'a> {
                 Ok(Self::Local(index))
             }
 
-            TypedExprKind::Captured { .. } => {
+            TypedExprKind::Captured { owner, id, .. } => {
+                body.check_capture_writable(*owner, *id, span)?;
                 let ty = body
                     .cell_address(target, span)?
                     .ok_or_else(|| invalid_target(body, span))?;

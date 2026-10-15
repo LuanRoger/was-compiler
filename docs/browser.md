@@ -275,8 +275,9 @@ WP10 named-only pipelines are implemented (#27), with
 [release gates passed](was_language_extensions_plan.md#wp10-release-validation)
 on 2026-10-14. WP11 implements capture-free local callables (#29) and
 immediate-creator shared parameter/let captures (#30), plus captured numeric
-compounds (#31). Broader captures/full WP11
-release and WP12 placeholders remain deferred. WP13 optimization requires separate
+compounds (#31). #32 adds nested parameter/let forwarding and live callable contexts;
+#33 adds read-only iteration captures, with [validation passed](local-callable-interface.md#issue-33-validation-2026-10-15).
+Combined nested/transitive iteration-capture convergence, full WP11 release and WP12 placeholders remain deferred. WP13 optimization requires separate
 authorization. [#30 validation passed](local-callable-interface.md#issue-30-validation-2026-10-14),
 including rebuilt-browser coverage at the #30 checkpoint, before #31.
 [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14). Rebuild `pkg/` after future
@@ -286,9 +287,14 @@ The shared core accepts `let twice = (x: number) => x * 2;` and direct positiona
 lexical calls, plus shared captures of immediate-creator parameters/ordinary lets
 of type `number`, `bool`, `string`, `number[]` or `range`. Captured reassignment and
 ordinary indexed array mutation preserve original bindings and alias semantics.
-Nested helpers may capture their immediate creator's own bindings; ancestor
-forwarding, context-requiring callable dependencies and captured `for` bindings
-remain deferred. #31 adds all five numeric compounds on captured scalar/indexed
+#32 forwards original ancestor parameter/let cells and earlier live callable
+contexts. #33 permits read-only range/array iteration captures; ordinary/all numeric
+compound writes are rejected even when skipped/unreachable. Each yielded captured
+binding receives a fresh eight-byte cell before the body, even if the capturing
+declaration is skipped; empty/exhausted/failed yields allocate no cell. Environments
+allocate only at executed declarations; cells are monotonic, never reused/reclaimed.
+See [the #33 contract](local-callable-interface.md#implemented-read-only-iteration-captures-33).
+Combined nested/transitive iteration-capture convergence remains deferred. #31 adds all five numeric compounds on captured scalar/indexed
 places and creator-side promoted bindings, preserving the original checked target
 and old value across RHS effects. Ordinary indexed assignments also preserve
 their pre-RHS checked address.
