@@ -1,5 +1,10 @@
 # WP11 local closures: design interview
 
+**Workspace relocation:** Test paths below reflect the original interview.
+Compiler suites now live in `crates/compiler/tests/`; adapter suites are split
+between `crates/cli/tests/` and `crates/browser/tests/`. See
+[current validation](validation.md).
+
 This historical design interview records the accepted decisions confirmed on
 2026-10-14; it did not itself authorize implementation or establish release evidence.
 WP11 is now implemented with [#35 release gates passed on 2026-10-15](local-callable-interface.md#issue-35-wp11-release-validation-2026-10-15).

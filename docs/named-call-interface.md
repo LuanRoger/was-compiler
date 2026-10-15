@@ -1,5 +1,10 @@
 # Named/default call interface
 
+**Workspace paths:** Compiler modules and tests now live in `crates/compiler/`;
+CLI/browser tests belong to their adapter packages. Historical gate records below
+retain their original paths. See [current validation](validation.md); the package
+extraction does not change normalized-call ownership or the public AST contract.
+
 The user approved the WP6/WP7 shared design and parser/semantic, public typed-tree
 compilation, and source-to-Wasm/runtime test seams. This document distinguishes
 the current #10/#12 named/default contract from the historical #10 named-only

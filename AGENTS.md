@@ -54,6 +54,23 @@ Use the five default triage labels. Before triaging, read
 Use a single-context layout. Before codebase exploration, read
 `docs/agents/domain.md`.
 
+## Workspace and validation ownership
+
+The virtual root owns `crates/compiler` (`was-compiler`, library `was_compiler`),
+`crates/cli` (`was-compiler-cli`, binary `was-compiler`), and `crates/browser`
+(`was-compiler-browser`). Compiler and CLI are default members. Keep production
+core dependencies portable and free of adapter dependencies; compiler stages remain
+modules. Root `cargo run`/`cargo test` still work; installation uses
+`cargo install --offline --path crates/cli`. Shared assets/support remain under
+root `tests/`; test targets belong to their owning package. Browser tests need
+explicit package selection or `--workspace`.
+
+Before changing validation jobs, package boundaries, or benchmarks, read
+[validation](docs/validation.md), [ADR 0005](docs/adr/0005-compiler-and-adapter-workspace-boundaries.md),
+and [benchmark timing rules](docs/benchmarks.md). Root `bacon.toml` provides
+interactive jobs and manual fast/full chains, not a finite agent command.
+Use the documented direct commands for bounded validation evidence.
+
 ## Compiler pipeline and ownership
 
 ```text
@@ -71,35 +88,37 @@ bypasses the compiler's optimization/options orchestration.
 
 | Location | Responsibility |
 | --- | --- |
-| `src/lib.rs`, `src/compiler.rs` | Public API, configuration, pipeline, stage errors |
-| `src/tokens.rs`, `src/lexer.rs` | Tokens and UTF-8 byte-offset spans |
-| `src/parser.rs`, `src/ast.rs` | Recursive-descent parsing and untyped syntax |
-| `src/semantic.rs`, `src/typed_ast.rs` | Types, scopes, loop targets, return analysis, resolved semantic IDs |
-| `src/semantic/defaults.rs`, `src/semantic/pure_expression.rs`, `src/semantic/call_binding.rs` | Declaration-checked defaults/contracts, shared whitelist, and hygienic named/default binding |
-| `src/number_literal.rs` | Shared literal syntax/finite-representability rules with stage-specific errors |
-| `src/match_patterns.rs` | Shared semantic/backend numeric-pattern, domain and exhaustiveness checks |
-| `src/flow.rs` | Private completion sets shared by semantic/backend flow summaries |
-| `src/host.rs`, `src/exports.rs` | Ordered host declarations, private external-type eligibility, and owned export selection |
-| `src/optimization.rs` | Borrowed `Cow<TypedProgram>` no-op; future transformation boundary |
-| `src/codegen/abi.rs` | Internal language-to-Wasm signatures, separate external signature checks, and named memory-layout constants |
-| `src/codegen/layout.rs`, `src/codegen/indices.rs` | Signatures, callees, exports, distinct Wasm index types |
-| `src/codegen/walker.rs` | Shared structural traversal for separate planning policies |
-| `src/codegen/locals.rs`, `src/codegen/temporaries.rs` | Local-slot and temporary planning |
-| `src/codegen/function.rs` | `BodyEmitter`, scoped initialized bindings, private emission context |
-| `src/codegen/expression.rs`, `src/codegen/statement.rs` | Expression and statement lowering |
-| `src/codegen/place.rs` | Shared checked local/index places, ordinary and compound assignment |
-| `src/codegen/control_flow.rs`, `src/codegen/call.rs`, `src/codegen/values.rs` | Structured control flow, calls, literal values |
-| `src/codegen/memory.rs`, `src/codegen/numeric.rs` | Memory planning/helpers and optional floating remainder helper |
-| `src/codegen/range.rs` | Private range discovery, construction, record-validation, and exact membership helpers |
-| `src/codegen/match_.rs` | Private checked match lowering, scrutinee cache, scoped arms and ordered comparison regions |
-| `tests/match_frontend.rs`, `tests/match_lowering.rs` | Match syntax/inference and forged-tree/decoded lowering contracts |
-| `tests/match_runtime.rs`, `tests/match_adapters.rs` | Bounded match effects and CLI/current-source browser compatibility |
-| `src/codegen/validation.rs`, `src/codegen/mod.rs` | Checked internal boundary and section assembly |
-| `src/diagnostic.rs` | Shared native/browser diagnostic rendering |
-| `src/main.rs`, `src/cli.rs` | Thin native entry point and clap/file/output adapter |
-| `browser/src/lib.rs` | Separate wasm-bindgen compiler adapter using the same core pipeline |
+| `crates/compiler/src/lib.rs`, `crates/compiler/src/compiler.rs` | Public API, configuration, pipeline, stage errors |
+| `crates/compiler/src/tokens.rs`, `crates/compiler/src/lexer.rs` | Tokens and UTF-8 byte-offset spans |
+| `crates/compiler/src/parser.rs`, `crates/compiler/src/ast.rs` | Recursive-descent parsing and untyped syntax |
+| `crates/compiler/src/semantic.rs`, `crates/compiler/src/typed_ast.rs` | Types, scopes, loop targets, return analysis, resolved semantic IDs |
+| `crates/compiler/src/semantic/defaults.rs`, `crates/compiler/src/semantic/pure_expression.rs`, `crates/compiler/src/semantic/call_binding.rs` | Declaration-checked defaults/contracts, shared whitelist, and hygienic named/default binding |
+| `crates/compiler/src/number_literal.rs` | Shared literal syntax/finite-representability rules with stage-specific errors |
+| `crates/compiler/src/match_patterns.rs` | Shared semantic/backend numeric-pattern, domain and exhaustiveness checks |
+| `crates/compiler/src/flow.rs` | Private completion sets shared by semantic/backend flow summaries |
+| `crates/compiler/src/host.rs`, `crates/compiler/src/exports.rs` | Ordered host declarations, private external-type eligibility, and owned export selection |
+| `crates/compiler/src/optimization.rs` | Borrowed `Cow<TypedProgram>` no-op; future transformation boundary |
+| `crates/compiler/src/codegen/abi.rs` | Internal language-to-Wasm signatures, separate external signature checks, and named memory-layout constants |
+| `crates/compiler/src/codegen/layout.rs`, `crates/compiler/src/codegen/indices.rs` | Signatures, callees, exports, distinct Wasm index types |
+| `crates/compiler/src/codegen/walker.rs` | Shared structural traversal for separate planning policies |
+| `crates/compiler/src/codegen/locals.rs`, `crates/compiler/src/codegen/temporaries.rs` | Local-slot and temporary planning |
+| `crates/compiler/src/codegen/function.rs` | `BodyEmitter`, scoped initialized bindings, private emission context |
+| `crates/compiler/src/codegen/expression.rs`, `crates/compiler/src/codegen/statement.rs` | Expression and statement lowering |
+| `crates/compiler/src/codegen/place.rs` | Shared checked local/index places, ordinary and compound assignment |
+| `crates/compiler/src/codegen/control_flow.rs`, `crates/compiler/src/codegen/call.rs`, `crates/compiler/src/codegen/values.rs` | Structured control flow, calls, literal values |
+| `crates/compiler/src/codegen/memory.rs`, `crates/compiler/src/codegen/numeric.rs` | Memory planning/helpers and optional floating remainder helper |
+| `crates/compiler/src/codegen/range.rs` | Private range discovery, construction, record-validation, and exact membership helpers |
+| `crates/compiler/src/codegen/match_.rs` | Private checked match lowering, scrutinee cache, scoped arms and ordered comparison regions |
+| `crates/compiler/tests/match_frontend.rs`, `crates/compiler/tests/match_lowering.rs` | Match syntax/inference and forged-tree/decoded lowering contracts |
+| `crates/compiler/tests/match_runtime.rs`, `crates/cli/tests/match_adapters.rs`, `crates/browser/tests/match_adapters.rs` | Bounded match effects and CLI/current-source browser compatibility |
+| `crates/compiler/src/codegen/validation.rs`, `crates/compiler/src/codegen/mod.rs` | Checked internal boundary and section assembly |
+| `crates/compiler/src/diagnostic.rs` | Shared native/browser diagnostic rendering |
+| `crates/cli/src/main.rs`, `crates/cli/src/cli.rs` | Thin native entry point and clap/file/output adapter |
+| `crates/browser/src/lib.rs` | Separate wasm-bindgen compiler adapter using the same core pipeline |
 | `runtime/`, `examples/browser/` | Optional Node execution helpers and browser playground |
-| `tests/`, `src/codegen/tests/`, `src/codegen/memory_tests/` | Integration contracts and focused backend suites |
+| `crates/*/tests/`, `tests/fixtures/`, `tests/support/` | Package-owned integration contracts and shared test-only assets |
+| `crates/compiler/src/codegen/tests/`, `crates/compiler/src/codegen/memory_tests/` | Focused backend suites |
+| `crates/compiler/benches/` | Native compiler timing boundaries and deterministic workloads |
 
 `src-python/` contains separate Python parser/REPL code. It is outside the Cargo
 pipeline and is not authoritative for the Rust compiler's language behavior.
@@ -276,8 +295,8 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   WP13 optimization are outside WP11. Use [#35's release evidence](docs/local-callable-interface.md#issue-35-wp11-release-validation-2026-10-15)
   for full native/current-source browser validation; earlier subsets retain their
   historical scope.
-- Keep `tests/closures_frontend.rs`, `tests/closures_lowering.rs`,
-  `tests/closures_runtime.rs`, and `tests/closures_adapters.rs` at the confirmed
+- Keep `crates/compiler/tests/closures_frontend.rs`, `crates/compiler/tests/closures_lowering.rs`,
+  `crates/compiler/tests/closures_runtime.rs`, and `crates/cli/tests/closures_adapters.rs`, `crates/browser/tests/closures_adapters.rs` at the confirmed
   compiler/typed-input/adapter seams. Runtime cases remain ignored by default.
 
 ### Named-only pipelines (WP10 implemented, #27 release gates passed)
@@ -307,8 +326,8 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
 - Discard context is source-semantic, with no typed wrapper or public discard flag.
   It is not wholly reconstructible from forged typed input; retain independent backend
   injection ownership, type and flow checks. Ordinary calls, defaults and ABI are unchanged.
-- `tests/pipelines_frontend.rs`, `tests/pipelines_lowering.rs`,
-  `tests/pipelines_runtime.rs`, and `tests/pipelines_adapters.rs` own source,
+- `crates/compiler/tests/pipelines_frontend.rs`, `crates/compiler/tests/pipelines_lowering.rs`,
+  `crates/compiler/tests/pipelines_runtime.rs`, and `crates/compiler/tests/pipelines_adapters.rs`, `crates/cli/tests/pipelines_adapters.rs`, `crates/browser/tests/pipelines_adapters.rs` own source,
   forged-tree/decoded, bounded-effects and native/current-source browser coverage.
   Keep runtime/browser cases ignored by default. WP10 is implemented;
   [#27 release validation passed](docs/was_language_extensions_plan.md#wp10-release-validation),
@@ -333,8 +352,8 @@ refactors; specify and test any intentional behavior change explicitly.
   and recursion. Raw exports stay full-arity. Keep checks at every optimization level.
 - The structural walker visits contracts before bodies. Preserve separate planners and
   checked lowering's parameter-only read/type checks for mutable public typed trees.
-  `tests/contracts_frontend.rs`, `tests/contracts_lowering.rs`,
-  `tests/contracts_runtime.rs`, and `tests/contracts_adapters.rs` cover these boundaries;
+  `crates/compiler/tests/contracts_frontend.rs`, `crates/compiler/tests/contracts_lowering.rs`,
+  `crates/compiler/tests/contracts_runtime.rs`, and `crates/cli/tests/contracts_adapters.rs`, `crates/browser/tests/contracts_adapters.rs` cover these boundaries;
   runtime/browser cases retain the default ignored policy.
 
 ### Match statements and values (WP9)
@@ -373,16 +392,16 @@ refactors; specify and test any intentional behavior change explicitly.
   and arbitrary nonempty host module/field names. This breaks prior exact-name
   uses deliberately; it adds no ignored bindings or placeholders. Match remains
   outside the default/contract pure whitelist, including forged backend trees.
-- Share pattern checks through `src/match_patterns.rs`; keep checked lowering in
-  private `src/codegen/match_.rs`. The walker visits scrutinee then scoped arms;
+- Share pattern checks through `crates/compiler/src/match_patterns.rs`; keep checked lowering in
+  private `crates/compiler/src/codegen/match_.rs`. The walker visits scrutinee then scoped arms;
   retain separate locals/scratch/memory/range/remainder policies and deterministic
   pattern-string discovery. Preserve pattern-only and arm-through-RHS byte spans,
   checked annotations/flow, label identities and scoped initialization restoration.
-- `tests/match_frontend.rs` owns syntax/spans/reservation/domain/coverage/scope and
-  inference/structural-join tests; `tests/match_lowering.rs` owns forged trees,
+- `crates/compiler/tests/match_frontend.rs` owns syntax/spans/reservation/domain/coverage/scope and
+  inference/structural-join tests; `crates/compiler/tests/match_lowering.rs` owns forged trees,
   validator and independent decoded cache/result-region/branch-depth/planner checks.
-  `tests/match_runtime.rs` owns bounded effects, overlaps, strings, fractional/NaN
-  cases and transfers; `tests/match_adapters.rs` owns CLI bytes/diagnostics,
+  `crates/compiler/tests/match_runtime.rs` owns bounded effects, overlaps, strings, fractional/NaN
+  cases and transfers; `crates/cli/tests/match_adapters.rs`, `crates/browser/tests/match_adapters.rs` owns CLI bytes/diagnostics,
   reservations and rebuilt-browser compatibility. Preserve their default ignored
   runtime/browser policy; release evidence comes from the explicit runs linked
   above, not default Cargo success.
@@ -537,10 +556,10 @@ refactors; specify and test any intentional behavior change explicitly.
 - The structural walker visits iterable then body within body block hooks. Keep
   local/memory/temporary/remainder policies separate, with no-reuse scratch slots
   and checks for forged trees and all unreachable/skipped children.
-  `tests/for_frontend.rs` covers syntax/types/scopes and transfer rules;
-  `tests/for_lowering.rs` covers forged trees and decoded planner/lowering contracts;
-  `tests/for_loops.rs` covers deterministic layout, imports/exports, and bounded
-  runtime behavior at all optimization levels. `tests/array_for_loops.rs` is the
+  `crates/compiler/tests/for_frontend.rs` covers syntax/types/scopes and transfer rules;
+  `crates/compiler/tests/for_lowering.rs` covers forged trees and decoded planner/lowering contracts;
+  `crates/compiler/tests/for_loops.rs` covers deterministic layout, imports/exports, and bounded
+  runtime behavior at all optimization levels. `crates/compiler/tests/array_for_loops.rs` is the
   array-for suite. Issue #6 adds CLI/browser and cross-feature coverage; adapters
   give actionable private-range host errors while retaining external-signature
   rejection. For cross-feature test coverage, read the
@@ -622,7 +641,7 @@ refactors; specify and test any intentional behavior change explicitly.
 
 ### Memory and host ABI
 
-- Centralize production constants/signatures in `src/codegen/abi.rs` and helper
+- Centralize production constants/signatures in `crates/compiler/src/codegen/abi.rs` and helper
   ordering in `Helper::ALL`; do not duplicate magic offsets in emitters.
 - Raw types: `number = f64`; `bool = i32`; strings/arrays = `i32` handles despite
   being distinct language types. Normalize host boolean boundaries to `0`/`1`.
@@ -758,6 +777,7 @@ broader checks. Bound long-running commands in agent tools.
 ```sh
 cargo test --offline
 cargo clippy --offline --all-targets -- -D warnings
+cargo build --offline -p was-compiler --lib --target wasm32-unknown-unknown
 ```
 
 For core/browser changes, rebuild `pkg/` before browser tests or the full ignored
@@ -767,9 +787,9 @@ Rust dependencies are prerequisites. `--mode no-install` avoids tooling installa
 There is no root `browser` feature; the dedicated workspace crate is the adapter.
 
 ```sh
-wasm-pack build browser --target web --out-dir ../pkg --out-name was_compiler --mode no-install --no-opt --offline
+wasm-pack build crates/browser --target web --out-dir ../../pkg --out-name was_compiler --mode no-install --no-opt --offline
 node tests/browser.cjs pkg
-cargo test --offline -- --include-ignored
+cargo test --offline --workspace -- --include-ignored
 cargo clippy --offline -p was-compiler-browser --target wasm32-unknown-unknown --lib -- -D warnings
 ```
 

@@ -1,0 +1,106 @@
+# Run from the workspace root. Direct commands and ordered gates: docs/validation.md.
+default_job = "check"
+default_watch = false
+watch = ["crates", "tests", "runtime", "examples", "Cargo.toml", "Cargo.lock"]
+need_stdout = true
+extraneous_args = false
+env.CARGO_NET_OFFLINE = "true"
+
+[jobs.check]
+command = ["cargo", "check", "--offline", "--all-targets"]
+
+[jobs.test]
+command = ["cargo", "test", "--offline"]
+
+[jobs.clippy]
+command = ["cargo", "clippy", "--offline", "--all-targets", "--", "-D", "warnings"]
+
+[jobs.core-wasm]
+command = ["cargo", "build", "--offline", "-p", "was-compiler", "--lib", "--target", "wasm32-unknown-unknown"]
+
+[jobs.architecture]
+command = ["cargo", "test", "--offline", "-p", "was-compiler", "--test", "workspace_contract"]
+
+# Browser jobs are manual: artifact freshness is established by the full chain.
+[jobs.browser-build]
+command = ["wasm-pack", "build", "crates/browser", "--target", "web", "--out-dir", "../../pkg", "--out-name", "was_compiler", "--mode", "no-install", "--no-opt", "--offline"]
+watch = []
+
+[jobs.browser-test]
+command = ["cargo", "test", "--offline", "-p", "was-compiler-browser", "--tests", "--", "--include-ignored"]
+watch = []
+
+[jobs.runtime]
+command = ["cargo", "test", "--offline", "--", "--include-ignored"]
+watch = []
+
+[jobs.browser-clippy]
+command = ["cargo", "clippy", "--offline", "-p", "was-compiler-browser", "--target", "wasm32-unknown-unknown", "--lib", "--", "-D", "warnings"]
+watch = []
+
+[jobs.bench]
+command = ["cargo", "bench", "--offline", "-p", "was-compiler", "--bench", "compiler"]
+watch = []
+
+[jobs.bench-smoke]
+command = ["cargo", "bench", "--offline", "-p", "was-compiler", "--bench", "compiler", "--", "--test"]
+watch = []
+
+# Separate chain nodes keep standalone jobs standalone and prevent action cycles.
+[jobs.fast]
+command = ["cargo", "test", "--offline"]
+watch = []
+on_success = "job:fast-clippy"
+
+[jobs.fast-clippy]
+command = ["cargo", "clippy", "--offline", "--all-targets", "--", "-D", "warnings"]
+watch = []
+on_success = "job:fast-core-wasm"
+
+[jobs.fast-core-wasm]
+command = ["cargo", "build", "--offline", "-p", "was-compiler", "--lib", "--target", "wasm32-unknown-unknown"]
+watch = []
+on_success = "job:fast-architecture"
+
+[jobs.fast-architecture]
+command = ["cargo", "test", "--offline", "-p", "was-compiler", "--test", "workspace_contract"]
+watch = []
+
+[jobs.full]
+command = ["cargo", "test", "--offline"]
+watch = []
+on_success = "job:full-clippy"
+
+[jobs.full-clippy]
+command = ["cargo", "clippy", "--offline", "--all-targets", "--", "-D", "warnings"]
+watch = []
+on_success = "job:full-core-wasm"
+
+[jobs.full-core-wasm]
+command = ["cargo", "build", "--offline", "-p", "was-compiler", "--lib", "--target", "wasm32-unknown-unknown"]
+watch = []
+on_success = "job:full-architecture"
+
+[jobs.full-architecture]
+command = ["cargo", "test", "--offline", "-p", "was-compiler", "--test", "workspace_contract"]
+watch = []
+on_success = "job:full-browser-build"
+
+[jobs.full-browser-build]
+command = ["wasm-pack", "build", "crates/browser", "--target", "web", "--out-dir", "../../pkg", "--out-name", "was_compiler", "--mode", "no-install", "--no-opt", "--offline"]
+watch = []
+on_success = "job:full-browser-test"
+
+[jobs.full-browser-test]
+command = ["cargo", "test", "--offline", "-p", "was-compiler-browser", "--tests", "--", "--include-ignored"]
+watch = []
+on_success = "job:full-runtime"
+
+[jobs.full-runtime]
+command = ["cargo", "test", "--offline", "--", "--include-ignored"]
+watch = []
+on_success = "job:full-browser-clippy"
+
+[jobs.full-browser-clippy]
+command = ["cargo", "clippy", "--offline", "-p", "was-compiler-browser", "--target", "wasm32-unknown-unknown", "--lib", "--", "-D", "warnings"]
+watch = []

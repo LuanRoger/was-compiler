@@ -1,5 +1,10 @@
 # Issues #12 and #11: development handoff
 
+**Workspace relocation:** This historical record retains its original paths and
+commands. Current implementation/tests belong to `crates/compiler/`, `crates/cli/`,
+and `crates/browser/`; shared test assets remain at root. See
+[current validation](validation.md) for live commands.
+
 This is the historical independent-development record. WP6 is now integrated on
 `main` and #13's release validation passed; see
 [the release evidence](was_language_extensions_plan.md#issue-13-wp6-release-validation).

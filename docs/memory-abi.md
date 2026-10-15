@@ -45,7 +45,7 @@ dependencies, so a helper without value captures can still need an environment.
 Slot offsets are `8 * slot_index`; sizes/offsets use checked arithmetic. The unused
 four bytes of an `i32` cell/slot are not a host-readable field or tag. Uniform
 slots trade space for simple deterministic alignment instead of packed four-byte
-pointer slots. Layout constants remain private in `src/codegen/abi.rs`.
+pointer slots. Layout constants remain private in `crates/compiler/src/codegen/abi.rs`.
 
 Promotion is structural and eager. Captured parameter cells allocate in formal
 order **after all explicit parameter validation and ordered contracts**. A captured
@@ -240,19 +240,19 @@ no-free policy as other bump-allocated values. See
 ## Layout ownership and compatibility checks
 
 The compiler's private layout constants live in
-[`src/codegen/abi.rs`](../src/codegen/abi.rs), alongside language-to-Wasm type
+[`crates/compiler/src/codegen/abi.rs`](../crates/compiler/src/codegen/abi.rs), alongside language-to-Wasm type
 lowering. Descriptor size/offsets, descriptor and numeric-payload alignment,
 element widths, and allocation alignment/minimum size have distinct names even
 where their current values coincide. Memory code owns page sizes and limits.
-`Helper::ALL` in [`memory.rs`](../src/codegen/memory.rs) defines the canonical
+`Helper::ALL` in [`memory.rs`](../crates/compiler/src/codegen/memory.rs) defines the canonical
 memory-helper order used for indices, layout planning, and module emission.
 
 The optional host adapter [`runtime/abi.cjs`](../runtime/abi.cjs) keeps its own
 private named layout constants. These are implementation definitions, not a new
-configurable ABI or public schema. [`tests/abi.rs`](../tests/abi.rs) pins independent
+configurable ABI or public schema. [`crates/compiler/tests/abi.rs`, `crates/cli/tests/abi.rs`](../crates/compiler/tests/abi.rs) pins independent
 literal descriptor bytes and a complete pre-refactor module fixture, compares
 CLI and library output, and exercises guest/host compatibility.
-[`tests/runtime.rs`](../tests/runtime.rs) independently checks host-created bytes,
+[`crates/compiler/tests/runtime.rs`](../crates/compiler/tests/runtime.rs) independently checks host-created bytes,
 copy isolation, and memory-growth view refresh. Expected layouts intentionally do
 not derive from production constants, so matching mistakes cannot hide ABI drift.
 

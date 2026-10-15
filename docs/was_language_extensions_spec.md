@@ -387,15 +387,15 @@ or record-validation-before-candidate ordering.
 
 ### 5.5 Acceptance tests
 
-**Implemented checkpoint coverage:** `tests/range_frontend.rs`, `tests/ranges.rs`,
-and `src/codegen/range_tests.rs` cover syntax/types, exact/Never joins, construction
+**Implemented checkpoint coverage:** `crates/compiler/tests/range_frontend.rs`, `crates/compiler/tests/ranges.rs`,
+and `crates/compiler/src/codegen/range_tests.rs` cover syntax/types, exact/Never joins, construction
 validation/effects, independent record bytes and decoded Wasm, internal signatures,
 host/selected-export rejection, equality rejection, and forged typed input. Runtime
 cases retain the ignored Node-test policy; default tests alone do not establish
 runtime coverage.
 
-**Implemented membership coverage:** `tests/range_frontend.rs` and
-`tests/ranges.rs` cover reserved names, comparison precedence/left associativity,
+**Implemented membership coverage:** `crates/compiler/tests/range_frontend.rs` and
+`crates/compiler/tests/ranges.rs` cover reserved names, comparison precedence/left associativity,
 exact/Never operand typing, checking both children, and decoded integer congruence
 without floating remainder. Node execution retains the ignored-test policy;
 default Cargo success alone does not establish runtime coverage.
@@ -548,16 +548,16 @@ separate local/memory/temporary/remainder policies and no-reuse scratch slots.
 
 **Implemented test coverage:**
 
-- `tests/for_frontend.rs` covers syntax/reserved names and source spans, iterable
+- `crates/compiler/tests/for_frontend.rs` covers syntax/reserved names and source spans, iterable
   typing, statement versus expression contexts, read-only writes and mutable
   shadowing, binding scope, nearest-active/iterable transfer targets, unreachable
   value-break rejection, conservative empty-iterable flow, and analyzer reuse after errors.
-- `tests/for_lowering.rs` covers forged types/results/IDs/targets, read-only writes
+- `crates/compiler/tests/for_lowering.rs` covers forged types/results/IDs/targets, read-only writes
   and exact error spans, initialization/scope restoration, scratch types/preorder,
   consumed-record validation/caching before loop regions, and independent decoded
   conversion/latch depths with `wasmparser::Validator`. Rejections preserve the
   typed input across export selections and all optimization levels.
-- `tests/for_loops.rs` covers deterministic output at all optimization levels, owned
+- `crates/compiler/tests/for_loops.rs` covers deterministic output at all optimization levels, owned
   import snapshots, export indices/body preservation, helper counts and distinct
   scratch slots. Ignored bounded Node cases compare exact yields/exhaustion and
   membership against an independent BigInt progression reference near ±safe limits,
@@ -565,13 +565,13 @@ separate local/memory/temporary/remainder policies and no-reuse scratch slots.
   nested body/iterable transfers, consumed-record validation even for empty ranges,
   and field caching before body effects. Node cases are ignored by default;
   default Cargo success alone does not establish runtime coverage.
-- `tests/array_for_loops.rs` is the numeric-array iteration suite; the existing
-  `tests/for_frontend.rs` and `tests/for_lowering.rs` cover shared frontend and
+- `crates/compiler/tests/array_for_loops.rs` is the numeric-array iteration suite; the existing
+  `crates/compiler/tests/for_frontend.rs` and `crates/compiler/tests/for_lowering.rs` cover shared frontend and
   checked-lowering boundaries. Test presence is not a claim that runtime validation
   or adapter/interaction release gates passed.
 
 Current CLI/browser adapters compile range and array for through the shared core.
-Issue #6 adds adapter/interaction coverage in `tests/cli.rs` and `tests/browser.cjs`
+Issue #6 adds adapter/interaction coverage in `crates/cli/tests/cli.rs` and `tests/browser.cjs`
 across optimization levels, including export/private-signature rejection,
 diagnostics, aliases, compounds, value regions, and trap/effect order. The CLI
 passes `range` host types to core rejection with supported-type guidance; the
@@ -816,8 +816,8 @@ These are the frozen v1 rules, not optimizer proposals.
 
 WP9 currently uses ordered comparison chains, one cached scrutinee (`f64` for
 number, `i32` for bool/string), scoped arms and MVP single-result regions. A Never
-scrutinee needs no fabricated cached value. Shared `src/match_patterns.rs` checks
-constants/domains/coverage; private `src/codegen/match_.rs` reconstructs checked
+scrutinee needs no fabricated cached value. Shared `crates/compiler/src/match_patterns.rs` checks
+constants/domains/coverage; private `crates/compiler/src/codegen/match_.rs` reconstructs checked
 results/flow. The walker visits scrutinee then all scoped arms; static pattern
 strings and scratch slots are discovered deterministically by separate policies.
 No new ABI or helper kind is introduced. The opportunities below are **future

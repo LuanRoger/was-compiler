@@ -1,9 +1,11 @@
 # Compiling source in the browser
 
-The dedicated `browser/` workspace crate (`was-compiler-browser`) depends on the
-root compiler library and builds it as WebAssembly with a `wasm-bindgen`
-JavaScript interface. There is no root `browser` feature; the native root crate
-remains the default workspace member. The browser can then compile editable
+The dedicated `crates/browser/` workspace crate (`was-compiler-browser`) depends
+on the portable `crates/compiler/` library and builds it as WebAssembly with a
+`wasm-bindgen` JavaScript interface. There is no root `browser` feature; compiler
+and CLI are the default workspace members. Select browser tests explicitly with
+`cargo test --offline -p was-compiler-browser --tests -- --include-ignored` after
+rebuilding the package, or use `bacon full` (see [validation](validation.md)). The browser can then compile editable
 source into a **second, independent WebAssembly module**, instantiate it, and
 explicitly call an exported function. Compilation happens locally; no compilation
 service, npm packages, or `runtime/*.cjs` files are needed.
@@ -20,10 +22,10 @@ cargo install wasm-pack --locked
 From the project root, build the web package:
 
 ```text
-wasm-pack build browser --target web --out-dir ../pkg --out-name was_compiler --mode no-install --no-opt --offline
+wasm-pack build crates/browser --target web --out-dir ../../pkg --out-name was_compiler --mode no-install --no-opt --offline
 ```
 
-The output directory is relative to the `browser/` crate, so `../pkg` places the
+The output directory is relative to `crates/browser/`, so `../../pkg` places the
 package in the project root. `--out-name was_compiler` preserves the generated
 filenames used by the demo's existing imports.
 
@@ -177,10 +179,10 @@ the full ignored-test run passed. Issue #6
 adds `tests/browser.cjs` coverage for private signatures, export selection,
 byte/WAT and diagnostic parity across optimization levels, and interactions with
 value regions, aliases, compounds, abrupt flow, and trap/effect order.
-`tests/array_for_loops.rs` is the array-for suite; shared-core interaction coverage
+`crates/compiler/tests/array_for_loops.rs` is the array-for suite; shared-core interaction coverage
 is detailed in the [WP5 checkpoint](was_language_extensions_plan.md#wp5--safe-ranges-rangearray-for-membership-spec-56).
-`tests/for_frontend.rs` and `tests/for_lowering.rs`
-cover frontend and checked-lowering contracts; `tests/for_loops.rs` covers layout,
+`crates/compiler/tests/for_frontend.rs` and `crates/compiler/tests/for_lowering.rs`
+cover frontend and checked-lowering contracts; `crates/compiler/tests/for_loops.rs` covers layout,
 optimization parity and bounded Node execution, including exact yields/exhaustion,
 effects, transfers, consumed-record validation and caching. Its Node cases are
 ignored by default; default Cargo success alone does not establish runtime coverage.
@@ -266,7 +268,7 @@ keeps existing literal stages and first-error ordering. See the
 WP9 match statements/values are implemented through the shared core with
 [release gates passed](was_language_extensions_plan.md#wp9-release-validation),
 including 25 current-source rebuilt-browser cases and full ignored runtime
-validation. `tests/match_adapters.rs` covers CLI/browser byte and diagnostic parity;
+validation. `crates/cli/tests/match_adapters.rs`, `crates/browser/tests/match_adapters.rs` covers CLI/browser byte and diagnostic parity;
 `tests/browser.cjs` includes the WP9 browser case. Match does not change raw result
 ABIs or explicit descriptor marshaling. Runtime/browser tests retain their default
 ignored policy; rebuild bindings after core changes before browser validation.

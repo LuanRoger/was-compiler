@@ -1,5 +1,11 @@
 # Local callable interface — issues #29–#35
 
+**Workspace paths:** Compiler implementation and tests now live under
+`crates/compiler/`; CLI and browser adapter tests live under `crates/cli/tests/`
+and `crates/browser/tests/`. The release records below retain their historical
+paths/commands. Use [current validation](validation.md) for rebuild and package
+selection; this relocation does not change the callable contracts.
+
 ## Frozen public interface and implementation ownership
 
 Issue #29 implements capture-free local callable declarations and positional

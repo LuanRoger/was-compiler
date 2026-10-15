@@ -1,5 +1,10 @@
 # Function-result inference development
 
+**Workspace relocation:** Paths and commands in checkpoint evidence below are
+historical. Current compiler sources/tests are under `crates/compiler/`, CLI
+coverage under `crates/cli/tests/`, and browser coverage under
+`crates/browser/tests/`. See [current validation](validation.md).
+
 WP7 acyclic chains/diamonds and named/default integration are implemented;
 [#16 release validation passed](was_language_extensions_plan.md#issue-16-wp7-release-validation).
 Every recursive component member still requires an annotation in the initial release.

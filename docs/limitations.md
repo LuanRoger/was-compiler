@@ -13,12 +13,12 @@ implementation is complete: range construction, internal calls, exact numeric
 membership, range/array statement `for`, and adapter/interaction support. All WP5
 release gates passed; exact commands/results are recorded in
 [extension plan §5](was_language_extensions_plan.md#5-documentation-and-validation-workflow).
-Coverage lives in `tests/for_frontend.rs`, `tests/for_lowering.rs`,
-`tests/for_loops.rs`, and the array-for suite `tests/array_for_loops.rs`.
+Coverage lives in `crates/compiler/tests/for_frontend.rs`, `crates/compiler/tests/for_lowering.rs`,
+`crates/compiler/tests/for_loops.rs`, and the array-for suite `crates/compiler/tests/array_for_loops.rs`.
 Node execution cases retain the ignored-test policy
 by default, so default Cargo success alone does not establish runtime coverage.
-Behavior below is grounded in the frontend/backend, [CLI](../src/cli.rs), [diagnostics](../src/diagnostic.rs),
-[export policy](../src/exports.rs), [Node runtime](../runtime/index.cjs), and their
+Behavior below is grounded in the frontend/backend, [CLI](../crates/cli/src/cli.rs), [diagnostics](../crates/compiler/src/diagnostic.rs),
+[export policy](../crates/compiler/src/exports.rs), [Node runtime](../runtime/index.cjs), and their
 unit/integration tests. See
 [Evidence and validation boundaries](#evidence-and-validation-boundaries).
 
@@ -155,8 +155,8 @@ remain internal. See [the current inference contract](result-inference-developme
 
 ## Source language and frontend
 
-Evidence: [lexer.rs](../src/lexer.rs), [parser.rs](../src/parser.rs),
-[ast.rs](../src/ast.rs), and [semantic.rs](../src/semantic.rs).
+Evidence: [lexer.rs](../crates/compiler/src/lexer.rs), [parser.rs](../crates/compiler/src/parser.rs),
+[ast.rs](../crates/compiler/src/ast.rs), and [semantic.rs](../crates/compiler/src/semantic.rs).
 
 Comments are supported between tokens anywhere whitespace can appear: `//` ends
 at LF, CR, or EOF; `/* ... */` can span lines but ends at the first `*/` and does
@@ -307,9 +307,9 @@ before exact `f64` yield (+0 for zero). The advancement proof in the memory ABI
 allows next to leave the safe domain and exhaust normally before conversion,
 without a trap or another addition. No new range helper or public mutable-binding
 metadata is introduced; checked lowering reconstructs read-only restrictions from
-For provenance. `tests/for_frontend.rs` covers syntax, types, scopes, read-only
-writes and transfer rules; `tests/for_lowering.rs` covers forged input and decoded
-scratch/cache/latch contracts; `tests/for_loops.rs` covers deterministic layout,
+For provenance. `crates/compiler/tests/for_frontend.rs` covers syntax, types, scopes, read-only
+writes and transfer rules; `crates/compiler/tests/for_lowering.rs` covers forged input and decoded
+scratch/cache/latch contracts; `crates/compiler/tests/for_loops.rs` covers deterministic layout,
 imports/exports and bounded Node effects, exact yields/exhaustion, record validation,
 and caching at all optimization levels. Array iteration (issue #5) changes no parser
 or AST shapes: after full `ValidateArray`, even when empty, cache handle and unsigned
@@ -318,8 +318,8 @@ checked `ArrayAddress` then `f64` load on its iteration, without snapshotting or
 caching a raw payload pointer. Alias mutations remain visible; source reassignment
 does not replace the captured handle. Continue uses the index-advancement latch.
 No ABI or helper-order change is introduced; array-only iteration needs no range
-helpers. `tests/array_for_loops.rs` is the array-for suite. CLI/browser support uses
-the same core. Issue #6 adds adapter/interaction coverage in `tests/cli.rs` and
+helpers. `crates/compiler/tests/array_for_loops.rs` is the array-for suite. CLI/browser support uses
+the same core. Issue #6 adds adapter/interaction coverage in `crates/cli/tests/cli.rs` and
 `tests/browser.cjs`, with actionable private-range host errors and checks across
 optimization levels. Cross-feature regression coverage for these restrictions is
 listed in the [WP5 checkpoint](was_language_extensions_plan.md#wp5--safe-ranges-rangearray-for-membership-spec-56).
@@ -387,10 +387,10 @@ and callable pipeline stages remain deferred.
 
 ## Numbers, strings, arrays, and failures
 
-Evidence: [expression.rs](../src/codegen/expression.rs),
-[values.rs](../src/codegen/values.rs), [memory.rs](../src/codegen/memory.rs),
-[numeric.rs](../src/codegen/numeric.rs), [remainder tests](../tests/remainder.rs),
-and [memory tests](../src/codegen/memory_tests.rs).
+Evidence: [expression.rs](../crates/compiler/src/codegen/expression.rs),
+[values.rs](../crates/compiler/src/codegen/values.rs), [memory.rs](../crates/compiler/src/codegen/memory.rs),
+[numeric.rs](../crates/compiler/src/codegen/numeric.rs), [remainder tests](../crates/compiler/tests/remainder.rs),
+and [memory tests](../crates/compiler/src/codegen/memory_tests.rs).
 
 | Restriction now | Practical effect | Current alternative | Possible future choice and tradeoff |
 | --- | --- | --- | --- |
@@ -429,8 +429,8 @@ treating it as interchangeable with source `%`.
 
 ## Host trust and the raw ABI
 
-Evidence: [host.rs](../src/host.rs), [abi.rs](../src/codegen/abi.rs),
-[call.rs](../src/codegen/call.rs), and [memory-abi.md](memory-abi.md).
+Evidence: [host.rs](../crates/compiler/src/host.rs), [abi.rs](../crates/compiler/src/codegen/abi.rs),
+[call.rs](../crates/compiler/src/codegen/call.rs), and [memory-abi.md](memory-abi.md).
 
 - Registration declares a source name, import module/field, and language signature.
   It does **not** install an executable callback. Every registered import must be
@@ -467,12 +467,12 @@ Evidence: [host.rs](../src/host.rs), [abi.rs](../src/codegen/abi.rs),
 
 ## CLI and raw runtime boundary
 
-Shipped behavior is implemented in [cli.rs](../src/cli.rs),
-[diagnostic.rs](../src/diagnostic.rs),
-[codegen/mod.rs](../src/codegen/mod.rs), [runtime/index.cjs](../runtime/index.cjs),
+Shipped behavior is implemented in [cli.rs](../crates/cli/src/cli.rs),
+[diagnostic.rs](../crates/compiler/src/diagnostic.rs),
+[codegen/mod.rs](../crates/compiler/src/codegen/mod.rs), [runtime/index.cjs](../runtime/index.cjs),
 [runtime/abi.cjs](../runtime/abi.cjs), and [runtime/run.cjs](../runtime/run.cjs).
-[main.rs](../src/main.rs) is a thin entrypoint.
-[CLI tests](../tests/cli.rs) and [runtime tests](../tests/runtime.rs) cover the
+[main.rs](../crates/cli/src/main.rs) is a thin entrypoint.
+[CLI tests](../crates/cli/tests/cli.rs) and [runtime tests](../crates/compiler/tests/runtime.rs) cover the
 compiler-to-runner path, failures, raw calls, and explicit ABI conversion.
 
 | M7 surface | Contract and limitation | Alternative / follow-up |
@@ -508,9 +508,9 @@ recoverable guest error types, rollback, or hostile-provider isolation.
 
 ## Diagnostics and public typed-AST boundary
 
-Evidence: [tokens.rs](../src/tokens.rs), [typed_ast.rs](../src/typed_ast.rs),
-[compiler.rs](../src/compiler.rs), [diagnostic.rs](../src/diagnostic.rs), and
-[function context](../src/codegen/function.rs).
+Evidence: [tokens.rs](../crates/compiler/src/tokens.rs), [typed_ast.rs](../crates/compiler/src/typed_ast.rs),
+[compiler.rs](../crates/compiler/src/compiler.rs), [diagnostic.rs](../crates/compiler/src/diagnostic.rs), and
+[function context](../crates/compiler/src/codegen/function.rs).
 
 - Tokens, statements, functions, and parameters have byte-offset spans, but
   untyped/typed expressions have no independent span. Semantic and nested
@@ -542,7 +542,7 @@ Evidence: [tokens.rs](../src/tokens.rs), [typed_ast.rs](../src/typed_ast.rs),
   snapshot, but callers can forge inconsistent input before `compile`. The
   backend checks many malformed IDs, scopes, types, calls, and literals; this is
   not a guarantee that every arbitrary public typed tree produces a recoverable
-  error. A private [checked constructor](../src/codegen/validation.rs) now borrows
+  error. A private [checked constructor](../crates/compiler/src/codegen/validation.rs) now borrows
   the tree, completes layout, and lowers all user bodies through existing backend
   checks before module assembly can proceed. It preserves first-error order and
   caches the bodies rather than running a second independent validator. This is
@@ -556,26 +556,26 @@ Evidence: [tokens.rs](../src/tokens.rs), [typed_ast.rs](../src/typed_ast.rs),
 
 ## Evidence and validation boundaries
 
-The [backend tests](../src/codegen/tests.rs) check deterministic output, import-first
+The [backend tests](../crates/compiler/src/codegen/tests.rs) check deterministic output, import-first
 indices, signature lowering, errors, evaluation order, and IEEE-754 behavior.
-The [memory tests](../src/codegen/memory_tests.rs) cover aliasing, UTF-8 payloads,
+The [memory tests](../crates/compiler/src/codegen/memory_tests.rs) cover aliasing, UTF-8 payloads,
 invalid indices/descriptors, allocator growth, and trusted raw-host mutation.
-[Export tests](../src/codegen/export_tests.rs) characterize selection, unchanged
+[Export tests](../crates/compiler/src/codegen/export_tests.rs) characterize selection, unchanged
 non-export sections/indices, required memory exports, and validation of hidden bodies.
-[Remainder tests](../tests/remainder.rs) cover optional helper layout, result
+[Remainder tests](../crates/compiler/tests/remainder.rs) cover optional helper layout, result
 types/spans, exact binary64 edge cases against an independent reference, and
-once-only left-to-right operand effects. [Block-value tests](../tests/block_values.rs)
+once-only left-to-right operand effects. [Block-value tests](../crates/compiler/tests/block_values.rs)
 cover result categories, scopes, transfers, branch effects, saved compound places,
 trap order, deterministic output, and import/export/optimization contracts.
-[Value-loop tests](../tests/value_loops.rs) extend those contracts to all loop
+[Value-loop tests](../crates/compiler/tests/value_loops.rs) extend those contracts to all loop
 results, reachable constraints, nested contexts, forged annotations/targets,
 explicit divergence, aliasing, and live operand-stack prefixes.
 The compiler-in-Wasm path uses the same pipeline;
-[browser tests](../tests/browser.rs) execute emitted guest modules.
+[browser tests](../crates/browser/tests/browser.rs) execute emitted guest modules.
 
-[CLI integration tests](../tests/cli.rs) cover required source files, format
+[CLI integration tests](../crates/cli/tests/cli.rs) cover required source files, format
 inference, raw binary output, exports/imports, exit codes, diagnostics, output
-preservation, and canonical same-input refusal. [Runtime tests](../tests/runtime.rs)
+preservation, and canonical same-input refusal. [Runtime tests](../crates/compiler/tests/runtime.rs)
 cover raw invocation/imports, explicit ABI conversion, descriptor validation,
 UTF-8, copy limits, memory growth, bounds traps, and reported error stages.
 Diagnostic unit tests live in their implementation module.

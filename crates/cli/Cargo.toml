@@ -1,0 +1,16 @@
+[package]
+name = "was-compiler-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "was-compiler"
+path = "src/main.rs"
+
+[dependencies]
+was-compiler.workspace = true
+clap = { version = "4.5", features = ["derive"] }
+wasmprinter.workspace = true
+
+[dev-dependencies]
+wasmparser.workspace = true

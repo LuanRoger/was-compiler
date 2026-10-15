@@ -1,0 +1,72 @@
+Date: 2026-10-15
+Status: uncommitted workspace refactor and benchmark harness atop the revision below
+Harness SHA256: 99a8ebef9801e7eab3c1add9230696789d8bd4136fc24204ce1847085f04a12d
+Machine: Windows-11-10.0.26300-SP0 / Intel(R) Core(TM) Ultra 5 125H
+rustc 1.98.0 (88d9e12ae 2026-08-18)
+1ef9950df09b8dbe68c516c3d794020e1553bd57
+Corpus SHA256: ddf953170b47abceb3cda9fd8f370f718479da08befc16df65f5616b2f6f8312
+Command: cargo bench --offline -p was-compiler --bench compiler -- --sample-count 100 --sample-size 1 --timer os --color never
+    Finished `bench` profile [optimized] target(s) in 0.07s
+     Running benches\compiler.rs (target\release\deps\compiler-509004ed9fef0a80.exe)
+workload,source_bytes,module_bytes
+scalar_1,77,88
+scalar_16,458,600
+scalar_64,1706,2232
+calls_1,205,159
+calls_16,2503,1653
+calls_64,9943,6456
+captures_1,196,1435
+captures_16,2008,5875
+captures_64,7864,20084
+Timer precision: 100 ns
+compiler           fastest       │ slowest       │ median        │ mean          │ samples │ iters
+├─ lex                           │               │               │               │         │
+│  ├─ calls_1      1.499 µs      │ 20.29 µs      │ 1.599 µs      │ 1.854 µs      │ 100     │ 100
+│  ├─ calls_16     21.29 µs      │ 71.89 µs      │ 38.59 µs      │ 32.16 µs      │ 100     │ 100
+│  ├─ calls_64     174.7 µs      │ 255.2 µs      │ 183.3 µs      │ 185.5 µs      │ 100     │ 100
+│  ├─ captures_1   1.499 µs      │ 4.499 µs      │ 1.599 µs      │ 1.676 µs      │ 100     │ 100
+│  ├─ captures_16  13.89 µs      │ 53.39 µs      │ 14.39 µs      │ 15.02 µs      │ 100     │ 100
+│  ├─ captures_64  72.69 µs      │ 197 µs        │ 151.6 µs      │ 133.8 µs      │ 100     │ 100
+│  ├─ scalar_1     699.8 ns      │ 1.699 µs      │ 699.8 ns      │ 751.8 ns      │ 100     │ 100
+│  ├─ scalar_16    4.399 µs      │ 5.999 µs      │ 4.499 µs      │ 4.544 µs      │ 100     │ 100
+│  ╰─ scalar_64    16.49 µs      │ 56.39 µs      │ 16.79 µs      │ 17.91 µs      │ 100     │ 100
+├─ parse                         │               │               │               │         │
+│  ├─ calls_1      3.299 µs      │ 10.99 µs      │ 3.499 µs      │ 3.737 µs      │ 100     │ 100
+│  ├─ calls_16     36.99 µs      │ 163.5 µs      │ 49.49 µs      │ 58.22 µs      │ 100     │ 100
+│  ├─ calls_64     269.4 µs      │ 465.6 µs      │ 363.8 µs      │ 354.2 µs      │ 100     │ 100
+│  ├─ captures_1   3.999 µs      │ 7.999 µs      │ 4.199 µs      │ 4.247 µs      │ 100     │ 100
+│  ├─ captures_16  46.19 µs      │ 106.8 µs      │ 47.19 µs      │ 48.56 µs      │ 100     │ 100
+│  ├─ captures_64  185.8 µs      │ 412.9 µs      │ 263.9 µs      │ 257.6 µs      │ 100     │ 100
+│  ├─ scalar_1     1.099 µs      │ 2.199 µs      │ 1.199 µs      │ 1.224 µs      │ 100     │ 100
+│  ├─ scalar_16    11.29 µs      │ 19.99 µs      │ 11.79 µs      │ 11.96 µs      │ 100     │ 100
+│  ╰─ scalar_64    45.29 µs      │ 57.39 µs      │ 47.19 µs      │ 47.23 µs      │ 100     │ 100
+├─ semantic                      │               │               │               │         │
+│  ├─ calls_1      4.999 µs      │ 25.39 µs      │ 5.399 µs      │ 5.765 µs      │ 100     │ 100
+│  ├─ calls_16     71.39 µs      │ 99.79 µs      │ 76.74 µs      │ 77.58 µs      │ 100     │ 100
+│  ├─ calls_64     254 µs        │ 398.9 µs      │ 293.6 µs      │ 305.1 µs      │ 100     │ 100
+│  ├─ captures_1   5.299 µs      │ 15.69 µs      │ 5.599 µs      │ 5.8 µs        │ 100     │ 100
+│  ├─ captures_16  69.79 µs      │ 98.29 µs      │ 79.19 µs      │ 80.2 µs       │ 100     │ 100
+│  ├─ captures_64  272.3 µs      │ 555.8 µs      │ 388 µs        │ 388.8 µs      │ 100     │ 100
+│  ├─ scalar_1     1.499 µs      │ 3.799 µs      │ 1.599 µs      │ 1.656 µs      │ 100     │ 100
+│  ├─ scalar_16    8.799 µs      │ 29.99 µs      │ 9.499 µs      │ 9.938 µs      │ 100     │ 100
+│  ╰─ scalar_64    29.79 µs      │ 189.8 µs      │ 41.09 µs      │ 45.23 µs      │ 100     │ 100
+├─ source_compile                │               │               │               │         │
+│  ├─ calls_1      21.99 µs      │ 61.59 µs      │ 25.04 µs      │ 26.74 µs      │ 100     │ 100
+│  ├─ calls_16     282.3 µs      │ 724.6 µs      │ 518.4 µs      │ 519.5 µs      │ 100     │ 100
+│  ├─ calls_64     1.096 ms      │ 3.553 ms      │ 2.095 ms      │ 2.028 ms      │ 100     │ 100
+│  ├─ captures_1   31.69 µs      │ 219.5 µs      │ 71.74 µs      │ 75.35 µs      │ 100     │ 100
+│  ├─ captures_16  317.7 µs      │ 857.2 µs      │ 460.8 µs      │ 494.1 µs      │ 100     │ 100
+│  ├─ captures_64  799.6 µs      │ 2.097 ms      │ 1.281 ms      │ 1.283 ms      │ 100     │ 100
+│  ├─ scalar_1     10.89 µs      │ 40.49 µs      │ 11.19 µs      │ 11.64 µs      │ 100     │ 100
+│  ├─ scalar_16    30.89 µs      │ 184.5 µs      │ 41.14 µs      │ 51.4 µs       │ 100     │ 100
+│  ╰─ scalar_64    152.3 µs      │ 373.6 µs      │ 227.1 µs      │ 219.3 µs      │ 100     │ 100
+╰─ typed_compile                 │               │               │               │         │
+   ├─ calls_1      10.39 µs      │ 18.29 µs      │ 10.79 µs      │ 10.9 µs       │ 100     │ 100
+   ├─ calls_16     66.79 µs      │ 158.7 µs      │ 110.6 µs      │ 104.5 µs      │ 100     │ 100
+   ├─ calls_64     198.9 µs      │ 484.1 µs      │ 317.1 µs      │ 316 µs        │ 100     │ 100
+   ├─ captures_1   24.49 µs      │ 49.19 µs      │ 25.49 µs      │ 25.95 µs      │ 100     │ 100
+   ├─ captures_16  86.69 µs      │ 314 µs        │ 135.1 µs      │ 141.1 µs      │ 100     │ 100
+   ├─ captures_64  274.4 µs      │ 828.1 µs      │ 411.8 µs      │ 424.3 µs      │ 100     │ 100
+   ├─ scalar_1     2.099 µs      │ 3.899 µs      │ 2.199 µs      │ 2.248 µs      │ 100     │ 100
+   ├─ scalar_16    9.099 µs      │ 19.79 µs      │ 9.699 µs      │ 9.8 µs        │ 100     │ 100
+   ╰─ scalar_64    32.69 µs      │ 59.49 µs      │ 41.34 µs      │ 40.81 µs      │ 100     │ 100

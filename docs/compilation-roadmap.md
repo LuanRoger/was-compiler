@@ -100,50 +100,56 @@ The compiler emits bytes. The embedding application decides whether to write a
 
 ## Structure
 
+The virtual workspace separates `crates/compiler` (portable `was_compiler` library),
+`crates/cli` (native `was-compiler` executable), and `crates/browser` (wasm-bindgen
+adapter). Compiler stages remain modules, not separate crates. Core/CLI are default
+members; browser tests require explicit selection. See [ADR 0005](adr/0005-compiler-and-adapter-workspace-boundaries.md),
+[validation](validation.md), and [benchmarks](benchmarks.md).
+
 | File | Responsibility |
 | --- | --- |
-| `src/lib.rs` | Public Rust library entry point; native CLI and browser adapter use the same pipeline. |
-| `browser/src/lib.rs` | Dedicated compiler-in-Wasm adapter exposing source compilation and configuration through `wasm-bindgen`. |
+| `crates/compiler/src/lib.rs` | Public Rust library entry point; native CLI and browser adapter use the same pipeline. |
+| `crates/browser/src/lib.rs` | Dedicated compiler-in-Wasm adapter exposing source compilation and configuration through `wasm-bindgen`. |
 | `examples/browser/` | Browser editor, Worker-based compilation/execution, WAT display, and raw Wasm downloads. |
-| `tests/browser.rs`, `tests/browser.cjs` | Execute the built browser compiler package and instantiate its emitted modules. |
-| `src/compiler.rs` | Compiler options, host/export configuration, and pipeline orchestration; stage-specific errors. |
-| `src/exports.rs` | User-export policy (`All`, `None`, or explicit source names), separate from optimization presets. |
-| `src/cli.rs` | Parse arguments, load a required source file, register hosts, and publish plain WAT/raw binary Wasm. |
-| `src/diagnostic.rs` | Shared CLI/browser renderer consuming stage-owned `span()` access through `CompileError`, preserving messages, source excerpts, and located/unlocated presentation. |
-| `tests/diagnostics.rs`, `src/cli_contract_tests.rs` | Exhaustive span access/delegation, exact pre-refactor diagnostic text, and CLI format/destination/configuration mappings. |
+| `crates/browser/tests/browser.rs`, `tests/browser.cjs` | Execute the built browser compiler package and instantiate its emitted modules. |
+| `crates/compiler/src/compiler.rs` | Compiler options, host/export configuration, and pipeline orchestration; stage-specific errors. |
+| `crates/compiler/src/exports.rs` | User-export policy (`All`, `None`, or explicit source names), separate from optimization presets. |
+| `crates/cli/src/cli.rs` | Parse arguments, load a required source file, register hosts, and publish plain WAT/raw binary Wasm. |
+| `crates/compiler/src/diagnostic.rs` | Shared CLI/browser renderer consuming stage-owned `span()` access through `CompileError`, preserving messages, source excerpts, and located/unlocated presentation. |
+| `crates/compiler/tests/diagnostics.rs`, `crates/cli/tests/diagnostics.rs`, `crates/cli/src/cli_contract_tests.rs` | Exhaustive span access/delegation, exact pre-refactor diagnostic text, and CLI format/destination/configuration mappings. |
 | `runtime/index.cjs`, `runtime/abi.cjs`, `runtime/run.cjs` | Instantiate raw binaries, offer explicit ABI conversions, and expose a raw-call Node runner. |
-| `tests/cli.rs`, `tests/runtime.rs` | Exercise source-file/raw-binary/provider integration separately from backend tests. |
-| `src/optimization.rs` | O0–O3 level configuration and a typed-AST optimization boundary; no passes implemented yet. |
-| `src/host.rs` | Ordered host declarations, language-visible names, import names, signatures, and private external-type eligibility shared with backend checks. |
-| `src/semantic.rs` | Resolve and type-check user, host, and built-in calls; produce the typed AST. |
-| `src/typed_ast.rs` | Typed expressions, resolved function/variable/loop references, and owned import metadata. |
-| `src/flow.rs` | Private completion sets shared by semantic and backend summaries; distinguish normal completion, return, and loop transfers without pruning checks. |
-| `src/match_patterns.rs` | Shared semantic/backend pattern constants, domains and exhaustiveness checks. |
-| `src/codegen/match_.rs` | Private checked match lowering with a cached scrutinee, scoped arms and ordered comparison regions. |
-| `tests/match_frontend.rs`, `tests/match_lowering.rs` | Match frontend/inference and forged-tree/decoded lowering contracts. |
-| `src/codegen/abi.rs` | Internal language-type → Wasm-type mapping and signatures, separate from external eligibility checks for every host snapshot and selected user exports. |
-| `src/semantic/closures.rs` | Lexical bindings, nested shared/read-only captures, independent closure result/control contexts, and transitive callable dependencies. |
-| `src/codegen/closures.rs` | Borrowed helper-body owners and source-preorder identity/ownership discovery. |
-| `src/codegen/layout.rs` | Deduplicate signatures, assign indices, and build the complete typed callee table before body emission. |
-| `src/codegen/validation.rs` | Borrow the typed AST, complete layout and existing body checks in diagnostic order, and retain checked bodies behind a private construction boundary. |
-| `src/codegen/validation_tests.rs` | Compare checked and former compilation sequences for valid bytes, multiply-invalid diagnostics, and immutable host/export snapshots. |
-| `src/codegen/call.rs` | Validate resolved call references/signatures, emit user/host calls and built-in `len`, normalize host booleans, and validate memory handles. |
-| `src/codegen/function.rs` | Per-function emission context, scoped initialized bindings, unique labels/loop contexts, return-path checks, and function termination. |
-| `src/codegen/control_flow.rs` | Emit structured branches and loops, preserve scope boundaries, and track guaranteed returns. |
-| `src/codegen/locals.rs` | Collect declarations, including inside expressions, and map typed variable IDs to dense Wasm slots in declaration preorder. |
-| `src/codegen/temporaries.rs` | Preallocate ordered typed scratch slots for array construction and indexed compounds, including nested and unreachable expressions. |
-| `src/codegen/mod.rs` | Validate raw typed input through the private checked constructor, then assemble Type, Import, Function, optional Memory/Global, Export, Code, and optional Data sections from checked state. |
-| `src/codegen/tests.rs` | Inspect and validate emitted modules with `wasmparser`. |
-| `src/codegen/expression.rs` | Check result categories and emit literals, reads, operators, calls, and MVP block/if value regions while reconstructing expression completion. |
-| `src/codegen/statement.rs` | Emit blocks, scalar declarations/assignments, expression cleanup, returns, and delegate control flow. |
-| `src/codegen/values.rs` | Emit fresh array construction and checked element addressing. |
-| `src/codegen/place.rs` | Shared checked local/index places and ordinary/compound assignment lowering. |
-| `src/codegen/memory.rs` | Plan static strings and emit allocation, descriptor validation, checked array addressing/length, and string/numeric-array equality helpers. |
-| `src/codegen/numeric.rs` | Detect remainder throughout the typed AST and emit the optional memory-independent `(f64, f64) -> f64` guest remainder helper. |
-| `src/codegen/range.rs` | Discover ranges/membership and emit private construction, record-validation, and exact membership helpers. |
-| `tests/remainder.rs` | Validate remainder lowering, optional helper layout, result types/spans, exact binary64 edge cases, and operand effects against an independent reference. |
-| `tests/array_equality.rs` | Validate array comparison lowering and execute IEEE-754, aliasing, evaluation-order, and descriptor-safety cases. |
-| `src/codegen/memory_tests.rs` | Validate memory ABI/layout and execute memory-backed guest/host scenarios. |
+| `crates/cli/tests/cli.rs`, `crates/compiler/tests/runtime.rs` | Exercise source-file/raw-binary/provider integration separately from backend tests. |
+| `crates/compiler/src/optimization.rs` | O0–O3 level configuration and a typed-AST optimization boundary; no passes implemented yet. |
+| `crates/compiler/src/host.rs` | Ordered host declarations, language-visible names, import names, signatures, and private external-type eligibility shared with backend checks. |
+| `crates/compiler/src/semantic.rs` | Resolve and type-check user, host, and built-in calls; produce the typed AST. |
+| `crates/compiler/src/typed_ast.rs` | Typed expressions, resolved function/variable/loop references, and owned import metadata. |
+| `crates/compiler/src/flow.rs` | Private completion sets shared by semantic and backend summaries; distinguish normal completion, return, and loop transfers without pruning checks. |
+| `crates/compiler/src/match_patterns.rs` | Shared semantic/backend pattern constants, domains and exhaustiveness checks. |
+| `crates/compiler/src/codegen/match_.rs` | Private checked match lowering with a cached scrutinee, scoped arms and ordered comparison regions. |
+| `crates/compiler/tests/match_frontend.rs`, `crates/compiler/tests/match_lowering.rs` | Match frontend/inference and forged-tree/decoded lowering contracts. |
+| `crates/compiler/src/codegen/abi.rs` | Internal language-type → Wasm-type mapping and signatures, separate from external eligibility checks for every host snapshot and selected user exports. |
+| `crates/compiler/src/semantic/closures.rs` | Lexical bindings, nested shared/read-only captures, independent closure result/control contexts, and transitive callable dependencies. |
+| `crates/compiler/src/codegen/closures.rs` | Borrowed helper-body owners and source-preorder identity/ownership discovery. |
+| `crates/compiler/src/codegen/layout.rs` | Deduplicate signatures, assign indices, and build the complete typed callee table before body emission. |
+| `crates/compiler/src/codegen/validation.rs` | Borrow the typed AST, complete layout and existing body checks in diagnostic order, and retain checked bodies behind a private construction boundary. |
+| `crates/compiler/src/codegen/validation_tests.rs` | Compare checked and former compilation sequences for valid bytes, multiply-invalid diagnostics, and immutable host/export snapshots. |
+| `crates/compiler/src/codegen/call.rs` | Validate resolved call references/signatures, emit user/host calls and built-in `len`, normalize host booleans, and validate memory handles. |
+| `crates/compiler/src/codegen/function.rs` | Per-function emission context, scoped initialized bindings, unique labels/loop contexts, return-path checks, and function termination. |
+| `crates/compiler/src/codegen/control_flow.rs` | Emit structured branches and loops, preserve scope boundaries, and track guaranteed returns. |
+| `crates/compiler/src/codegen/locals.rs` | Collect declarations, including inside expressions, and map typed variable IDs to dense Wasm slots in declaration preorder. |
+| `crates/compiler/src/codegen/temporaries.rs` | Preallocate ordered typed scratch slots for array construction and indexed compounds, including nested and unreachable expressions. |
+| `crates/compiler/src/codegen/mod.rs` | Validate raw typed input through the private checked constructor, then assemble Type, Import, Function, optional Memory/Global, Export, Code, and optional Data sections from checked state. |
+| `crates/compiler/src/codegen/tests.rs` | Inspect and validate emitted modules with `wasmparser`. |
+| `crates/compiler/src/codegen/expression.rs` | Check result categories and emit literals, reads, operators, calls, and MVP block/if value regions while reconstructing expression completion. |
+| `crates/compiler/src/codegen/statement.rs` | Emit blocks, scalar declarations/assignments, expression cleanup, returns, and delegate control flow. |
+| `crates/compiler/src/codegen/values.rs` | Emit fresh array construction and checked element addressing. |
+| `crates/compiler/src/codegen/place.rs` | Shared checked local/index places and ordinary/compound assignment lowering. |
+| `crates/compiler/src/codegen/memory.rs` | Plan static strings and emit allocation, descriptor validation, checked array addressing/length, and string/numeric-array equality helpers. |
+| `crates/compiler/src/codegen/numeric.rs` | Detect remainder throughout the typed AST and emit the optional memory-independent `(f64, f64) -> f64` guest remainder helper. |
+| `crates/compiler/src/codegen/range.rs` | Discover ranges/membership and emit private construction, record-validation, and exact membership helpers. |
+| `crates/compiler/tests/remainder.rs` | Validate remainder lowering, optional helper layout, result types/spans, exact binary64 edge cases, and operand effects against an independent reference. |
+| `crates/compiler/tests/array_equality.rs` | Validate array comparison lowering and execute IEEE-754, aliasing, evaluation-order, and descriptor-safety cases. |
+| `crates/compiler/src/codegen/memory_tests.rs` | Validate memory ABI/layout and execute memory-backed guest/host scenarios. |
 
 These are concrete modules with narrow responsibilities, not a generic plugin or
 pass framework. Add modules when a milestone requires them.
@@ -493,7 +499,7 @@ symbol tables.
   with an infinite divisor yields the dividend. For finite operands and a nonzero
   divisor, the result has magnitude less than the divisor's magnitude and the
   dividend's sign, including signed zero for a zero dividend or exact multiple.
-- Wasm has no `f64.rem`. `src/codegen/numeric.rs` emits an optional internal guest
+- Wasm has no `f64.rem`. `crates/compiler/src/codegen/numeric.rs` emits an optional internal guest
   `(f64, f64) -> f64` helper, appended after all user functions and any existing
   seven memory helpers. Include it only if `%` occurs anywhere in the typed AST,
   including unexported functions, unreachable statements, and runtime-skipped
@@ -512,7 +518,7 @@ symbol tables.
   avoided. Do not use integer casts, integer remainder, or `a - trunc(a / b) * b`:
   overflow and intermediate rounding make that formula incorrect for extreme
   magnitudes, subnormals, and special values.
-- Acceptance: `tests/remainder.rs` validates modules, decoded helper calls/layout,
+- Acceptance: `crates/compiler/tests/remainder.rs` validates modules, decoded helper calls/layout,
   result types/spans, and absence of implicit imports or memory sections. Execute
   positive and negative operands/divisors, fractions, exact multiples, signed zero,
   NaN, infinities, zero divisors, subnormals, and very large magnitude ratios against
@@ -583,7 +589,7 @@ places remain unsupported.
 Lowering resolves the target once, validates bounds, reads the old value, then
 evaluates the RHS and stores to the original place. If the RHS changes an element
 from `10` to `100` and returns `2`, addition stores `12`, not `102`. Invalid targets
-trap before RHS effects. `src/codegen/place.rs` shares checked places with ordinary
+trap before RHS effects. `crates/compiler/src/codegen/place.rs` shares checked places with ordinary
 assignment; indexed compounds reserve ordered `i32` address / `f64` old-value
 scratch slots without reuse. Scalar updates keep the old value on the stack.
 Both raw and typed statement enums add `CompoundAssignment { target, op, value }`;
@@ -674,7 +680,7 @@ traverse expressions for declarations, reserving an outer let slot before its
 initializer declarations. Separate memory, scratch and remainder discovery,
 helper ordering, host ABI, and optimization no-op behavior are unchanged.
 
-Coverage includes `tests/block_values.rs`, frontend/planner/checked-backend units,
+Coverage includes `crates/compiler/tests/block_values.rs`, frontend/planner/checked-backend units,
 independent decoded MVP region/local/drop checks plus Validator, legacy byte
 expectations, and Node tests of effects, scopes, transfers, saved compound places
 and trap order. CLI/browser parity and diagnostics, forged annotations, hidden
@@ -709,7 +715,7 @@ break with an incompatible raw payload emits Unreachable instead of an invalid
 branch, while a reachable conflict still rejects compilation. Scope/label cleanup,
 helper order and separate memory/local/scratch/remainder planning are preserved.
 
-`tests/value_loops.rs` and focused frontend/planner/backend tests cover result
+`crates/compiler/tests/value_loops.rs` and focused frontend/planner/backend tests cover result
 joins, Never, unreachable checks, forged targets/kinds/annotations, legacy bytes,
 exports and owned imports. Independent decoded regions/branches/locals plus
 Validator accompany bounded Node effects/alias/transfer/stack-prefix tests and
@@ -752,12 +758,12 @@ candidates return false; both signed zeros are accepted. Signed `i64` interval a
 `I64RemS` congruence checks need no floating remainder helper; see the
 [arithmetic bounds proof](memory-abi.md#private-range-record).
 
-`tests/range_frontend.rs`, `tests/ranges.rs`, and `src/codegen/range_tests.rs` cover
+`crates/compiler/tests/range_frontend.rs`, `crates/compiler/tests/ranges.rs`, and `crates/compiler/src/codegen/range_tests.rs` cover
 syntax/type rejection, exact/Never joins, forged input, independent record bytes,
 Validator and decoded layout/instructions, internal signatures, export/import
 selection, and optimization parity. Bounded Node effects/trap/record-validation
 cases retain the ignored-test policy; default tests alone do not prove they ran.
-Membership coverage in `tests/range_frontend.rs` and `tests/ranges.rs` includes
+Membership coverage in `crates/compiler/tests/range_frontend.rs` and `crates/compiler/tests/ranges.rs` includes
 reserved names, precedence/associativity, exact/Never typing, checking both children,
 and decoded integer lowering without floating remainder.
 Range and array statement for checkpoints follow below. WP5 implementation and
@@ -801,11 +807,11 @@ domain, but is endpoint-tested before conversion/yield and exhausts normally.
 The loop exits on the first failed signed check, so no subsequent addition uses
 that out-of-domain current. See the [full proof](memory-abi.md#private-range-record).
 
-`tests/for_frontend.rs` covers syntax/types/scopes, read-only writes, mutable
+`crates/compiler/tests/for_frontend.rs` covers syntax/types/scopes, read-only writes, mutable
 shadowing, statement-only contexts, iterable transfers, and unreachable checks.
-`tests/for_lowering.rs` covers forged trees/annotations/IDs, planner slot types and
+`crates/compiler/tests/for_lowering.rs` covers forged trees/annotations/IDs, planner slot types and
 preorder, Validator plus independent decoded cache/conversion/latch checks, and
-error/optimization/export-selection parity. `tests/for_loops.rs` covers deterministic
+error/optimization/export-selection parity. `crates/compiler/tests/for_loops.rs` covers deterministic
 output, helper counts/no-reuse scratch, owned import snapshots and export indices;
 its bounded Node cases compare yields to an independent BigInt progression and
 membership, exercise ±safe limits/large steps/+0/normal exhaustion, and check
@@ -830,8 +836,8 @@ handle unchanged. Continue exits the body latch before index advancement/retest;
 break/return skip advancement. ABI and helper order are unchanged, and array-only
 iteration needs no range helpers.
 
-`tests/array_for_loops.rs` is the array-for suite, alongside shared frontend and
-forged-lowering coverage in `tests/for_frontend.rs` and `tests/for_lowering.rs`.
+`crates/compiler/tests/array_for_loops.rs` is the array-for suite, alongside shared frontend and
+forged-lowering coverage in `crates/compiler/tests/for_frontend.rs` and `crates/compiler/tests/for_lowering.rs`.
 CLI/browser compilation uses the shared core for both iterable types. Issue #6
 completes adapter/interaction support and all WP5 release gates passed, including
 rebuilt browser bindings and the full ignored-test run; see extension plan §5.
@@ -878,9 +884,9 @@ not custom metadata or trusted flow facts. No optimization level eliminates chec
 legacy feature-free bytes and deterministic layout remain compatible. `requires` is
 reserved for source/host-language names only, not host module/field names.
 
-Actual coverage: `tests/contracts_frontend.rs`, `tests/contracts_lowering.rs`,
-`src/codegen/contracts_tests.rs`, `tests/contracts_runtime.rs`, and
-`tests/contracts_adapters.rs`. [WP8 release gates passed](was_language_extensions_plan.md#wp8-release-validation),
+Actual coverage: `crates/compiler/tests/contracts_frontend.rs`, `crates/compiler/tests/contracts_lowering.rs`,
+`crates/compiler/src/codegen/contracts_tests.rs`, `crates/compiler/tests/contracts_runtime.rs`, and
+`crates/cli/tests/contracts_adapters.rs`, `crates/browser/tests/contracts_adapters.rs`. [WP8 release gates passed](was_language_extensions_plan.md#wp8-release-validation),
 including current-source rebuilt-browser and full ignored runtime coverage. See
 [WP8's frozen contracts and suite responsibilities](was_language_extensions_plan.md#wp8--whitelist-contracts-spec-13)
 and [spec §13](was_language_extensions_spec.md#13-feature-specification-function-preconditionscontracts).
@@ -929,18 +935,18 @@ host module/field names remain valid. No ignored bindings, placeholders, guards,
 binding patterns, destructuring or or-patterns are added. Match stays outside the
 defaults/contracts pure whitelist, including forged typed input.
 
-`src/match_patterns.rs` shares constant/domain/coverage validation between semantic
-analysis and checked lowering. Private `src/codegen/match_.rs` owns ordered
+`crates/compiler/src/match_patterns.rs` shares constant/domain/coverage validation between semantic
+analysis and checked lowering. Private `crates/compiler/src/codegen/match_.rs` owns ordered
 comparison chains, cached f64/i32 scrutinees, scoped arms and reconstructed
 result/flow checks. Never needs no fabricated cached value. The walker visits
 scrutinee then every scoped arm; scratch and pattern-string discovery remain
 separate deterministic policies. No ABI, helper-kind or optimizer change is added.
 
-`tests/match_frontend.rs` owns syntax/spans/reservations/scopes/coverage and
-inference/structural joins; `tests/match_lowering.rs` owns forged input, validator
+`crates/compiler/tests/match_frontend.rs` owns syntax/spans/reservations/scopes/coverage and
+inference/structural joins; `crates/compiler/tests/match_lowering.rs` owns forged input, validator
 and independent decoded cache/result-region/branch-depth/planner checks.
-`tests/match_runtime.rs` owns bounded effects, overlaps, strings, fractional/NaN
-cases and transfers; `tests/match_adapters.rs` owns CLI bytes/diagnostics,
+`crates/compiler/tests/match_runtime.rs` owns bounded effects, overlaps, strings, fractional/NaN
+cases and transfers; `crates/cli/tests/match_adapters.rs`, `crates/browser/tests/match_adapters.rs` owns CLI bytes/diagnostics,
 reservations and native/rebuilt-browser compatibility. Node/browser cases retain
 the default ignored policy; optimization-level parity remains unchanged. See
 [spec §8.2](was_language_extensions_spec.md#82-match-expression-syntax) and

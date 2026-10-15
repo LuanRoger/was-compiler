@@ -6,6 +6,23 @@ See the [compilation roadmap](docs/compilation-roadmap.md) for the architecture,
 host ABI, milestones, and acceptance criteria. The [memory ABI](docs/memory-abi.md)
 documents string/array layouts, allocation, ownership, and host examples.
 
+## Workspace
+
+The virtual workspace separates the portable compiler from its adapters:
+
+| Package | Location | Responsibility |
+| --- | --- | --- |
+| `was-compiler` (`was_compiler`) | `crates/compiler/` | Lexer, parser, semantic analysis, checked Wasm lowering, public Rust API |
+| `was-compiler-cli` (binary `was-compiler`) | `crates/cli/` | Native arguments, filesystem I/O, WAT/binary output |
+| `was-compiler-browser` | `crates/browser/` | wasm-bindgen JavaScript adapter |
+
+Compiler stages remain internal modules. Root Cargo commands select compiler and
+CLI by default; browser validation is explicit. Shared fixtures and subprocess
+support remain in `tests/`, while integration tests live with their owning package.
+Rust consumers keep using `was_compiler`; local path dependencies now point to
+`crates/compiler`. Install the CLI with
+`cargo install --offline --path crates/cli`, rather than `--path .`.
+
 ## Build and run
 
 ```text
@@ -26,19 +43,19 @@ The Node harness uses built-in modules only and requires no npm installation.
 
 ## Compile in the browser
 
-The dedicated `browser/` workspace crate (`was-compiler-browser`) builds the
+The dedicated `crates/browser/` workspace crate (`was-compiler-browser`) builds the
 compiler library as WebAssembly. Compile and execute source locally in the
 dependency-free [browser playground](examples/browser/index.html):
 
 ```text
 rustup target add wasm32-unknown-unknown
-wasm-pack build browser --target web --out-dir ../pkg --out-name was_compiler --mode no-install --no-opt --offline
+wasm-pack build crates/browser --target web --out-dir ../../pkg --out-name was_compiler --mode no-install --no-opt --offline
 ```
 
-Run the command from the project root; `../pkg` is relative to the `browser/`
-crate, and `--out-name was_compiler` preserves the demo's generated module paths.
-There is no root `browser` feature; the native root crate remains the default
-workspace member. Install `wasm-pack` if needed (`cargo install wasm-pack --locked`).
+Run the command from the project root; `../../pkg` is relative to `crates/browser/`,
+and `--out-name was_compiler` preserves the demo's generated module paths.
+There is no root `browser` feature; compiler and CLI are the default workspace
+members. Install `wasm-pack` if needed (`cargo install wasm-pack --locked`).
 The build uses release mode by default; offline builds require cached dependencies
 and available tooling. Serve the project root over HTTP (for example,
 `python -m http.server 8000`) and open
@@ -725,17 +742,17 @@ parser or raw/typed AST shape.
 **WP5 implementation is complete and all release gates passed.** The CLI
 and browser support construction, internal range calls, membership, and both
 iterable types through the shared core pipeline. Issue #6 adds adapter and
-cross-feature coverage in `tests/cli.rs` and `tests/browser.cjs`, including export
+cross-feature coverage in `crates/cli/tests/cli.rs` and `tests/browser.cjs`, including export
 selection, actionable private-range host errors, effects, and optimization-level
 parity. Cross-feature compatibility coverage is detailed in the
 [WP5 checkpoint](docs/was_language_extensions_plan.md#wp5--safe-ranges-rangearray-for-membership-spec-56).
 See the
 [exact release evidence (§5)](docs/was_language_extensions_plan.md#5-documentation-and-validation-workflow),
 including the full ignored-test run; ordinary default Cargo tests still skip Node cases.
-`tests/array_for_loops.rs` is the array-for suite. `tests/for_frontend.rs` covers syntax, types,
-scopes, read-only bindings, and transfers; `tests/for_lowering.rs` covers forged
+`crates/compiler/tests/array_for_loops.rs` is the array-for suite. `crates/compiler/tests/for_frontend.rs` covers syntax, types,
+scopes, read-only bindings, and transfers; `crates/compiler/tests/for_lowering.rs` covers forged
 input, scratch layout, cached fields, and decoded conversion/latch ordering.
-`tests/for_loops.rs` covers deterministic output, import snapshots/export selection,
+`crates/compiler/tests/for_loops.rs` covers deterministic output, import snapshots/export selection,
 and bounded execution against an independent BigInt progression reference at all
 optimization levels. Node execution cases retain the ignored-test policy: default
 Cargo success alone does not establish runtime coverage.
@@ -750,9 +767,9 @@ Membership alone needs no floating remainder helper or host callback.
 **Implemented, frontend/backend integrated, with [release gates passed](docs/was_language_extensions_plan.md#wp9-release-validation).**
 The parent-run evidence includes current-source rebuilt-browser and full ignored
 runtime validation. See the [approved WP9 rules and suites](docs/was_language_extensions_plan.md#wp9--match-statementsvalues-spec-8-implemented).
-`tests/match_frontend.rs` and `tests/match_lowering.rs` cover frontend/inference
-and forged-tree/decoded lowering contracts; `tests/match_runtime.rs` and
-`tests/match_adapters.rs` cover bounded effects and native/browser compatibility.
+`crates/compiler/tests/match_frontend.rs` and `crates/compiler/tests/match_lowering.rs` cover frontend/inference
+and forged-tree/decoded lowering contracts; `crates/compiler/tests/match_runtime.rs` and
+`crates/cli/tests/match_adapters.rs`, `crates/browser/tests/match_adapters.rs` cover bounded effects and native/browser compatibility.
 Node/browser cases retain their default ignored policy.
 
 ```text
@@ -840,10 +857,33 @@ future transformations can return an owned typed AST. Calling the lower-level
 
 Run `cargo run --offline -- examples/array-sum.was` to print plain WAT with
 `wasmprinter`.
-Run tests with `cargo test --offline`. The full suite includes optional Node.js
+## Tests, Bacon, and benchmarks
+
+Run native compiler/CLI tests with `cargo test --offline`. The full suite includes optional Node.js
 runtime tests and compiler-in-Wasm tests; build `pkg/` with the browser command
 above and use Node.js 24+ before including ignored tests:
 
 ```text
-cargo test --offline -- --include-ignored
+cargo test --offline --workspace -- --include-ignored
 ```
+
+Use the root Bacon configuration for interactive feedback and manual validation
+chains:
+
+```text
+bacon
+bacon fast
+bacon full
+bacon bench
+```
+
+See [validation](docs/validation.md) for finite direct commands, prerequisites,
+package ownership, and browser rebuild ordering. Native compiler benchmarks cover
+lexing, parsing, semantics, typed compilation, and source-to-Wasm compilation:
+
+```text
+cargo bench --offline -p was-compiler --bench compiler
+```
+
+See [benchmark boundaries and baseline](docs/benchmarks.md). This refactor changes
+package ownership, not language behavior or optimization support.
