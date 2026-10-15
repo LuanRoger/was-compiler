@@ -1,4 +1,4 @@
-# Local callable interface — issues #29–#33
+# Local callable interface — issues #29–#34
 
 ## Frozen public interface and implementation ownership
 
@@ -12,6 +12,8 @@ capture forwarding and earlier context-requiring callable dependencies in the
 frontend/backend; [validation passed](#issue-32-validation-2026-10-14).
 The parent [issue #28](https://github.com/LuanRoger/was-compiler/issues/28)
 defines the full contract. #33 adds [read-only iteration captures](#implemented-read-only-iteration-captures-33).
+#34 adds [recursion, host-reentry and trap lifetime coverage](#capture-lifetime-across-recursion-reentry-and-traps-34)
+without changing the compiler, public AST or ABI.
 Combined nested/transitive iteration-capture convergence and full WP11 release remain deferred.
 [#30 subset validation passed](#issue-30-validation-2026-10-14); that record predates
 #31 and does not validate captured compounds. The historical #29 evidence below
@@ -173,6 +175,77 @@ loop/control semantics remain intact. There is no AST or ABI shape change; see
 Combined nested/transitive iteration-capture convergence and full WP11 release
 remain deferred. [#33 validation passed](#issue-33-validation-2026-10-15) for the
 read-only iteration-capture subset, not the full WP11 contract.
+
+## Capture lifetime across recursion, reentry and traps (#34)
+
+Each named creator invocation owns distinct parameter/local cells and declaration
+environments, including recursive calls made from helpers and synchronous host
+reentry into the same instance. Nested helpers and earlier callable dependencies
+share only their invocation's original live cells/environments. Returning from an
+inner call or catching its trap in a host callback leaves the suspended outer
+invocation's context intact.
+
+Cells, environments, arrays and host-created strings use the same monotonic
+allocator. There is no general heap reset, frame reclamation or trap-unwind
+cleanup. A guest bounds trap or host allocation trap preserves completed writes,
+host effects and earlier successful allocations; the instance can be called again.
+Retained array/string descriptor offsets remain valid across those calls and
+memory growth, provided hosts preserve the existing descriptor and string rules.
+Refresh JavaScript views after any possibly growing operation, including reentry
+from a host callback; retain offsets, not views into an old buffer.
+
+Repeated bounded calls can still consume unbounded cumulative storage until
+allocation fails. This is not garbage collection, transactional rollback, host
+isolation, guest fuel or process-tree cancellation. No separate frame allocator,
+new dependency or optimizer change is introduced. Full WP11 release and combined
+nested/transitive iteration-capture convergence remain deferred.
+
+Coverage at the confirmed seams:
+
+- `tests/closures_lowering.rs` validates/decodes invocation-local environment
+  pointers across host/recursive calls, allocator-only heap-global writes, direct
+  nested dependency forwarding, import order and analyzed host snapshots.
+- `tests/closures_runtime.rs` checks bounded nested recursion, host reentry with a
+  caught inner trap, post-trap calls, retained mutable arrays and independently
+  specified host UTF-8 bytes, and actual capture-driven memory growth. All four
+  optimization levels must produce identical bytes and literal expected events.
+- `tests/closures_adapters.rs` checks CLI/core byte parity and host-retained arrays
+  across recursive/reentrant calls, a helper trap, later allocations and actual
+  host allocator-driven memory growth, at all four optimization levels.
+
+The new scenarios passed against the existing implementation on their first run;
+no compiler defect or behavior change was needed. Runtime/adapter execution stays
+ignored by default and uses the existing bounded subprocess support.
+
+### Issue #34 validation (2026-10-15)
+
+Node.js v24.12.0, cargo 1.98.0 and wasm-pack 0.15.0 were available. No tools or
+dependencies were added. The browser rebuild used offline/no-install mode and
+cached wasm-bindgen tooling; its output still included `Installing wasm-bindgen`.
+
+| Exact command (repository root) | Result |
+| --- | --- |
+| `cargo test --offline --test closures_runtime recursive_creators_keep_original_cells_and_nested_live_dependencies_per_invocation -- --ignored --exact` | Passed; all four optimization levels |
+| `cargo test --offline --test closures_runtime reentrant_live_contexts_and_retained_handles_survive_inner_traps_and_growth -- --ignored --exact` | Passed; all four optimization levels |
+| `cargo test --offline --test closures_lowering recursive_contexts_keep_local_environment_pointers_and_only_allocator_writes_heap -- --exact` | Passed; all four optimization levels |
+| `cargo test --offline --test closures_adapters cli_capture_lifetime_survives_recursion_reentry_trap_and_memory_growth -- --ignored --exact` | Passed; adapter agent and independent reviewer each ran it |
+| `cargo check --offline --test closures_adapters` | Passed; adapter agent |
+| `cargo check --offline --all-targets` | Passed |
+| `cargo test --offline --test closures_frontend --test closures_lowering --test closures_runtime --test closures_adapters -- --include-ignored` | Passed: 34 frontend, 48 lowering, 25 runtime, 5 adapter tests |
+| `wasm-pack build browser --target web --out-dir ../pkg --out-name was_compiler --mode no-install --no-opt --offline` | Passed; rebuilt current-source browser package |
+| `node tests/browser.cjs pkg` | Passed |
+| `cargo test --offline` | Passed complete default suite |
+| `cargo test --offline -- --include-ignored` | Passed complete suite, including runtime/browser cases |
+| `cargo clippy --offline --all-targets -- -D warnings` | Passed |
+| `cargo clippy --offline -p was-compiler-browser --target wasm32-unknown-unknown --lib -- -D warnings` | Passed |
+| `git --no-pager diff --check` | Passed; lifetime section anchor and seven local links also checked |
+
+Independent standards review found no documented-standard breach and one optional
+low-priority duplication smell in adapter execution boilerplate; it was retained
+to keep scenarios local rather than add a test abstraction. Independent spec review
+found no missing requirements, wrong behavior or scope creep, and independently
+reran all four new tests successfully. This is #34 lifetime evidence, not full WP11
+release validation. No runtime prerequisite was missing.
 
 ## Issue #33 validation (2026-10-15)
 

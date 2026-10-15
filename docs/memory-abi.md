@@ -71,6 +71,11 @@ returned or host-retained strings/arrays may still be live. Hosts must refresh
 JavaScript views after any guest call or host allocation that may grow memory.
 Existing descriptor metadata/UTF-8/immutability obligations and explicit marshaling
 remain unchanged; private storage does not isolate hosts able to corrupt guest memory.
+A host callback may catch an inner reentrant trap and resume its suspended outer
+invocation; the outer cell/environment pointers remain live and distinct. Refresh
+views inside callbacks after reentry as well as after ordinary calls. #34 covers
+these lifetimes with retained arrays, host-created UTF-8 strings and actual growth;
+see [coverage and validation](local-callable-interface.md#capture-lifetime-across-recursion-reentry-and-traps-34).
 
 #31 uses the existing checked place path for all five numeric compounds on captured
 bindings and creator-side promoted bindings. Scalar compounds keep the original

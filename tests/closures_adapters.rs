@@ -366,6 +366,144 @@ fn cli_captured_compounds_preserve_rhs_effects_and_match_core_execution() {
 }
 
 #[test]
+#[ignore = "requires Node.js on PATH"]
+fn cli_capture_lifetime_survives_recursion_reentry_trap_and_memory_growth() {
+    let source = r#"
+        fn creator(seed: number, depth: number, fail: bool) -> number[] {
+            let values = [seed, seed + 1];
+            let finish = () => {
+                values[1] += seed;
+                if fail { values[2]; }
+                values
+            };
+            retain(values);
+            if depth > 0 { creator(seed + 10, depth - 1, false); }
+            if seed == 1 { reenter(); }
+            return finish();
+        }
+    "#;
+    let scratch = Scratch::new();
+    fs::write(scratch.0.join("program.was"), source).unwrap();
+    let mut native = Compiler::new();
+    native
+        .register_host_function(
+            "retain",
+            "env",
+            "retain",
+            vec![Type::NumberArray],
+            Type::Void,
+        )
+        .unwrap();
+    native
+        .register_host_function("reenter", "env", "reenter", vec![], Type::Void)
+        .unwrap();
+    native.set_exports(ExportOptions::Only(vec!["creator".into()]));
+
+    let script = r#"
+        const assert = require('node:assert/strict');
+        const bytes = require('node:fs').readFileSync(0);
+        const retained = [];
+        const initial = [];
+        let e;
+        let reentries = 0;
+        let reentered;
+        function readArray(handle) {
+            handle >>>= 0;
+            // Never retain a view across a guest call or host allocation.
+            const view = new DataView(e.memory.buffer);
+            const data = view.getUint32(handle, true);
+            const length = view.getUint32(handle + 4, true);
+            assert.equal(length, 2);
+            return [view.getFloat64(data, true), view.getFloat64(data + 8, true)];
+        }
+        function growAndOverwriteAllocation() {
+            const before = e.memory.buffer;
+            const size = before.byteLength;
+            const address = e.__alloc(131072) >>> 0;
+            assert.ok(e.memory.buffer.byteLength > size, 'allocation must actually grow memory');
+            assert.notEqual(e.memory.buffer, before);
+            // Overwrite new storage to expose any reuse of retained descriptors/payloads.
+            new Uint8Array(e.memory.buffer, address, 131072).fill(0xa5);
+        }
+        e = new WebAssembly.Instance(new WebAssembly.Module(bytes), {env: {
+            retain(handle) {
+                retained.push(handle >>> 0);
+                initial.push(readArray(handle));
+            },
+            reenter() {
+                assert.equal(++reentries, 1);
+                assert.deepEqual(retained.map(readArray), [[1,2], [11,23], [21,43]]);
+                reentered = e.creator(100, 1, 0) >>> 0;
+                growAndOverwriteAllocation();
+            }
+        }}).exports;
+
+        const returned = e.creator(1, 2, 0) >>> 0;
+        assert.equal(reentries, 1);
+        assert.equal(returned, retained[0]);
+        assert.equal(reentered, retained[3]);
+        assert.deepEqual(retained.map(readArray), [[1,3], [11,23], [21,43], [100,201], [110,221]]);
+
+        // The helper writes before a bounded out-of-bounds trap; neither is rolled back.
+        assert.throws(() => e.creator(7, 1, 1), WebAssembly.RuntimeError);
+        assert.deepEqual(readArray(retained[5]), [7,15]);
+        assert.deepEqual(readArray(retained[6]), [17,35]);
+        const later = e.creator(40, 0, 0) >>> 0;
+        assert.equal(later, retained[7]);
+        growAndOverwriteAllocation();
+        assert.equal(new Set(retained).size, 8);
+        assert.deepEqual(initial, [
+            [1,2], [11,12], [21,22], [100,101], [110,111], [7,8], [17,18], [40,41]
+        ]);
+        assert.deepEqual(retained.map(readArray), [
+            [1,3], [11,23], [21,43], [100,201], [110,221], [7,15], [17,35], [40,81]
+        ]);
+        assert.deepEqual(readArray(returned), [1,3]);
+        assert.deepEqual(readArray(reentered), [100,201]);
+        assert.deepEqual(readArray(later), [40,81]);
+    "#;
+
+    for (flag, level) in LEVELS {
+        native.set_optimization_level(level);
+        let expected = native.compile_source(source).unwrap();
+        let output = scratch.cli(&[
+            "program.was",
+            flag,
+            "--emit",
+            "wasm",
+            "-o",
+            "out.wasm",
+            "--host",
+            "retain=env.retain(number[])->void",
+            "--host",
+            "reenter=env.reenter()->void",
+            "--export",
+            "creator",
+        ]);
+        assert!(
+            output.status.success(),
+            "{level:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stdout.is_empty());
+        assert!(output.stderr.is_empty());
+        let bytes = fs::read(scratch.0.join("out.wasm")).unwrap();
+        assert_eq!(bytes, expected, "{level:?}: CLI/core byte parity");
+        Validator::new().validate_all(&bytes).unwrap();
+        let output = test_process::output(
+            Command::new("node").args(["-e", script]),
+            Some(&bytes),
+            Duration::from_secs(30),
+        );
+        assert!(
+            output.status.success(),
+            "{level:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
 fn cli_semantic_errors_keep_focused_utf8_crlf_spans_and_existing_outputs() {
     let scratch = Scratch::new();
     for (body, origin, kind) in ERRORS {

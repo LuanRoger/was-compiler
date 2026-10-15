@@ -195,6 +195,33 @@ rewind; returned or host-retained arrays/strings must remain valid. Refresh
 JavaScript views after guest calls or host allocations that may grow memory.
 Normal handle validation, explicit marshaling and external range restrictions
 remain unchanged. No public callable ABI, table or implicit callback is added.
+
+### Recursion, host reentry and traps (#34)
+
+A synchronous host callback may reenter creator exports on the same instance.
+Each recursive/reentrant invocation has distinct live parameter/local cells and
+nested callable environments; helpers within one invocation still share original
+bindings. Supply every registered import, even unused ones. Host registration
+only declares signatures; the embedding still supplies the actual callbacks.
+
+A host callback that catches an inner Wasm trap may resume the suspended outer
+invocation. A trap escaping to the embedding also leaves the instance available
+for later calls. Neither path rolls back completed guest writes, host effects or
+successful allocations, nor runs automatic frame cleanup. Retained arrays and
+host-created strings returned through capture-allocating functions keep their
+instance-local offsets across later calls, traps and memory growth.
+
+Keep descriptor offsets rather than long-lived `DataView` or typed-array objects.
+After a potentially growing guest call or `__alloc`, obtain `exports.memory.buffer`
+again and recreate views **before** reading or writing through those offsets.
+Do this inside callbacks too: reentry can grow memory before the original callback
+returns. A view from before growth can be detached; it is not a persistent reference.
+
+Repeated bounded invocations can accumulate storage without bound until the
+instance's memory limit or engine allocation failure causes a trap. The compiler
+provides neither reclamation nor isolation from a host that corrupts memory.
+See [the #34 coverage and validation](local-callable-interface.md#capture-lifetime-across-recursion-reentry-and-traps-34).
+
 Full WP11 release remains deferred. See the separate [#30 execution evidence](local-callable-interface.md#issue-30-validation-2026-10-14)
 for shared-storage validation before #31, not captured compounds. Historical #29
 results cover only capture-free callables.

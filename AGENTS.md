@@ -146,6 +146,8 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   callable-context dependencies in the frontend/backend; [validation passed](docs/local-callable-interface.md#issue-32-validation-2026-10-14).
   #33 implements [read-only iteration captures](docs/local-callable-interface.md#implemented-read-only-iteration-captures-33),
   with [validation passed](docs/local-callable-interface.md#issue-33-validation-2026-10-15).
+  #34 adds [recursion/reentry/trap lifetime coverage](docs/local-callable-interface.md#capture-lifetime-across-recursion-reentry-and-traps-34)
+  without changing compiler behavior or public contracts.
   Combined nested/transitive iteration-capture convergence, full WP11 release and WP12 remain deferred. WP13
   optimization requires separate authorization.
   Preserve `target/wp7-inference` when cleaning generated output. Before changing defaults, call binding, or
@@ -259,6 +261,10 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   cell per yield, eager even for skipped declarations, none on empty/exhausted/failed
   yields. Cells are monotonic, never reused/reclaimed; environments allocate only
   at executed declarations. Preserve loop/control/alias semantics and AST/ABI shapes.
+- Before changing capture allocation/reclamation, recursion, host reentry or trap
+  lifetime behavior, read [the #34 lifetime coverage](docs/local-callable-interface.md#capture-lifetime-across-recursion-reentry-and-traps-34).
+  Keep invocation-local contexts distinct, preserve completed effects after traps,
+  and retain array/string offsets across later allocations; refresh host views after growth.
 - Keep `tests/closures_frontend.rs`, `tests/closures_lowering.rs`,
   `tests/closures_runtime.rs`, and `tests/closures_adapters.rs` at the confirmed
   compiler/typed-input/adapter seams. Runtime cases remain ignored by default.

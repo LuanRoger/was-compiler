@@ -222,6 +222,9 @@ and does not roll back earlier effects. Hosts must refresh views after possible
 memory growth. See [the private storage contract](docs/memory-abi.md#private-closure-storage-30)
 and [the public AST migration and subset contract](docs/local-callable-interface.md),
 including the new owner-qualified `TypedExprKind::Captured` variant.
+[#34 lifetime coverage](docs/local-callable-interface.md#capture-lifetime-across-recursion-reentry-and-traps-34)
+exercises distinct recursive/reentrant contexts, post-trap calls and persistent
+array/string handles through actual memory growth; no reclamation or rollback is added.
 
 ### Named-only pipelines (WP10 implemented; release gates passed)
 

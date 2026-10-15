@@ -66,6 +66,188 @@ fn run(source: &str, selected: &[&str], assertions: &str) {
 
 #[test]
 #[ignore = "requires Node.js on PATH"]
+fn recursive_creators_keep_original_cells_and_nested_live_dependencies_per_invocation() {
+    run(
+        r#"
+        fn creator(seed: number, depth: number) -> number {
+            let local = seed * 10;
+            let bump = (amount: number) => {
+                seed += amount;
+                local += amount * 10;
+                seed + local
+            };
+            let outer = (parameter: number) => {
+                let own = parameter * 100;
+                let leaf = (delta: number) => {
+                    parameter += delta;
+                    own += delta * 100;
+                    bump(delta) + parameter + own
+                };
+                mark(leaf(1));
+                if depth > 0 { mark(creator(seed + 10, depth - 1)); }
+                mark(leaf(2));
+                parameter + own
+            };
+            let result = outer(seed);
+            mark(bump(3));
+            return result + seed + local;
+        }
+        "#,
+        &["creator"],
+        r#"
+        for (let call = 0; call < 3; call++) {
+            assert.equal(e.creator(1, 2), 481);
+            assert.deepEqual(events.splice(0), [
+                224, 1456, 2688, 2912, 319, 2945, 1680, 198, 1713, 448, 77
+            ]);
+            assert.equal(e.creator(0, 0), 369);
+            assert.deepEqual(events.splice(0), [112, 336, 66]);
+        }
+        "#,
+    );
+}
+
+#[test]
+#[ignore = "requires Node.js on PATH"]
+fn reentrant_live_contexts_and_retained_handles_survive_inner_traps_and_growth() {
+    run(
+        r#"
+        fn array(seed: number, depth: number, fail: bool) -> number[] {
+            let values = [seed, seed + 1];
+            let bump = () => { seed += 1; values[0] += seed; seed };
+            let outer = (parameter: number) => {
+                let local = parameter;
+                let leaf = () => { local += 1; bump() + local };
+                mark(seed);
+                values[1] = leaf();
+                if depth > 0 { array(seed + 10, depth - 1, false); }
+                if fail { values[2]; }
+                values
+            };
+            return outer(10);
+        }
+        fn text(value: string) -> string {
+            let read = () => value;
+            let wrapper = () => {
+                let leaf = () => read();
+                mark(500);
+                leaf()
+            };
+            return wrapper();
+        }
+        fn update(values: number[], fail: bool) -> number {
+            let change = () => { values[0] += 7; mark(700); values[0] };
+            let result = change();
+            if fail { values[2]; }
+            return result;
+        }
+        fn churn(count: number) -> number {
+            let i = 0;
+            while i < count {
+                let value = i;
+                let read = () => value;
+                read();
+                i += 1;
+            }
+            return i;
+        }
+        "#,
+        &["array", "text", "update", "churn"],
+        r#"
+        function hostString(bytes) {
+            const handle = e.__alloc(8) >>> 0;
+            const data = e.__alloc(bytes.length) >>> 0;
+            const view = new DataView(e.memory.buffer);
+            view.setUint32(handle, data, true);
+            view.setUint32(handle + 4, bytes.length, true);
+            new Uint8Array(e.memory.buffer, data, bytes.length).set(bytes);
+            return handle;
+        }
+        function stringBytes(handle) {
+            const view = new DataView(e.memory.buffer);
+            return Array.from(new Uint8Array(e.memory.buffer,
+                view.getUint32(handle, true), view.getUint32(handle + 4, true)));
+        }
+        // Independently written UTF-8 bytes for "hé😀" and "ß".
+        const utf8 = [104,195,169,240,159,152,128];
+        const text = hostString(utf8), otherText = hostString([195,159]);
+        const retained = [];
+        const markers = [];
+        let inner, innerText;
+        let reentries = 0;
+        onMark = n => {
+            if (n === 1) {
+                assert.equal(++reentries, 1);
+                inner = e.array(20, 1, 0);
+                retained.push(inner);
+                markers.push(e.__alloc(8) >>> 0);
+                assert.throws(() => e.array(40, 0, 1), WebAssembly.RuntimeError);
+                markers.push(e.__alloc(8) >>> 0);
+                assert.deepEqual(contents(inner), [41,32]);
+            }
+        };
+        const outer = e.array(1, 0, 0);
+        retained.push(outer);
+        assert.equal(reentries, 1);
+        assert.deepEqual(contents(outer), [3,13]);
+        assert.deepEqual(events.splice(0), [1,20,31,40]);
+
+        let growing = false;
+        onMark = n => {
+            if (n === 500 && !growing) {
+                growing = true;
+                innerText = e.text(otherText);
+                retained.push(e.array(5, 2, 0));
+                // Preserve a real write before a host allocator-overflow trap.
+                markers.push(e.__alloc(8) >>> 0);
+                assert.throws(() => e.update(outer, 1), WebAssembly.RuntimeError);
+                markers.push(e.__alloc(8) >>> 0);
+                const oldBuffer = e.memory.buffer;
+                const oldLength = oldBuffer.byteLength;
+                const stale = new DataView(oldBuffer);
+                assert.equal(e.churn(9000), 9000);
+                assert.ok(e.memory.buffer.byteLength > oldLength);
+                assert.notEqual(e.memory.buffer, oldBuffer);
+                assert.equal(oldBuffer.byteLength, 0);
+                assert.throws(() => stale.getUint32(0, true), TypeError);
+                growing = false;
+            } else if (n === 700) {
+                e.__alloc(0xfffffff8);
+            }
+        };
+        const returnedText = e.text(text);
+        assert.equal(returnedText, text);
+        assert.equal(innerText, otherText);
+        assert.deepEqual(events.splice(0), [500,500,5,16,27,700]);
+        assert.deepEqual(retained.map(h => contents(h)), [[41,32], [10,13], [11,17]]);
+        assert.deepEqual(stringBytes(returnedText), utf8);
+        assert.deepEqual(stringBytes(innerText), [195,159]);
+
+        // A guest bounds trap also preserves earlier writes, without allocator reset.
+        onMark = () => {};
+        markers.push(e.__alloc(8) >>> 0);
+        assert.throws(() => e.update(inner, 1), WebAssembly.RuntimeError);
+        markers.push(e.__alloc(8) >>> 0);
+        assert.equal(e.update(outer, 0), 17);
+        assert.deepEqual(events.splice(0), [700,700]);
+        const later = e.array(9, 0, 0);
+        assert.deepEqual(events.splice(0), [9]);
+        retained.push(later);
+        markers.push(e.__alloc(8) >>> 0);
+        assert.ok(markers.every((p, i) => i === 0 || p > markers[i - 1]));
+        assert.equal(new Set(retained).size, 4);
+        assert.deepEqual(retained.map(h => contents(h)), [[48,32], [17,13], [11,17], [19,21]]);
+        assert.deepEqual(stringBytes(returnedText), utf8);
+        assert.deepEqual(stringBytes(innerText), [195,159]);
+        // A new invocation after all traps still returns the original host handle.
+        assert.equal(e.text(text), text);
+        assert.deepEqual(events.splice(0), [500]);
+        "#,
+    );
+}
+
+#[test]
+#[ignore = "requires Node.js on PATH"]
 fn captured_range_iterations_keep_fresh_monotonic_eight_byte_cells() {
     run(
         r#"

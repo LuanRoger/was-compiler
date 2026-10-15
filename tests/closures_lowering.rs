@@ -85,6 +85,140 @@ fn assert_invalid(program: &TypedProgram, reason: &str, expected_span: Span) {
 }
 
 #[test]
+fn recursive_contexts_keep_local_environment_pointers_and_only_allocator_writes_heap() {
+    use was_compiler::{ExportOptions, OptimizationLevel};
+
+    let source = r#"
+        fn creator(seed: number, depth: number) -> number {
+            let local = seed * 10;
+            let first = () => { seed += 1; local += 10; seed + local };
+            let second = () => { let leaf = () => first(); leaf() };
+            mark(seed);
+            if depth > 0 { creator(seed + 10, depth - 1); }
+            return second();
+        }
+    "#;
+    let mut baseline = None;
+    for level in [
+        OptimizationLevel::None,
+        OptimizationLevel::Basic,
+        OptimizationLevel::Standard,
+        OptimizationLevel::Aggressive,
+    ] {
+        let mut compiler = Compiler::new();
+        compiler.set_optimization_level(level);
+        compiler.set_exports(ExportOptions::Only(vec!["creator".into()]));
+        compiler
+            .register_host_function("mark", "env", "mark", vec![Type::Number], Type::Number)
+            .unwrap();
+        compiler
+            .register_host_function("unused", "env", "unused", vec![Type::Bool], Type::Void)
+            .unwrap();
+        let program = compiler.analyze(source).unwrap();
+        let before_registry_edit = compiler.compile(&program).unwrap();
+        compiler
+            .register_host_function("later", "env", "later", vec![], Type::String)
+            .unwrap();
+        let bytes = compiler.compile(&program).unwrap();
+        assert_eq!(bytes, before_registry_edit);
+        if let Some(expected) = &baseline {
+            assert_eq!(&bytes, expected);
+        } else {
+            baseline = Some(bytes.clone());
+        }
+        Validator::new().validate_all(&bytes).unwrap();
+        let mut imports = vec![];
+        let mut allocator = None;
+        let mut body_count = 0;
+        for payload in Parser::new(0).parse_all(&bytes) {
+            match payload.unwrap() {
+                Payload::ImportSection(section) => {
+                    for import in section.into_imports() {
+                        let import = import.unwrap();
+                        imports.push((import.module, import.name));
+                    }
+                }
+                Payload::ExportSection(section) => {
+                    for export in section {
+                        let export = export.unwrap();
+                        if export.name == "__alloc" {
+                            allocator = Some(export.index);
+                        }
+                    }
+                }
+                Payload::CodeSectionStart { count, .. } => body_count = count,
+                Payload::TableSection(_) | Payload::StartSection { .. } => {
+                    panic!("local callables add neither a table nor a start function")
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(imports, [("env", "mark"), ("env", "unused")]);
+        let allocator = allocator.unwrap();
+        assert_eq!(allocator, 3); // Two imports, then the sole user function.
+        assert_eq!(body_count, 11); // User, seven memory helpers, three callables.
+        for index in 0..body_count {
+            let ops = operators(&bytes, index as usize);
+            let writes: Vec<_> = ops
+                .iter()
+                .filter_map(|op| match op {
+                    Operator::GlobalSet { global_index } => Some(*global_index),
+                    _ => None,
+                })
+                .collect();
+            if index == 1 {
+                assert_eq!(writes, [0]);
+            } else {
+                assert!(writes.is_empty(), "body {index} must not reset the heap");
+            }
+        }
+        let creator = operators(&bytes, 0);
+        let allocations: Vec<_> = creator
+            .iter()
+            .enumerate()
+            .filter_map(|(i, op)| {
+                matches!(op, Operator::Call { function_index } if *function_index == allocator)
+                    .then_some(i)
+            })
+            .collect();
+        assert_eq!(allocations.len(), 4); // Two cells and two environments.
+        let sizes: Vec<_> = allocations
+            .iter()
+            .map(|&i| match creator[i - 1] {
+                Operator::I32Const { value } => value,
+                _ => panic!("explicit allocation size"),
+            })
+            .collect();
+        assert_eq!(sizes, [8, 8, 16, 8]);
+        let Operator::LocalSet { local_index: env } = creator[allocations[3] + 1] else {
+            panic!("environment pointer must be invocation-local");
+        };
+        let host_call = creator
+            .iter()
+            .position(|op| matches!(op, Operator::Call { function_index: 0 }))
+            .unwrap();
+        let recursive_call = creator
+            .iter()
+            .position(|op| matches!(op, Operator::Call { function_index: 2 }))
+            .unwrap();
+        let second_call = creator
+            .iter()
+            .rposition(|op| matches!(op, Operator::Call { function_index: 11 }))
+            .unwrap();
+        assert!(allocations[3] < host_call && host_call < recursive_call);
+        assert!(recursive_call < second_call);
+        assert!(
+            matches!(creator[second_call - 1], Operator::LocalGet { local_index } if local_index == env)
+        );
+        // The nested leaf forwards the earlier callable's original live environment.
+        let leaf = operators(&bytes, 10);
+        assert!(leaf.windows(3).any(|ops| matches!(ops,
+            [Operator::LocalGet { local_index: 0 }, Operator::I32Load { memarg },
+             Operator::Call { function_index: 10 }] if memarg.offset == 0)));
+    }
+}
+
+#[test]
 fn iteration_cells_allocate_inside_the_yield_region_before_the_body() {
     for iterable in ["1..3", "[1, 2]"] {
         let source = format!(

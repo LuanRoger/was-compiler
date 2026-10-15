@@ -72,6 +72,12 @@ implemented with frontend/backend integrated and [release gates passed](#wp9-rel
 not arbitrary nonempty host module/field names. `_temp` remains valid; `by` stays
 contextual. WP9 does not implement ignored bindings or placeholder expressions.
 
+Issue #34 adds [capture lifetime coverage](local-callable-interface.md#capture-lifetime-across-recursion-reentry-and-traps-34)
+for bounded recursion, synchronous host reentry, traps, persistent array/string
+handles and actual memory growth at the existing checked/runtime/CLI seams.
+The existing monotonic implementation satisfies these scenarios without compiler,
+AST or ABI changes; full WP11 release remains deferred.
+
 ## 2. File ownership and change boundaries
 
 These paths exist today; ownership denotes responsibility, not mandatory edits for every package.
