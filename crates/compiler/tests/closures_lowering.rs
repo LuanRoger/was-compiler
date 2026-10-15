@@ -85,6 +85,231 @@ fn assert_invalid(program: &TypedProgram, reason: &str, expected_span: Span) {
 }
 
 #[test]
+fn checked_lifecycle_orders_layout_all_user_bodies_and_helpers_in_preorder() {
+    for stage in 0..=6 {
+        let mut child = closure(
+            if stage == 0 { 99 } else { 1 },
+            BindingOwner::Closure(CallableId(0)),
+            TypedClosureBody::Expression(Box::new(number(if stage <= 4 {
+                "bad-child"
+            } else {
+                "13"
+            }))),
+            Type::Number,
+        );
+        child.span = Span::new(301, 331);
+        child.body_span = Span::new(311, 321);
+        let mut parent = closure(
+            0,
+            BindingOwner::Function(FunctionId(0)),
+            block(
+                vec![statement(TypedStatementKind::Closure(child))],
+                Some(number(if stage <= 3 { "bad-parent" } else { "11" })),
+            ),
+            Type::Number,
+        );
+        parent.body_span = Span::new(201, 291);
+        if let TypedClosureBody::Block(body) = &mut parent.body {
+            body.span = parent.body_span;
+        }
+        let mut sibling = closure(
+            2,
+            BindingOwner::Function(FunctionId(0)),
+            TypedClosureBody::Expression(Box::new(number(if stage <= 5 {
+                "bad-sibling"
+            } else {
+                "17"
+            }))),
+            Type::Number,
+        );
+        sibling.body_span = Span::new(401, 421);
+        let mut typed = program(vec![
+            statement(TypedStatementKind::Closure(parent)),
+            statement(TypedStatementKind::Closure(sibling)),
+            TypedStatement {
+                kind: TypedStatementKind::Return(Some(number(if stage <= 1 {
+                    "bad-main"
+                } else {
+                    "2"
+                }))),
+                span: Span::new(101, 121),
+            },
+        ]);
+        typed.functions.push(TypedFunction {
+            id: FunctionId(1),
+            name: "later".into(),
+            params: vec![],
+            return_type: Type::Number,
+            contracts: vec![],
+            body: vec![TypedStatement {
+                kind: TypedStatementKind::Return(Some(number(if stage <= 2 {
+                    "bad-later"
+                } else {
+                    "3"
+                }))),
+                span: Span::new(151, 171),
+            }],
+            span: Span::new(141, 181),
+        });
+        if stage == 0 {
+            assert_invalid(&typed, "invalid callable identity", Span::new(301, 331));
+        } else if stage < 6 {
+            let (expected_function, expected_literal, expected_span) = match stage {
+                1 => ("main", "bad-main", Span::new(101, 121)),
+                2 => ("later", "bad-later", Span::new(151, 171)),
+                3 => ("<closure>", "bad-parent", Span::new(201, 291)),
+                4 => ("<closure>", "bad-child", Span::new(311, 321)),
+                5 => ("<closure>", "bad-sibling", Span::new(401, 421)),
+                _ => unreachable!(),
+            };
+            let error = Compiler::new().compile(&typed).unwrap_err();
+            assert!(
+                matches!(&error, CodegenError::InvalidNumberLiteral { function, literal, span }
+                    if function == expected_function && literal == expected_literal && *span == expected_span),
+                "stage {stage}: {error:?}"
+            );
+        } else {
+            let bytes = Compiler::new().compile(&typed).unwrap();
+            Validator::new().validate_all(&bytes).unwrap();
+            let bodies = Parser::new(0)
+                .parse_all(&bytes)
+                .filter(|payload| matches!(payload, Ok(Payload::CodeSectionEntry(_))))
+                .count();
+            assert_eq!(bodies, 5);
+            for (index, expected) in [2.0, 3.0, 11.0, 13.0, 17.0].into_iter().enumerate() {
+                let constants: Vec<_> = operators(&bytes, index)
+                    .into_iter()
+                    .filter_map(|op| match op {
+                        Operator::F64Const { value } => Some(f64::from_bits(value.bits())),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(constants, [expected], "body {index}");
+            }
+        }
+    }
+}
+
+#[test]
+fn parent_helper_retains_child_capture_and_dependency_facts_after_scope_exit() {
+    let compiler = Compiler::new();
+    let typed = compiler
+        .analyze(
+            "fn main() -> number {
+                let parent = () => {
+                    if true {
+                        let n = 7;
+                        let read = () => n;
+                        let child = () => n + read();
+                        child();
+                    }
+                    9
+                };
+                return parent();
+            }",
+        )
+        .unwrap();
+    let bytes = compiler.compile(&typed).unwrap();
+    Validator::new().validate_all(&bytes).unwrap();
+    let child = operators(&bytes, 10);
+    let calls: Vec<_> = child
+        .iter()
+        .filter_map(|op| match op {
+            Operator::Call { function_index } => Some(*function_index),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(calls, [9]);
+    let offsets: Vec<_> = child
+        .iter()
+        .filter_map(|op| match op {
+            Operator::I32Load { memarg } => Some(memarg.offset),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(offsets, [0, 8]);
+    assert!(child.iter().any(|op| matches!(op, Operator::F64Add)));
+    let parent = operators(&bytes, 8);
+    let child_call = parent
+        .iter()
+        .position(|op| matches!(op, Operator::Call { function_index: 10 }))
+        .unwrap();
+    let scope_exit = parent[child_call + 1..]
+        .iter()
+        .position(|op| matches!(op, Operator::End))
+        .unwrap()
+        + child_call
+        + 1;
+    assert!(parent[scope_exit + 1..].iter().any(
+        |op| matches!(op, Operator::F64Const { value } if f64::from_bits(value.bits()) == 9.0)
+    ));
+    assert!(
+        operators(&bytes, 9)
+            .iter()
+            .any(|op| matches!(op, Operator::F64Load { memarg } if memarg.offset == 0))
+    );
+}
+
+#[test]
+fn helper_body_and_result_errors_precede_exact_capture_and_dependency_completeness() {
+    let compiler = Compiler::new();
+    let original = compiler
+        .analyze(
+            "fn main() -> number {
+                let n = 1;
+                let first = () => 2;
+                let candidate = () => n + first();
+                return candidate();
+            }",
+        )
+        .unwrap();
+    for (keep_capture, keep_dependency) in [(true, false), (false, true), (true, true)] {
+        for failure in 0..3 {
+            let mut typed = original.clone();
+            let TypedStatementKind::Closure(candidate) = &mut typed.functions[0].body[2].kind
+            else {
+                panic!()
+            };
+            if !keep_capture {
+                candidate.captures.clear();
+            }
+            if !keep_dependency {
+                candidate.dependencies.clear();
+            }
+            candidate.span = Span::new(501, 551);
+            candidate.body_span = Span::new(521, 541);
+            candidate.body = match failure {
+                0 => TypedClosureBody::Expression(Box::new(number("bad-body"))),
+                1 => block(vec![], None),
+                2 => TypedClosureBody::Expression(Box::new(number("3"))),
+                _ => unreachable!(),
+            };
+            match failure {
+                0 => {
+                    let error = compiler.compile(&typed).unwrap_err();
+                    assert!(
+                        matches!(&error, CodegenError::InvalidNumberLiteral { function, literal, span }
+                            if function == "<closure>" && literal == "bad-body" && *span == Span::new(521, 541)),
+                        "{error:?}"
+                    );
+                }
+                1 => assert_invalid(&typed, "invalid closure result", Span::new(521, 541)),
+                2 => assert_invalid(
+                    &typed,
+                    if keep_capture {
+                        "invalid capture metadata"
+                    } else {
+                        "invalid callable dependency"
+                    },
+                    Span::new(501, 551),
+                ),
+                _ => unreachable!(),
+            }
+        }
+    }
+}
+
+#[test]
 fn recursive_contexts_keep_local_environment_pointers_and_only_allocator_writes_heap() {
     use was_compiler::{ExportOptions, OptimizationLevel};
 

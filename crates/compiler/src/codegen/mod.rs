@@ -13,7 +13,6 @@ use wasm_encoder::{
 
 mod abi;
 mod call;
-mod closures;
 mod control_flow;
 mod expression;
 mod function;
@@ -31,6 +30,8 @@ mod temporaries;
 mod validation;
 mod values;
 mod walker;
+
+use function::closures;
 
 #[cfg(test)]
 mod contracts_tests;

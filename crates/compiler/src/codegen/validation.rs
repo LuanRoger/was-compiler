@@ -1,7 +1,7 @@
 use crate::{exports::ExportOptions, typed_ast::TypedProgram};
 use wasm_encoder::Function;
 
-use super::{CodegenError, function, layout::Layout};
+use super::{CodegenError, closures, function, layout::Layout};
 
 pub(super) struct ValidatedProgram<'a> {
     program: &'a TypedProgram,
@@ -24,7 +24,7 @@ impl<'a> ValidatedProgram<'a> {
 
         let mut callable_bodies = Vec::with_capacity(layout.callables.len());
         for plan in &layout.callables {
-            callable_bodies.push(function::emit_closure(plan.declaration, &layout)?);
+            callable_bodies.push(closures::emit_closure(plan.declaration, &layout)?);
         }
 
         Ok(Self {

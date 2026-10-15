@@ -70,6 +70,33 @@ results, calls and transfers through existing checked lowering. Context-free hel
 have only explicit parameters and allocate no callable environment. Ordinary body
 operations and handle signatures may still require memory.
 
+## Backend implementation ownership
+
+`crates/compiler/src/codegen/closures.rs` is a private child module of
+`function.rs`, exposed internally as `codegen::closures`. It owns `plan()`,
+`BodyEmitter` callable declaration lifecycle operations, and `emit_closure()`'s
+checked helper lowering. Child-module access keeps emitter state private to
+`function.rs` rather than exposing it to sibling modules.
+
+`CallablePlan` separates immutable planned facts (borrowed declaration, signatures,
+indices, context requirements and environment layout) from a private
+`OnceCell<CreatorEstablished>`. The creator publishes `capture_order` and
+`lexical_prefix` together only after declaration checks and environment lowering
+succeed, then activates the declaration's lexical availability. This establishes
+creator facts, not evidence that the helper body has been checked.
+
+`ValidatedProgram` retains the ordering: complete all layout, check/lower all user
+functions in source order, then check/lower helpers in source depth-first preorder.
+`emit_closure()` checks the helper body and result before exact capture/dependency
+usage completeness. Cached encoded helper bodies are the evidence of successful
+helper checks; there is no separate checked boolean. Module assembly consumes
+those cached bodies rather than checking them again.
+
+A failed compilation discards its plans and partial output; there is no retry or
+rollback protocol. This ownership refactor preserves exact emitted bytes, errors
+and check ordering, and runtime allocation behavior. It changes no language,
+public typed-AST or ABI contract, and adds no release-validation claim.
+
 ## Implemented shared-capture subset (#30)
 
 Outer and helper reads/writes observe the same binding; ordinary indexed array

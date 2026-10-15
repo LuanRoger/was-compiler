@@ -8,15 +8,15 @@ use crate::{
     flow::Flow,
     tokens::Span,
     typed_ast::{
-        BindingOwner, CallableId, ExprResult, FunctionRef, LoopId, TypedBlock, TypedClosure,
-        TypedClosureBody, TypedExpr, TypedFunction, TypedParam, VariableId,
+        BindingOwner, CallableId, ExprResult, FunctionRef, LoopId, TypedBlock, TypedExpr,
+        TypedFunction, TypedParam, VariableId,
     },
 };
 use wasm_encoder::{BlockType, Function, Instruction, ValType};
 
 use super::{
     CodegenError, abi, checked_u32,
-    closures::{self, BodyOwner, CallablePlan, LexicalPrefix},
+    closures::{BodyOwner, LexicalPrefix},
     expect_result, expect_type, expression,
     indices::{FunctionIndex, LabelDepth, LocalIndex},
     layout::{CallTarget, Layout},
@@ -24,6 +24,10 @@ use super::{
     memory::Helper,
     range, statement, temporaries,
 };
+
+// The child module owns callable lifecycle operations without exposing emitter state.
+#[path = "closures.rs"]
+pub(super) mod closures;
 
 struct Context<'a> {
     name: &'a str,
@@ -425,167 +429,6 @@ impl<'a> BodyEmitter<'a> {
         Ok(())
     }
 
-    fn use_dependency(&mut self, id: CallableId) {
-        let declaration = self.context.module.callables[id.0].declaration;
-        if matches!(self.context.owner, BindingOwner::Closure(_))
-            && declaration.owner != self.context.owner
-        {
-            self.context.used_dependencies.insert(id.0);
-        }
-    }
-
-    pub fn declare_callable(&mut self, closure: &TypedClosure) -> Result<(), CodegenError> {
-        let invalid = |reason| closures::invalid(reason, closure.span);
-        let plan = self
-            .context
-            .module
-            .callables
-            .get(closure.id.0)
-            .filter(|plan| std::ptr::eq(plan.declaration, closure))
-            .ok_or_else(|| invalid("invalid callable identity"))?;
-        if closure.owner != self.context.owner {
-            return Err(invalid("invalid closure ownership"));
-        }
-        let mut previous = None;
-        let mut capture_order = Vec::with_capacity(closure.captures.len());
-        for capture in &closure.captures {
-            let key = if capture.owner == self.context.owner {
-                let local = self
-                    .context
-                    .locals
-                    .get(capture.variable)
-                    .ok_or_else(|| invalid("invalid capture metadata"))?;
-                let mutability = match local.kind {
-                    BindingKind::Mutable => crate::typed_ast::CaptureMutability::Mutable,
-                    BindingKind::Iteration => crate::typed_ast::CaptureMutability::ReadOnly,
-                    BindingKind::Call => return Err(invalid("invalid capture metadata")),
-                };
-                if local.ty != capture.ty
-                    || capture.mutability != mutability
-                    || !self.context.initialized.contains(&capture.variable)
-                {
-                    return Err(invalid("invalid capture metadata"));
-                }
-                let owner_order = match self.context.owner {
-                    BindingOwner::Function(_) => 0,
-                    BindingOwner::Closure(id) => id.0 + 1,
-                };
-                (owner_order, local.index.raw())
-            } else {
-                let slot = self.inherited_capture(capture, closure.span)?;
-                self.context.used_captures.insert(slot);
-                let BindingOwner::Closure(id) = self.context.owner else {
-                    return Err(invalid("invalid capture metadata"));
-                };
-                *self.context.module.callables[id.0]
-                    .capture_order
-                    .borrow()
-                    .get(slot)
-                    .ok_or_else(|| invalid("invalid capture metadata"))?
-            };
-            if previous.is_some_and(|previous| key <= previous) {
-                return Err(invalid("invalid capture metadata"));
-            }
-            previous = Some(key);
-            capture_order.push(key);
-        }
-        *plan.capture_order.borrow_mut() = capture_order;
-        let mut previous = None;
-        for &dependency in &closure.dependencies {
-            if previous.is_some_and(|id| dependency.0 <= id)
-                || dependency.0 >= closure.id.0
-                || !self.context.callable_available(dependency)
-                || self.context.module.callables.get(dependency.0).is_none()
-            {
-                return Err(invalid("invalid callable dependency"));
-            }
-            previous = Some(dependency.0);
-            self.use_dependency(dependency);
-        }
-        if plan.needs_context {
-            let env = self
-                .context
-                .storage
-                .environments
-                .get(&closure.id)
-                .copied()
-                .ok_or_else(|| invalid("invalid capture metadata"))?;
-            self.allocate(plan.environment_size, env);
-            for (index, capture) in closure.captures.iter().enumerate() {
-                self.local_get(env);
-                if capture.owner == self.context.owner {
-                    let cell = self
-                        .context
-                        .storage
-                        .cells
-                        .get(&capture.variable)
-                        .copied()
-                        .ok_or_else(|| invalid("invalid capture metadata"))?;
-                    self.local_get(cell);
-                } else {
-                    let slot = self.inherited_capture(capture, closure.span)?;
-                    self.local_get(LocalIndex::new(0));
-                    self.instruction(&Instruction::I32Load(abi::environment_slot(slot)?));
-                }
-                self.instruction(&Instruction::I32Store(abi::environment_slot(index)?));
-            }
-            for dependency in &closure.dependencies {
-                if let Some(&slot) = plan.dependency_slots.get(dependency) {
-                    self.local_get(env);
-                    self.callable_environment(*dependency, closure.span)?;
-                    self.instruction(&Instruction::I32Store(abi::environment_slot(slot)?));
-                }
-            }
-        }
-        plan.lexical_prefix.set(Some(self.context.lexical_prefix));
-        self.context.lexical_prefix.activate(closure.id);
-        self.context.available_callables.insert(closure.id);
-        Ok(())
-    }
-
-    pub fn callable(
-        &mut self,
-        id: CallableId,
-        span: Span,
-    ) -> Result<&'a CallablePlan<'a>, CodegenError> {
-        let plan = self
-            .context
-            .module
-            .callables
-            .get(id.0)
-            .ok_or_else(|| closures::invalid("invalid callable call", span))?;
-        if !self.context.callable_available(id) {
-            return Err(closures::invalid("invalid callable call", span));
-        }
-        self.use_dependency(id);
-        Ok(plan)
-    }
-
-    fn inherited_capture(
-        &self,
-        capture: &crate::typed_ast::TypedCapture,
-        span: Span,
-    ) -> Result<usize, CodegenError> {
-        let invalid = || closures::invalid("invalid capture metadata", span);
-        let BindingOwner::Closure(id) = self.context.owner else {
-            return Err(invalid());
-        };
-        let slot = *self
-            .context
-            .capture_slots
-            .get(&(capture.owner, capture.variable))
-            .ok_or_else(invalid)?;
-        if self.context.module.callables[id.0]
-            .declaration
-            .captures
-            .get(slot)
-            != Some(capture)
-        {
-            return Err(invalid());
-        }
-        Ok(slot)
-    }
-
     fn allocate(&mut self, size: u32, destination: LocalIndex) {
         self.instruction(&Instruction::I32Const(i32::from_ne_bytes(
             size.to_ne_bytes(),
@@ -674,29 +517,6 @@ impl<'a> BodyEmitter<'a> {
         } else {
             Instruction::I32Store(abi::cell_arg(ty))
         });
-    }
-
-    pub fn callable_environment(&mut self, id: CallableId, span: Span) -> Result<(), CodegenError> {
-        if let Some(local) = self.context.storage.environments.get(&id).copied() {
-            self.local_get(local);
-        } else {
-            let BindingOwner::Closure(owner) = self.context.owner else {
-                return Err(closures::invalid("invalid callable call", span));
-            };
-            let slot = self.context.module.callables[owner.0]
-                .dependency_slots
-                .get(&id)
-                .copied()
-                .ok_or_else(|| {
-                    closures::invalid(
-                        "invalid callable dependency",
-                        self.context.module.callables[owner.0].declaration.span,
-                    )
-                })?;
-            self.local_get(LocalIndex::new(0));
-            self.instruction(&Instruction::I32Load(abi::environment_slot(slot)?));
-        }
-        Ok(())
     }
 
     pub fn note_value_return(&mut self) {
@@ -937,81 +757,6 @@ fn validate_parameters(
     }
 
     Ok(())
-}
-
-pub(super) fn emit_closure<'a>(
-    closure: &'a TypedClosure,
-    module: &'a Layout<'a>,
-) -> Result<Function, CodegenError> {
-    let mut emitter = BodyEmitter::for_owner(BodyOwner::Closure(closure), module)?;
-    emitter.context.lexical_prefix = module.callables[closure.id.0]
-        .lexical_prefix
-        .get()
-        .ok_or_else(|| closures::invalid("invalid closure ownership", closure.span))?;
-    emitter.context.available_callables = closure.dependencies.iter().copied().collect();
-    validate_parameters(&closure.params, &mut emitter)?;
-    emitter.promote_parameters(&closure.params)?;
-    let (flow, result, has_tail) = match &closure.body {
-        TypedClosureBody::Expression(expr) => {
-            let flow = emitter.emit_expr(expr, closure.body_span)?;
-            (flow, expr.ty, true)
-        }
-        TypedClosureBody::Block(block) => {
-            let (flow, result) = expression::emit_value_contents(block, &mut emitter)?;
-            (flow, result, block.tail.is_some())
-        }
-    };
-    let tail = match &closure.body {
-        TypedClosureBody::Expression(expr) => Some(expr.as_ref()),
-        TypedClosureBody::Block(block) => block.tail.as_deref(),
-    };
-    if let Some(tail) = tail {
-        super::expect_operand("<closure>", closure.return_type, tail.ty, closure.body_span)?;
-    }
-    if flow.can_fall_through() {
-        if !has_tail && closure.return_type != Type::Void {
-            return Err(closures::invalid(
-                "invalid closure result",
-                closure.body_span,
-            ));
-        }
-        expect_result(
-            "<closure>",
-            closure.return_type.into(),
-            result,
-            closure.body_span,
-        )?;
-    }
-    let returned = flow
-        .return_type()
-        .map_err(|_| closures::invalid("invalid closure result", closure.body_span))?;
-    if returned.is_none()
-        && !flow.can_fall_through()
-        && (has_tail || closure.return_type != Type::Void || emitter.context.value_return_syntax)
-    {
-        return Err(closures::invalid(
-            "invalid closure result",
-            closure.body_span,
-        ));
-    }
-    if emitter.context.used_captures.len() != closure.captures.len() {
-        return Err(closures::invalid("invalid capture metadata", closure.span));
-    }
-    let used: Vec<_> = emitter
-        .context
-        .used_dependencies
-        .iter()
-        .copied()
-        .map(CallableId)
-        .collect();
-    if used != closure.dependencies {
-        return Err(closures::invalid(
-            "invalid callable dependency",
-            closure.span,
-        ));
-    }
-    emitter.end();
-    Ok(emitter.body)
 }
 
 #[cfg(test)]

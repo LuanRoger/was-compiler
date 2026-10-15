@@ -103,6 +103,7 @@ bypasses the compiler's optimization/options orchestration.
 | `crates/compiler/src/codegen/walker.rs` | Shared structural traversal for separate planning policies |
 | `crates/compiler/src/codegen/locals.rs`, `crates/compiler/src/codegen/temporaries.rs` | Local-slot and temporary planning |
 | `crates/compiler/src/codegen/function.rs` | `BodyEmitter`, scoped initialized bindings, private emission context |
+| `crates/compiler/src/codegen/closures.rs` | Private child of `function.rs`, internally `codegen::closures`: callable planning, declaration lifecycle and helper checks; before changing these, read [backend implementation ownership](docs/local-callable-interface.md#backend-implementation-ownership) |
 | `crates/compiler/src/codegen/expression.rs`, `crates/compiler/src/codegen/statement.rs` | Expression and statement lowering |
 | `crates/compiler/src/codegen/place.rs` | Shared checked local/index places, ordinary and compound assignment |
 | `crates/compiler/src/codegen/control_flow.rs`, `crates/compiler/src/codegen/call.rs`, `crates/compiler/src/codegen/values.rs` | Structured control flow, calls, literal values |

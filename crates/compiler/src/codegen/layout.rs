@@ -294,53 +294,9 @@ impl<'a> Layout<'a> {
             .ok_or(CodegenError::LimitExceeded {
                 what: "total function count",
             })?;
-        let declarations = closures::discover(program)?;
-        first_callable
-            .checked_add(checked_u32(declarations.len(), "callable count")?)
-            .ok_or(CodegenError::LimitExceeded {
-                what: "total function count",
-            })?;
-        for (index, declaration) in declarations.into_iter().enumerate() {
-            let mut signature = abi::internal_signature(
-                "<closure>",
-                declaration.params.iter().map(|p| p.ty),
-                declaration.return_type,
-            )?;
-            let mut dependency_slots = HashMap::new();
-            let mut slot = declaration.captures.len();
-            for &dependency in &declaration.dependencies {
-                // Source-preorder earlier dependencies make context discovery acyclic.
-                if dependency.0 >= index {
-                    // Preserve declaration/body diagnostic staging for forged metadata.
-                    continue;
-                }
-                if layout.callables[dependency.0].needs_context {
-                    dependency_slots.insert(dependency, slot);
-                    slot = slot.checked_add(1).ok_or(CodegenError::LimitExceeded {
-                        what: "closure environment slots",
-                    })?;
-                }
-            }
-            let needs_context = slot != 0;
-            if needs_context {
-                signature.params.insert(0, wasm_encoder::ValType::I32);
-                checked_u32(signature.params.len(), "closure parameter count")?;
-            }
-            let environment_size = abi::environment_size(slot)?;
-            let type_index = layout.intern(signature, &mut type_indices)?;
-            layout.callables.push(CallablePlan {
-                declaration,
-                dependency_slots,
-                needs_context,
-                environment_size,
-                type_index,
-                function_index: FunctionIndex::new(
-                    first_callable + checked_u32(index, "callable index")?,
-                ),
-                lexical_prefix: std::cell::Cell::new(None),
-                capture_order: std::cell::RefCell::new(vec![]),
-            });
-        }
+        layout.callables = closures::plan(program, first_callable, |signature| {
+            layout.intern(signature, &mut type_indices)
+        })?;
 
         Ok(layout)
     }
