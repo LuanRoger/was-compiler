@@ -1,9 +1,18 @@
 # WAS language
 
-Terms for the language's defaults, contracts, numeric patterns, pipelines, and local
-closures. Proposed extensions remain distinct from implemented language support.
+Terms for the language's collections, defaults, contracts, numeric patterns, pipelines,
+and local closures. Proposed extensions remain distinct from implemented language support.
 
 ## Language
+
+**Array**:
+A fixed-length, mutable collection whose elements share one type. Assignment and
+parameter passing share the collection rather than copying its elements.
+_Avoid_: List, growable list
+
+**Growable list**:
+A proposed collection whose length can change after creation, distinct from an array.
+Growable lists are not currently supported.
 
 **Pure expression**:
 An expression admitted by the WAS default/contract whitelist that performs no writes
