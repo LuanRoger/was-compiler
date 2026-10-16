@@ -1,9 +1,6 @@
 use std::ops::ControlFlow;
 
-use crate::{
-    ast::Type,
-    typed_ast::{ExprResult, TypedExpr, TypedExprKind, TypedStatement, TypedStatementKind},
-};
+use crate::typed_ast::{TypedExpr, TypedExprKind, TypedStatement, TypedStatementKind};
 use wasm_encoder::ValType;
 
 use super::{CodegenError, closures::BodyOwner, walker::Visitor};
@@ -91,7 +88,7 @@ impl Visitor<'_> for TemporaryVisitor {
         }
 
         if let TypedStatementKind::For { iterable, .. } = &statement.kind {
-            if iterable.ty == ExprResult::Value(Type::NumberArray) {
+            if super::array::iteration_element(iterable).is_some() {
                 self.reserve(&[ValType::I32, ValType::I32, ValType::I32])?;
             } else {
                 self.reserve(&[
@@ -114,7 +111,7 @@ impl Visitor<'_> for TemporaryVisitor {
             self.reserve(&[ty])?;
         }
 
-        if matches!(expr.kind, TypedExprKind::Array(_)) {
+        if matches!(expr.kind, TypedExprKind::Array(_, _)) {
             self.reserve(&[ValType::I32])?;
         }
 
@@ -140,7 +137,10 @@ mod tests {
     }
 
     fn array() -> TypedExpr {
-        expr(TypedExprKind::Array(vec![]))
+        expr(TypedExprKind::Array(
+            vec![],
+            crate::ast::ArrayElementType::Number,
+        ))
     }
 
     fn statement(kind: TypedStatementKind) -> TypedStatement {
@@ -159,7 +159,13 @@ mod tests {
     fn arrays_in_every_expression_child_are_counted_without_type_validation() {
         for (value, expected) in [
             (array(), 1),
-            (expr(TypedExprKind::Array(vec![array(), array()])), 3),
+            (
+                expr(TypedExprKind::Array(
+                    vec![array(), array()],
+                    crate::ast::ArrayElementType::Number,
+                )),
+                3,
+            ),
             (
                 expr(TypedExprKind::Unary {
                     op: UnaryOp::Not,
@@ -313,7 +319,7 @@ mod tests {
     #[test]
     fn overflow_aborts_at_the_array_before_visiting_children() {
         let block = vec![statement(TypedStatementKind::Expression(expr(
-            TypedExprKind::Array(vec![array()]),
+            TypedExprKind::Array(vec![array()], crate::ast::ArrayElementType::Number),
         )))];
         let mut visitor = TemporaryVisitor {
             count: u32::MAX,

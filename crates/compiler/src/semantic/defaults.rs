@@ -149,7 +149,7 @@ fn remap_default(value: &TypedExpr, mapping: &[Option<VariableId>]) -> TypedExpr
         | TypedExprKind::Block(_)
         | TypedExprKind::If { .. }
         | TypedExprKind::Match { .. }
-        | TypedExprKind::Array(_)
+        | TypedExprKind::Array(_, _)
         | TypedExprKind::Index { .. } => {
             unreachable!("private default templates pass the whitelist before expression checking")
         }

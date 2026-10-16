@@ -18,6 +18,21 @@ WP5's construction/internal-call, numeric membership, range-for, and array-for c
 issue #6 completes adapter/interaction implementation and all release gates passed.
 Exact evidence is recorded in [plan §5](was_language_extensions_plan.md#5-documentation-and-validation-workflow). WP6 named/default parameters are implemented on main, and [#13 release validation passed](was_language_extensions_plan.md#issue-13-wp6-release-validation). WP7 acyclic result inference and combined-feature integration are implemented, with [#16 release validation](was_language_extensions_plan.md#issue-16-wp7-release-validation). WP8 whitelist contracts are implemented, with [release gates passed](was_language_extensions_plan.md#wp8-release-validation). WP9 match statements/values are implemented with [release gates passed](was_language_extensions_plan.md#wp9-release-validation). WP10 named-only pipelines are implemented with named/default binding and final-Void discard support (#27); [release validation passed](was_language_extensions_plan.md#wp10-release-validation); WP11's local callable (#29), immediate-creator shared parameter/let capture (#30), captured numeric compound (#31), and nested capture/live callable-context forwarding (#32) subsets are implemented in the frontend/backend ([#32 validation passed](local-callable-interface.md#issue-32-validation-2026-10-14)). #33 implements [read-only iteration captures](local-callable-interface.md#implemented-read-only-iteration-captures-33) ([validation passed](local-callable-interface.md#issue-33-validation-2026-10-15)); nested read-only range/array captures and transitive contexts are supported, full WP11 [release gates passed on 2026-10-15](local-callable-interface.md#issue-35-wp11-release-validation-2026-10-15) under #35, and WP12 remains deferred; [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14); [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14); WP13 requires separate authorization.
 
+## Typed-array baseline update (#37)
+
+#37 implements `number[]`, `bool[]` and `string[]` across core, adapters and Node
+marshaling. [Final release gates passed](typed-arrays-validation-2026-10-15.txt)
+after the accessor-snapshot fix (1,251 workspace tests, none ignored; 25 browser
+smoke groups). The [typed-array contract and migration](typed-arrays.md) extends
+this baseline with contextual
+literal expectations, stable omitted/anonymous inference, typed scalar iteration,
+shared captures and lazy consumed-value checks. It leaves numeric-only compounds,
+independent pipeline inputs and the defaults/contracts whitelist intact. The
+[memory ABI](memory-abi.md#descriptor-layout) distinguishes UTF-8 bytes from
+four-byte string-array references and one-byte strict booleans. Historical WP
+release records above do not establish #37 acceptance; earlier numeric-only
+checkpoint descriptions below retain their original scope.
+
 ## 1. Goals and non-goals
 
 ### 1.1 Goals
@@ -49,7 +64,7 @@ reassignment, numeric compound assignments, `if`, `while`, bare `break;` /
 `continue;`, range/array statement `for`, `return`, statement/value `loop`, value breaks in loop expressions,
 tail-valued blocks, value-context `if` / `else if`, named/mixed-prefix calls,
 trailing pure parameter defaults, ordered `requires` preconditions, and `number`,
-`bool`, `string`, `number[]`, `range`, and
+`bool`, `string`, `number[]`, `bool[]`, `string[]`, `range`, and
 `void`. Every local requires an initializer and retains a fixed type. `//` line comments and non-nesting `/* ... */` block comments are implemented.
 Use the local implementation and tests, alongside README and grammar, as evidence
 of the existing-language baseline rather than assuming a public copy is current.

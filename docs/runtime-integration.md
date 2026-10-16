@@ -75,9 +75,10 @@ Host declarations use:
 NAME=MODULE.FIELD(PARAMETER_TYPES)->RESULT_TYPE
 ```
 
-Types are `number`, `bool`, `string`, `number[]`, and `void`; `void` is only legal
-as a result. `range` is recognized but passed to core host registration for
-unsupported-ABI rejection, with CLI guidance to use supported host types; it is
+Host type spellings are `number`, `bool`, `string`, `number[]`, `bool[]`,
+`string[]` and `void`; `void` is only legal as a result. #37 CLI integration is
+implemented with [release gates passed](#typed-array-host-integration-37). `range` is recognized but passed to core
+host registration for unsupported-ABI rejection, with CLI guidance to use supported host types; it is
 not an unknown type or a public range ABI. Empty parentheses mean no parameters.
 The declaration's source name
 still follows host-registration identifier/reserved-name rules. This compact
@@ -316,27 +317,27 @@ default export-all rejects those signatures. A scalar membership function may
 be exported normally; its bool result uses raw `i32` `0`/`1`. There is no public
 range marshaling API.
 
-Statement `for name in iterable { body }` accepts `range` or `number[]` with Never
-compatibility and needs no new host callback or helper. Ranges use the same private
+Statement `for name in iterable { body }` accepts `range` or any supported array
+with Never compatibility and needs no new host callback. Ranges use the same private
 records; arrays use the existing public descriptors. `for` is reserved for
 source/host-language names, not host module/field names. Its iterable evaluates
 once in the enclosing context before the loop/binding is active; iterable
 break/continue targets the outer nearest loop, and return/divergence is preserved.
-The body has a read-only `number` binding (a distinct inner shadowing let remains
-mutable), permits bare breaks, and rejects value breaks even when unreachable.
+The body has a read-only scalar element binding (`number` for ranges; a distinct
+inner shadowing let remains mutable), permits bare breaks, and rejects value breaks even when unreachable.
 Continue reaches advancement before retesting. For ranges, cached `i64` fields and signed
 endpoint checks before exact `f64` yield avoid rounding stalls; yielded zero is
 `+0`, and a valid advance past bounds exhausts normally even outside the safe domain.
 For is a void statement, not a value expression, and adds no public range ABI.
 
-For arrays, full `ValidateArray` precedes caching the handle and unsigned `u32`
-length once, including for an empty array. Unsigned index iteration loads each
-element through existing checked `ArrayAddress` then `f64` load on its iteration,
-not from an element snapshot or cached raw payload pointer. Alias mutations to
-unvisited elements are visible; source reassignment does not replace the captured
-handle. Continue exits the body latch before index advancement/retest. ABI/helper
-order is unchanged, and array-only iteration needs no range helpers. Issue #5
-changes no parser or AST shapes.
+For arrays, complete typed outer-storage validation (no element scan) precedes
+caching the handle and unsigned `u32` length once, including for an empty array.
+Unsigned index iteration uses typed checked loads/consumed-value checks before
+binding/capture promotion/body effects, not an element snapshot or cached raw
+payload pointer. Alias mutations to unvisited elements are visible; source reassignment does not replace the captured
+handle. Continue exits the body latch before index advancement/retest. Old-type-only
+ABI/helper order is unchanged, and array-only iteration needs no range helpers.
+Issue #5 changed no parser or AST shapes; #37 adds typed `For.element_type`.
 
 CLI and browser compilation support both iterable types through the shared core.
 **WP5 implementation is complete and all release gates passed.** See
@@ -375,7 +376,7 @@ retain Node's host capabilities.
 | --- | --- |
 | `number` | JavaScript number representing `f64`, including NaN and infinities. |
 | `bool` | `i32` number; generated host boundaries normalize nonzero values to `1`. |
-| `string`, `number[]` | `i32` descriptor handle in the current instance's memory. |
+| `string`, `number[]`, `bool[]`, `string[]` | `i32` descriptor handle in the current instance's memory. |
 | `void` | No Wasm result. |
 
 Source named/default calls are compiler-side conveniences only. A declaration
@@ -428,6 +429,57 @@ must then satisfy every declared raw signature; the runtime does not infer langu
 types or build signature-specific wrappers. Prefer distinct properties for
 incompatible contracts. Calls are synchronous; Promises are not awaited and are
 not substitutes for declared scalar or descriptor results.
+
+## Typed-array host integration (#37)
+
+Core, Rust host registration/selected exports, CLI/browser host-signature adapters
+and explicit Node marshaling implement `number[]`, `bool[]` and `string[]`.
+[Final #37 release gates passed](typed-arrays-validation-2026-10-15.txt) after the
+accessor fix: 1,251 workspace tests passed with none ignored, including six
+marshaling tests and CLI/browser adapter coverage; 25 browser smoke groups and
+all build/Clippy gates passed. See [typing and public Rust migration](typed-arrays.md).
+Existing WP release records retain their earlier scope.
+
+CLI `--host` and browser registration accept `bool[]`/`string[]` for parameters
+and results, with the same core checks and raw `i32` ABI as numeric arrays. Range
+host restrictions and full-arity raw calls remain unchanged. No callbacks,
+signature metadata or native-value conversions are installed automatically.
+
+Descriptors remain untagged: `bool[]` has one-byte canonical 0/1 elements;
+`string[]` has four-byte little-endian string handles, not inline UTF-8 bytes.
+String descriptors still count bytes with width 1; array descriptors count
+elements. Entry/length checks validate complete outer storage without scans.
+Consumed bool bytes must be 0/1 (not scalar host normalization); consumed string
+handles receive structural checks. Equality/iteration may leave invalid unvisited
+elements unconsumed. Replacing an element validates the destination before RHS
+but does not consume the old value. UTF-8 validity, immutable string bytes and
+published descriptor metadata remain trusted-host obligations. See
+[the authoritative memory ABI](memory-abi.md#typed-array-element-consumption-37).
+
+The explicit `createAbi` contract extends `encode(type, value)`/`decode(type, value)`
+to `bool[]` and `string[]`. Encoding requires plain JavaScript arrays of booleans
+or strings, not typed arrays/coercible values. Both directions copy: later native
+input/decoded-array mutations do not alter guest storage. Use direct memory access
+for deliberate shared mutation. Refresh views after allocations/calls that may grow
+memory, including per-string allocations; retaining Wasm offsets is not retaining
+valid JavaScript views.
+
+New-array encoding captures initial length/each scalar once, validates its type
+and accounts UTF-8 bytes against that snapshot, then copies only captured values.
+Changing getters cannot bypass validation/budgets or change the copied count.
+Invalid/oversized captured input fails before guest access/allocation; getter
+side effects are not rolled back. Both accessor regressions passed in the final
+full run.
+
+Each new-array operation has a checked **64 MiB aggregate logical-copy** budget:
+`N` bytes for `bool[]`, `4*N + sum(per-occurrence UTF-8 bytes)` for `string[]`.
+Repeated occurrences count repeatedly, even when handles/strings repeat. This
+limits logical copied bytes, not JS object overhead, RSS, guest allocation or
+execution. Standalone string and numeric-array 64 MiB payload limits are unchanged.
+See [final release evidence](typed-arrays.md#release-validation) for exact commands,
+counts, tools and post-fix source hashes. Historical M4 [measurements](benchmarks/m4-typed-arrays/comparison.md)
+and [handoff](benchmarks/m4-typed-arrays/handoff.md) predate the runtime accessor fix;
+their hashes are preserved and are not claimed to match the final runtime.
 
 ## Programmatic Node interface
 

@@ -104,8 +104,8 @@ fn array_equality_helper_is_appended_without_moving_imports_users_or_existing_he
                 "host_array",
                 "env",
                 "array",
-                vec![Type::NumberArray],
-                Type::NumberArray,
+                vec![Type::Array(was_compiler::ArrayElementType::Number)],
+                Type::Array(was_compiler::ArrayElementType::Number),
             )
             .unwrap();
         compiler
@@ -281,8 +281,8 @@ fn scalar_only_equality_keeps_the_exact_module_bytes_without_memory_helpers() {
 
 fn array() -> TypedExpr {
     TypedExpr {
-        kind: TypedExprKind::Array(Vec::new()),
-        ty: Type::NumberArray.into(),
+        kind: TypedExprKind::Array(Vec::new(), was_compiler::ArrayElementType::Number),
+        ty: Type::Array(was_compiler::ArrayElementType::Number).into(),
     }
 }
 
@@ -290,7 +290,7 @@ fn value(ty: Type) -> TypedExpr {
     let kind = match ty {
         Type::Number => TypedExprKind::Number("1".into()),
         Type::String => TypedExprKind::String("text".into()),
-        Type::NumberArray => return array(),
+        Type::Array(element) => TypedExprKind::Array(Vec::new(), element),
         Type::Range => TypedExprKind::Range {
             start: Box::new(value(Type::Number)),
             end: Box::new(value(Type::Number)),
@@ -377,7 +377,12 @@ fn assert_forged_error(expr: TypedExpr, expected: CodegenError, span: Span) {
 fn forged_array_equality_rejects_result_and_mixed_operand_types_with_statement_spans() {
     let span = Span::new(31, 67);
     for op in [BinaryOp::Equal, BinaryOp::NotEqual] {
-        for found in [Type::Number, Type::String, Type::NumberArray, Type::Void] {
+        for found in [
+            Type::Number,
+            Type::String,
+            Type::Array(was_compiler::ArrayElementType::Number),
+            Type::Void,
+        ] {
             assert_forged_error(
                 binary(array(), op, array(), found),
                 CodegenError::TypeMismatch {
@@ -394,7 +399,7 @@ fn forged_array_equality_rejects_result_and_mixed_operand_types_with_statement_s
                 binary(array(), op, value(scalar), Type::Bool),
                 CodegenError::TypeMismatch {
                     function: "test".into(),
-                    expected: Type::NumberArray,
+                    expected: Type::Array(was_compiler::ArrayElementType::Number),
                     found: scalar,
                     span,
                 },
@@ -412,7 +417,7 @@ fn forged_array_equality_rejects_result_and_mixed_operand_types_with_statement_s
                     found: if scalar == Type::Void {
                         Type::Void
                     } else {
-                        Type::NumberArray
+                        Type::Array(was_compiler::ArrayElementType::Number)
                     },
                     span,
                 },
@@ -427,8 +432,11 @@ fn forged_array_equality_checks_nested_elements_even_when_unreachable_or_skipped
     let span = Span::new(42, 78);
     for op in [BinaryOp::Equal, BinaryOp::NotEqual] {
         let bad_array = TypedExpr {
-            kind: TypedExprKind::Array(vec![value(Type::Bool)]),
-            ty: Type::NumberArray.into(),
+            kind: TypedExprKind::Array(
+                vec![value(Type::Bool)],
+                was_compiler::ArrayElementType::Number,
+            ),
+            ty: Type::Array(was_compiler::ArrayElementType::Number).into(),
         };
         for expr in [
             binary(bad_array.clone(), op, array(), Type::Bool),
@@ -601,13 +609,24 @@ fn node_array_content_equality_ieee754_aliases_and_no_mutation_at_all_levels() {
 fn node_array_equality_evaluates_once_left_to_right_and_observes_current_storage() {
     let hosts = [
         ("mark", vec![Type::Number], Type::Number),
-        ("provide", vec![Type::Number], Type::NumberArray),
+        (
+            "provide",
+            vec![Type::Number],
+            Type::Array(was_compiler::ArrayElementType::Number),
+        ),
         (
             "wrap",
-            vec![Type::NumberArray, Type::Number],
-            Type::NumberArray,
+            vec![
+                Type::Array(was_compiler::ArrayElementType::Number),
+                Type::Number,
+            ],
+            Type::Array(was_compiler::ArrayElementType::Number),
         ),
-        ("right", vec![], Type::NumberArray),
+        (
+            "right",
+            vec![],
+            Type::Array(was_compiler::ArrayElementType::Number),
+        ),
     ];
     let source = "
         fn ordered() -> bool { return wrap(provide(mark(1)), mark(2)) == wrap(provide(mark(3)), mark(4)); }
@@ -675,8 +694,16 @@ fn node_array_equality_evaluates_once_left_to_right_and_observes_current_storage
 #[ignore = "requires Node.js on PATH"]
 fn node_array_equality_traps_on_both_malformed_descriptors_before_shortcuts() {
     let hosts = [
-        ("left", vec![], Type::NumberArray),
-        ("right", vec![], Type::NumberArray),
+        (
+            "left",
+            vec![],
+            Type::Array(was_compiler::ArrayElementType::Number),
+        ),
+        (
+            "right",
+            vec![],
+            Type::Array(was_compiler::ArrayElementType::Number),
+        ),
     ];
     let source = "
         fn same(a: number[], b: number[]) -> bool { return a == b; }

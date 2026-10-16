@@ -29,6 +29,15 @@ pub(super) enum Helper {
     ArrayLen,
     StringEqual,
     ArrayEqual,
+    ValidateBool,
+    ValidateBoolArray,
+    BoolArrayAddress,
+    BoolArrayLen,
+    BoolArrayEqual,
+    ValidateStringArray,
+    StringArrayAddress,
+    StringArrayLen,
+    StringArrayEqual,
 }
 
 impl Helper {
@@ -40,6 +49,20 @@ impl Helper {
         Self::ArrayLen,
         Self::StringEqual,
         Self::ArrayEqual,
+    ];
+
+    const BOOLEAN_ARRAY: [Self; 5] = [
+        Self::ValidateBool,
+        Self::ValidateBoolArray,
+        Self::BoolArrayAddress,
+        Self::BoolArrayLen,
+        Self::BoolArrayEqual,
+    ];
+    const STRING_ARRAY: [Self; 4] = [
+        Self::ValidateStringArray,
+        Self::StringArrayAddress,
+        Self::StringArrayLen,
+        Self::StringArrayEqual,
     ];
 
     pub(super) fn index(self) -> u32 {
@@ -59,7 +82,14 @@ impl Helper {
             Self::ArrayAddress => (vec![I32, F64], I32),
             Self::ArrayLen => (vec![I32], F64),
             Self::StringEqual => (vec![I32, I32], I32),
-            Self::ArrayEqual => (vec![I32, I32], I32),
+            Self::ArrayEqual | Self::BoolArrayEqual | Self::StringArrayEqual => {
+                (vec![I32, I32], I32)
+            }
+            Self::ValidateBool | Self::ValidateBoolArray | Self::ValidateStringArray => {
+                (vec![I32], I32)
+            }
+            Self::BoolArrayAddress | Self::StringArrayAddress => (vec![I32, F64], I32),
+            Self::BoolArrayLen | Self::StringArrayLen => (vec![I32], F64),
         };
 
         Signature {
@@ -69,6 +99,7 @@ impl Helper {
     }
 }
 
+#[cfg(test)]
 pub(super) fn helpers() -> Vec<(Helper, Signature)> {
     Helper::ALL
         .into_iter()
@@ -80,6 +111,8 @@ pub struct MemoryPlan {
     pub data: Vec<u8>,
     pub heap_start: u32,
     strings: HashMap<String, u32>,
+    boolean_arrays: bool,
+    string_arrays: bool,
 }
 
 impl MemoryPlan {
@@ -88,14 +121,24 @@ impl MemoryPlan {
             data: vec![0; abi::MIN_ADDRESS as usize],
             heap_start: abi::MIN_ADDRESS,
             strings: HashMap::new(),
+            boolean_arrays: false,
+            string_arrays: false,
         };
         let mut used = false;
 
         for host in &program.host_functions {
             used |= memory_type(host.return_type) || host.params.iter().copied().any(memory_type);
+            plan.observe_type(host.return_type);
+            for ty in &host.params {
+                plan.observe_type(*ty);
+            }
         }
 
         for function in &program.functions {
+            plan.observe_type(function.return_type);
+            for param in &function.params {
+                plan.observe_type(param.ty);
+            }
             used |= memory_type(function.return_type)
                 || function.params.iter().any(|param| memory_type(param.ty));
 
@@ -116,6 +159,41 @@ impl MemoryPlan {
         plan.heap_start = aligned_offset(plan.data.len() as u64)?;
 
         Ok(Some(plan))
+    }
+
+    fn observe_type(&mut self, ty: Type) {
+        self.boolean_arrays |= ty == Type::Array(crate::ast::ArrayElementType::Bool);
+        self.string_arrays |= ty == Type::Array(crate::ast::ArrayElementType::String);
+    }
+
+    fn helper_order(&self) -> impl Iterator<Item = Helper> + '_ {
+        Helper::ALL
+            .into_iter()
+            .chain(
+                self.boolean_arrays
+                    .then_some(Helper::BOOLEAN_ARRAY)
+                    .into_iter()
+                    .flatten(),
+            )
+            .chain(
+                self.string_arrays
+                    .then_some(Helper::STRING_ARRAY)
+                    .into_iter()
+                    .flatten(),
+            )
+    }
+
+    pub(super) fn helpers(&self) -> Vec<Helper> {
+        self.helper_order().collect()
+    }
+
+    pub(super) fn helper_index(&self, helper: Helper) -> u32 {
+        u32::try_from(
+            self.helper_order()
+                .position(|h| h == helper)
+                .expect("required helper planned"),
+        )
+        .expect("helper count fits u32")
     }
 
     pub fn string(&self, value: &str) -> Option<u32> {
@@ -166,11 +244,18 @@ impl Visitor<'_> for MemoryVisitor<'_> {
     fn enter_statement(&mut self, statement: &TypedStatement) -> ControlFlow<CodegenError> {
         match &statement.kind {
             TypedStatementKind::Closure(closure) => {
+                self.plan.observe_type(closure.return_type);
+                for param in &closure.params {
+                    self.plan.observe_type(param.ty);
+                }
                 *self.used |= !closure.captures.is_empty()
                     || memory_type(closure.return_type)
                     || closure.params.iter().any(|p| memory_type(p.ty));
             }
-            TypedStatementKind::Let { ty, .. } => *self.used |= memory_type(*ty),
+            TypedStatementKind::Let { ty, .. } => {
+                self.plan.observe_type(*ty);
+                *self.used |= memory_type(*ty);
+            }
             TypedStatementKind::For { .. } => *self.used = true,
             _ => {}
         }
@@ -182,6 +267,7 @@ impl Visitor<'_> for MemoryVisitor<'_> {
         &mut self,
         binding: &crate::typed_ast::TypedCallBinding,
     ) -> ControlFlow<CodegenError> {
+        self.plan.observe_type(binding.ty);
         *self.used |= memory_type(binding.ty);
         ControlFlow::Continue(())
     }
@@ -197,6 +283,12 @@ impl Visitor<'_> for MemoryVisitor<'_> {
     }
 
     fn enter_expression(&mut self, expr: &TypedExpr) -> ControlFlow<CodegenError> {
+        if let Some(ty) = expr.ty.value_type() {
+            self.plan.observe_type(ty);
+        }
+        if let TypedExprKind::Array(_, element) = &expr.kind {
+            self.plan.observe_type(Type::Array(*element));
+        }
         *self.used |= expr.ty.value_type().is_some_and(memory_type);
 
         match &expr.kind {
@@ -212,7 +304,7 @@ impl Visitor<'_> for MemoryVisitor<'_> {
                 *self.used |= matches!(func, FunctionRef::Builtin(BuiltinFunction::Len));
             }
 
-            TypedExprKind::Array(_)
+            TypedExprKind::Array(_, _)
             | TypedExprKind::Index { .. }
             | TypedExprKind::Range { .. }
             | TypedExprKind::Binary {
@@ -227,7 +319,7 @@ impl Visitor<'_> for MemoryVisitor<'_> {
 }
 
 fn memory_type(ty: Type) -> bool {
-    matches!(ty, Type::String | Type::NumberArray | Type::Range)
+    matches!(ty, Type::String | Type::Array(_) | Type::Range)
 }
 
 fn aligned_offset(value: u64) -> Result<u32, CodegenError> {
@@ -245,13 +337,141 @@ fn aligned_offset(value: u64) -> Result<u32, CodegenError> {
 pub(super) fn emit(helper: Helper, first_function: u32) -> Function {
     match helper {
         Helper::Alloc => emit_alloc(),
-        Helper::ValidateString => emit_validate(false),
-        Helper::ValidateArray => emit_validate(true),
+        Helper::ValidateString => emit_validate(abi::STRING_ELEMENT_SIZE),
+        Helper::ValidateArray => emit_validate(abi::NUMBER_ELEMENT_SIZE),
         Helper::ArrayAddress => emit_array_address(first_function),
         Helper::ArrayLen => emit_array_len(first_function),
         Helper::StringEqual => emit_string_equal(first_function),
         Helper::ArrayEqual => emit_array_equal(first_function),
+        _ => unreachable!("typed helpers require their planned indices"),
     }
+}
+
+pub(super) fn emit_planned(helper: Helper, first: u32, plan: &MemoryPlan) -> Function {
+    let index = |h| first + plan.helper_index(h);
+    match helper {
+        Helper::ValidateBoolArray => emit_validate(abi::BOOL_ELEMENT_SIZE),
+        Helper::ValidateBool => {
+            use Instruction::*;
+            let mut body = Function::new([]);
+            instructions(&mut body, &[LocalGet(0), I32Const(1), I32GtU]);
+            trap_if(&mut body);
+            instructions(&mut body, &[LocalGet(0), End]);
+            body
+        }
+        Helper::BoolArrayAddress => {
+            emit_typed_address(index(Helper::ValidateBoolArray), abi::BOOL_ELEMENT_SIZE)
+        }
+        Helper::BoolArrayLen => emit_typed_len(index(Helper::ValidateBoolArray)),
+        Helper::BoolArrayEqual => emit_typed_equal(
+            crate::ast::ArrayElementType::Bool,
+            index(Helper::ValidateBoolArray),
+            super::array::consumer(crate::ast::ArrayElementType::Bool).map(index),
+            index(Helper::StringEqual),
+        ),
+        Helper::ValidateStringArray => emit_validate(abi::STRING_ARRAY_ELEMENT_SIZE),
+        Helper::StringArrayAddress => emit_typed_address(
+            index(Helper::ValidateStringArray),
+            abi::STRING_ARRAY_ELEMENT_SIZE,
+        ),
+        Helper::StringArrayLen => emit_typed_len(index(Helper::ValidateStringArray)),
+        Helper::StringArrayEqual => emit_typed_equal(
+            crate::ast::ArrayElementType::String,
+            index(Helper::ValidateStringArray),
+            super::array::consumer(crate::ast::ArrayElementType::String).map(index),
+            index(Helper::StringEqual),
+        ),
+        _ => emit(helper, first),
+    }
+}
+
+fn emit_typed_equal(
+    element: crate::ast::ArrayElementType,
+    validator: u32,
+    consumer: Option<u32>,
+    string_equal: u32,
+) -> Function {
+    use Instruction::*;
+    let mut body = Function::new([(4, ValType::I32)]);
+    instructions(
+        &mut body,
+        &[
+            LocalGet(0),
+            Call(validator),
+            LocalSet(0),
+            LocalGet(1),
+            Call(validator),
+            LocalSet(1),
+            LocalGet(0),
+            I32Load(header(abi::DESCRIPTOR_LENGTH_OFFSET)),
+            LocalTee(4),
+            LocalGet(1),
+            I32Load(header(abi::DESCRIPTOR_LENGTH_OFFSET)),
+            I32Ne,
+            If(BlockType::Empty),
+            I32Const(0),
+            Return,
+            End,
+            LocalGet(0),
+            I32Load(header(abi::DESCRIPTOR_DATA_OFFSET)),
+            LocalSet(2),
+            LocalGet(1),
+            I32Load(header(abi::DESCRIPTOR_DATA_OFFSET)),
+            LocalSet(3),
+            Block(BlockType::Empty),
+            Loop(BlockType::Empty),
+            LocalGet(5),
+            LocalGet(4),
+            I32GeU,
+            BrIf(1),
+        ],
+    );
+    for pointer in [2, 3] {
+        instructions(
+            &mut body,
+            &[
+                LocalGet(pointer),
+                LocalGet(5),
+                I32Const(super::array::width(element) as i32),
+                I32Mul,
+                I32Add,
+                super::array::load(element, 0),
+            ],
+        );
+        if let Some(consumer) = consumer {
+            body.instruction(&Call(consumer));
+        }
+    }
+    match element {
+        crate::ast::ArrayElementType::Bool => {
+            body.instruction(&I32Ne);
+        }
+        crate::ast::ArrayElementType::String => {
+            instructions(&mut body, &[Call(string_equal), I32Eqz]);
+        }
+        crate::ast::ArrayElementType::Number => {
+            body.instruction(&F64Ne);
+        }
+    }
+    instructions(
+        &mut body,
+        &[
+            If(BlockType::Empty),
+            I32Const(0),
+            Return,
+            End,
+            LocalGet(5),
+            I32Const(1),
+            I32Add,
+            LocalSet(5),
+            Br(0),
+            End,
+            End,
+            I32Const(1),
+            End,
+        ],
+    );
+    body
 }
 
 fn instructions(body: &mut Function, instructions: &[Instruction<'_>]) {
@@ -380,7 +600,7 @@ fn emit_alloc() -> Function {
     body
 }
 
-fn emit_validate(array: bool) -> Function {
+fn emit_validate(width: u32) -> Function {
     use Instruction::*;
 
     let mut body = Function::new([(1, ValType::I64)]);
@@ -427,13 +647,13 @@ fn emit_validate(array: bool) -> Function {
     );
     trap_if(&mut body);
 
-    if array {
+    if width > 1 {
         instructions(
             &mut body,
             &[
                 LocalGet(0),
                 I32Load(header(abi::DESCRIPTOR_DATA_OFFSET)),
-                I32Const((abi::NUMBER_ELEMENT_ALIGNMENT - 1) as i32),
+                I32Const((width - 1) as i32),
                 I32And,
                 I32Const(0),
                 I32Ne,
@@ -451,11 +671,7 @@ fn emit_validate(array: bool) -> Function {
             LocalGet(0),
             I32Load(header(abi::DESCRIPTOR_LENGTH_OFFSET)),
             I64ExtendI32U,
-            I64Const(i64::from(if array {
-                abi::NUMBER_ELEMENT_SIZE
-            } else {
-                abi::STRING_ELEMENT_SIZE
-            })),
+            I64Const(i64::from(width)),
             I64Mul,
             I64Add,
             LocalGet(1),
@@ -470,6 +686,13 @@ fn emit_validate(array: bool) -> Function {
 }
 
 fn emit_array_address(first_function: u32) -> Function {
+    emit_typed_address(
+        first_function + Helper::ValidateArray.index(),
+        abi::NUMBER_ELEMENT_SIZE,
+    )
+}
+
+fn emit_typed_address(validator: u32, width: u32) -> Function {
     use Instruction::*;
 
     let mut body = Function::new([]);
@@ -478,7 +701,7 @@ fn emit_array_address(first_function: u32) -> Function {
         &mut body,
         &[
             LocalGet(0),
-            Call(first_function + Helper::ValidateArray.index()),
+            Call(validator),
             LocalSet(0),
             LocalGet(1),
             F64Const(0.0.into()),
@@ -507,7 +730,7 @@ fn emit_array_address(first_function: u32) -> Function {
             I64ExtendI32U,
             LocalGet(1),
             I64TruncF64U,
-            I64Const(i64::from(abi::NUMBER_ELEMENT_SIZE)),
+            I64Const(i64::from(width)),
             I64Mul,
             I64Add,
             I32WrapI64,
@@ -519,6 +742,10 @@ fn emit_array_address(first_function: u32) -> Function {
 }
 
 fn emit_array_len(first_function: u32) -> Function {
+    emit_typed_len(first_function + Helper::ValidateArray.index())
+}
+
+fn emit_typed_len(validator: u32) -> Function {
     use Instruction::*;
 
     let mut body = Function::new([]);
@@ -527,7 +754,7 @@ fn emit_array_len(first_function: u32) -> Function {
         &mut body,
         &[
             LocalGet(0),
-            Call(first_function + Helper::ValidateArray.index()),
+            Call(validator),
             I32Load(header(abi::DESCRIPTOR_LENGTH_OFFSET)),
             F64ConvertI32U,
             End,
@@ -607,76 +834,12 @@ fn emit_string_equal(first_function: u32) -> Function {
 }
 
 fn emit_array_equal(first_function: u32) -> Function {
-    use Instruction::*;
-
-    let element = MemArg {
-        offset: 0,
-        align: abi::NUMBER_ELEMENT_ALIGN_LOG2,
-        memory_index: 0,
-    };
-    let mut body = Function::new([(4, ValType::I32)]);
-
-    instructions(
-        &mut body,
-        &[
-            LocalGet(0),
-            Call(first_function + Helper::ValidateArray.index()),
-            LocalSet(0),
-            LocalGet(1),
-            Call(first_function + Helper::ValidateArray.index()),
-            LocalSet(1),
-            LocalGet(0),
-            I32Load(header(abi::DESCRIPTOR_LENGTH_OFFSET)),
-            LocalTee(4),
-            LocalGet(1),
-            I32Load(header(abi::DESCRIPTOR_LENGTH_OFFSET)),
-            I32Ne,
-            If(BlockType::Empty),
-            I32Const(0),
-            Return,
-            End,
-            LocalGet(0),
-            I32Load(header(abi::DESCRIPTOR_DATA_OFFSET)),
-            LocalSet(2),
-            LocalGet(1),
-            I32Load(header(abi::DESCRIPTOR_DATA_OFFSET)),
-            LocalSet(3),
-            Block(BlockType::Empty),
-            Loop(BlockType::Empty),
-            LocalGet(5),
-            LocalGet(4),
-            I32GeU,
-            BrIf(1),
-            LocalGet(2),
-            LocalGet(5),
-            I32Const(abi::NUMBER_ELEMENT_SIZE as i32),
-            I32Mul,
-            I32Add,
-            F64Load(element),
-            LocalGet(3),
-            LocalGet(5),
-            I32Const(abi::NUMBER_ELEMENT_SIZE as i32),
-            I32Mul,
-            I32Add,
-            F64Load(element),
-            F64Ne,
-            If(BlockType::Empty),
-            I32Const(0),
-            Return,
-            End,
-            LocalGet(5),
-            I32Const(1),
-            I32Add,
-            LocalSet(5),
-            Br(0),
-            End,
-            End,
-            I32Const(1),
-            End,
-        ],
-    );
-
-    body
+    emit_typed_equal(
+        crate::ast::ArrayElementType::Number,
+        first_function + Helper::ValidateArray.index(),
+        None,
+        first_function + Helper::StringEqual.index(),
+    )
 }
 
 #[cfg(test)]
@@ -780,7 +943,7 @@ mod tests {
         assert!(MemoryPlan::new(&host_program).unwrap().is_some());
 
         let mut return_program = program(vec![]);
-        return_program.functions[0].return_type = Type::NumberArray;
+        return_program.functions[0].return_type = Type::Array(crate::ast::ArrayElementType::Number);
 
         assert!(MemoryPlan::new(&return_program).unwrap().is_some());
 
@@ -794,8 +957,14 @@ mod tests {
         assert!(MemoryPlan::new(&local_program).unwrap().is_some());
 
         for value in [
-            expr(TypedExprKind::Bool(false), Type::NumberArray),
-            expr(TypedExprKind::Array(vec![]), Type::Number),
+            expr(
+                TypedExprKind::Bool(false),
+                Type::Array(crate::ast::ArrayElementType::Number),
+            ),
+            expr(
+                TypedExprKind::Array(vec![], crate::ast::ArrayElementType::Number),
+                Type::Number,
+            ),
             expr(
                 TypedExprKind::Index {
                     expr: Box::new(expr(TypedExprKind::Bool(false), Type::Bool)),

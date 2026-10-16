@@ -206,7 +206,8 @@ impl SemanticAnalyzer {
             let expected = self.functions[name].params[formal];
             let id = VariableId(self.next_variable_id);
             self.next_variable_id += 1;
-            let (value, value_flow) = self.analyze_expr(&arg.value, arg.span, return_type)?;
+            let (value, value_flow) =
+                self.analyze_expected(&arg.value, arg.span, return_type, Some(expected))?;
 
             self.expect_type(expected, value.ty, arg.span)?;
             flow = flow.then(value_flow);

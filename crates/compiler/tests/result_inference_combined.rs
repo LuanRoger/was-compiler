@@ -304,11 +304,11 @@ fn descriptor_default_diamond_keeps_full_arity_private_ranges_and_required_memor
             Type::Number,
             Type::Bool,
             Type::String,
-            Type::NumberArray,
+            Type::Array(was_compiler::ArrayElementType::Number),
             Type::Range,
             Type::Bool,
             Type::String,
-            Type::NumberArray,
+            Type::Array(was_compiler::ArrayElementType::Number),
             Type::Range,
         ]
     );
@@ -671,7 +671,7 @@ fn trap_compiler() -> Compiler {
             "corrupt",
             "env",
             "corrupt",
-            vec![Type::NumberArray],
+            vec![Type::Array(was_compiler::ArrayElementType::Number)],
             Type::Number,
         )
         .unwrap();

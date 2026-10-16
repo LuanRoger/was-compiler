@@ -209,8 +209,8 @@ fn boolean() -> TypedExpr {
 
 fn array(elements: Vec<TypedExpr>) -> TypedExpr {
     TypedExpr {
-        kind: TypedExprKind::Array(elements),
-        ty: Type::NumberArray.into(),
+        kind: TypedExprKind::Array(elements, crate::ast::ArrayElementType::Number),
+        ty: Type::Array(crate::ast::ArrayElementType::Number).into(),
     }
 }
 
@@ -298,7 +298,10 @@ fn value_for_type(ty: Type) -> TypedExpr {
         Type::Number => number("1"),
         Type::Bool => boolean(),
         Type::String => string("valid"),
-        Type::NumberArray => array(vec![]),
+        Type::Array(element) => TypedExpr {
+            kind: TypedExprKind::Array(vec![], element),
+            ty: ty.into(),
+        },
         Type::Range => TypedExpr {
             kind: TypedExprKind::Range {
                 start: Box::new(number("0")),

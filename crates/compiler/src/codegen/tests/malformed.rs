@@ -27,7 +27,12 @@ fn void_parameters_are_rejected_for_hosts_and_users() {
 
 #[test]
 fn empty_result_functions_are_rejected_without_placeholder_bodies() {
-    for return_type in [Type::Number, Type::Bool, Type::String, Type::NumberArray] {
+    for return_type in [
+        Type::Number,
+        Type::Bool,
+        Type::String,
+        Type::Array(crate::ast::ArrayElementType::Number),
+    ] {
         let program = TypedProgram {
             functions: vec![user(0, "bad", &[], return_type)],
             host_functions: vec![],
@@ -55,9 +60,12 @@ fn malformed_memory_expression_statements_keep_their_span_even_after_return() {
                 },
             ),
             (
-                Type::NumberArray,
+                Type::Array(crate::ast::ArrayElementType::Number),
                 TypedExpr {
-                    kind: TypedExprKind::Array(vec![number()]),
+                    kind: TypedExprKind::Array(
+                        vec![number()],
+                        crate::ast::ArrayElementType::Number,
+                    ),
                     ty: Type::Number.into(),
                 },
             ),
@@ -124,7 +132,12 @@ fn arithmetic_requires_numeric_roots_and_operands_even_in_nested_typed_ast() {
         );
     }
 
-    for found in [Type::Bool, Type::String, Type::NumberArray, Type::Void] {
+    for found in [
+        Type::Bool,
+        Type::String,
+        Type::Array(crate::ast::ArrayElementType::Number),
+        Type::Void,
+    ] {
         let mut operand = number();
 
         operand.ty = found.into();
@@ -449,9 +462,12 @@ fn overflowing_numeric_literals_are_rejected_in_source_and_typed_ast() {
 fn malformed_memory_expression_kinds_are_rejected_with_the_statement_span() {
     let expressions = vec![
         (Type::String, TypedExprKind::String("text".to_owned())),
-        (Type::NumberArray, TypedExprKind::Array(vec![number()])),
         (
-            Type::NumberArray,
+            Type::Array(crate::ast::ArrayElementType::Number),
+            TypedExprKind::Array(vec![number()], crate::ast::ArrayElementType::Number),
+        ),
+        (
+            Type::Array(crate::ast::ArrayElementType::Number),
             TypedExprKind::Index {
                 expr: Box::new(boolean()),
                 index: Box::new(number_literal("0")),

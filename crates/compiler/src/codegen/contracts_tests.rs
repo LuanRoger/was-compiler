@@ -49,8 +49,14 @@ fn independent_planners_visit_even_forbidden_contract_structure_before_body() {
                         kind: TypedStatementKind::Let {
                             id: VariableId(99),
                             name: "contract_local".into(),
-                            ty: Type::NumberArray,
-                            value: expr(TypedExprKind::Array(vec![number()]), Type::NumberArray),
+                            ty: Type::Array(crate::ast::ArrayElementType::Number),
+                            value: expr(
+                                TypedExprKind::Array(
+                                    vec![number()],
+                                    crate::ast::ArrayElementType::Number,
+                                ),
+                                Type::Array(crate::ast::ArrayElementType::Number),
+                            ),
                         },
                         span,
                     },

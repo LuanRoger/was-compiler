@@ -1,9 +1,10 @@
 # Memory ABI
 
-M6 uses memory32 and one `i32` handle for each language `string` or `number[]`.
+The memory ABI uses memory32 and one `i32` handle for each language `string`,
+`number[]`, `bool[]` or `string[]`.
 The same representation is used for locals, user-function parameters/results,
 and registered host-function parameters/results. Language types remain distinct
-in semantic analysis even though both lower to `i32`; descriptors have no runtime
+in semantic analysis even though all lower to `i32`; descriptors have no runtime
 type tag. Hosts must supply the type declared in their registration.
 
 ## Local callables and shared captures (WP11)
@@ -125,9 +126,21 @@ A handle is an eight-byte-aligned address of this little-endian descriptor:
 | `+4` | Length | Unsigned `u32` byte count for strings; element count for arrays |
 
 String payloads contain UTF-8 bytes without a terminator. Embedded NUL is an
-ordinary byte. Array payloads contain consecutive little-endian IEEE-754 `f64`
-values and must start at an eight-byte-aligned address. Payloads can live separately
-from their descriptors, although compiler-generated values place them at `handle + 8`.
+ordinary byte. Descriptors remain **untagged**: static language types or explicit
+host types select interpretation, not a runtime tag.
+
+| Value | Length counts | Payload representation | Width | Minimum payload alignment |
+| --- | --- | --- | --- | --- |
+| `string` | UTF-8 bytes | Immutable bytes | 1 | 1 |
+| `number[]` | Elements | Little-endian IEEE-754 `f64` | 8 | 8 |
+| `bool[]` | Elements | Canonical byte `0` or `1` | 1 | 1 |
+| `string[]` | Elements | Little-endian `u32` string descriptor handles | 4 | 4 |
+
+String-array slots are four-byte references, not inline UTF-8 bytes. Replacing a
+slot changes its reference without mutating string contents. Payloads can live
+separately from their descriptors, although compiler-generated values place them
+at `handle + 8`. Raw allocations remain eight-byte aligned with the same minimum
+size; that policy is distinct from each payload's minimum alignment.
 
 Addresses below eight are invalid handles/data pointers. Descriptor headers and
 complete payload ranges must fit in current memory; empty payloads can point exactly
@@ -142,6 +155,36 @@ publishing a value, mutate string payloads, or reinterpret strings as arrays.
 Trusted hosts may modify array elements. Exported memory is shared with the host;
 these checks are not an isolation mechanism against a host that violates the ABI.
 
+## Typed-array element consumption (#37)
+
+Core, adapters and Node marshaling are implemented; [final #37 release gates
+passed](typed-arrays-validation-2026-10-15.txt). See [status and migration](typed-arrays.md).
+
+Entry/boundary checks validate descriptor alignment, type-specific payload
+alignment and **complete** storage bounds using overflow-safe arithmetic. They do
+not scan elements or establish allocation provenance. `len` validates only outer
+storage. An invalid unconsumed element need not trap.
+
+- A consumed bool-array byte must be exactly `0` or `1`; another byte traps, not
+  normalizes. Scalar host booleans retain their separate nonzero-to-`1` contract.
+- A consumed string-array slot must hold a structurally valid string handle.
+  Existing string bounds checks do not validate UTF-8 or enforce immutability.
+- Literal construction reserves storage and initializes the outer descriptor
+  before element effects. Elements execute once, left-to-right; completed values
+  are validated before storage. Empty/discarded literals still allocate freshly.
+- Replacement checks/saves the destination and index before RHS effects, validates
+  the new value and stores to the saved offset. It does **not** load/validate the
+  overwritten element. Numeric compounds still read the old numeric value first.
+- Equality evaluates both operands, then validates complete left and right outer
+  storages before length exits. It consumes pairs in ascending index order, left
+  then right, stopping at the first mismatch. Boolean values and string byte
+  contents are compared; there is no whole-array identity shortcut. Unvisited
+  invalid elements are not eagerly checked.
+
+Wrong-type reinterpretation is an ABI violation even if structural checks happen
+to accept it. Descriptors have no tag and guest checks cannot detect every such
+misuse or isolate a malicious host. Completed effects/allocations survive traps.
+
 ## Numeric-array for consumption
 
 Array `for` evaluates the iterable once in the enclosing context before activating
@@ -154,7 +197,13 @@ Mutations through aliases remain visible, while source-variable reassignment doe
 not change the captured handle. Continue reaches index advancement through a body
 latch before retesting. Hosts still must preserve descriptor metadata; these checks
 do not grant permission to mutate it. No descriptor ABI or helper-order change is
-introduced, and array-only iteration needs no private range helpers.
+introduced by numeric iteration, and array-only iteration needs no private range
+helpers. Under #37 the same cached-handle/count policy applies to `bool[]` and
+`string[]`, using their typed checked loads and consumed-value validation on each
+live access. The yielded scalar is validated before binding, capture promotion or
+body effects; break/return may leave later invalid elements unconsumed. A captured
+iteration value keeps its original read-only uniform eight-byte cell. Array slot
+widths do not change private capture-cell/environment layouts.
 
 ## Private range record
 
@@ -289,15 +338,18 @@ pages. Arithmetic overflow, exceeding the address limit, or failed growth traps.
 A failed allocation leaves the bump pointer unchanged. Available memory remains
 subject to the runtime's own resource limits.
 
-Memory, the heap global, seven internal memory helper functions, and active data
-segments are omitted from scalar-only programs. Memory helpers follow all user
-functions, so host imports and user function IDs keep their existing indices.
-The optional `(f64, f64) -> f64` guest remainder helper follows users and any seven
+Memory, the heap global, internal memory helper functions, and active data
+segments are omitted from scalar-only programs. The established seven-helper set
+remains unchanged for old-type-only programs; bool/string arrays add their
+statically selected helper groups deterministically. This is not general helper
+pruning, and scalar/numeric-only legacy ordering and indices remain preserved.
+Memory helpers follow all user functions, so host imports and user function IDs keep their existing indices.
+The optional `(f64, f64) -> f64` guest remainder helper follows users and required
 memory helpers only if `%` occurs anywhere in the typed AST, including unexported,
 unreachable, or runtime-skipped code. It requires no implicit host import or
 Memory/Global/Data sections; scalar-only programs using `%` still omit the memory
-runtime. Programs without `%` or ranges retain byte-for-byte output and existing
-helper indices. See [M9](compilation-roadmap.md#m9--floating-point-remainder--implemented).
+runtime. Old-type-only programs without `%` or ranges retain byte-for-byte output and
+existing helper indices. See [M9](compilation-roadmap.md#m9--floating-point-remainder--implemented).
 
 When ranges occur in signatures, locals, or expressions, the memory runtime is
 required. Private `Construct` and `Validate` range helpers follow the memory helpers
@@ -308,8 +360,8 @@ Construction-only modules acquire no `Contains` helper and retain their bytes;
 membership alone does not require the floating remainder helper. Range for reuses
 `Validate` and emits inline advancement; it adds no helpers and does not require
 `Contains` or floating remainder solely for iteration. Modules without
-ranges acquire no range helpers or changed bytes; existing host/user/memory/remainder
-indices remain unchanged.
+ranges acquire no range helpers; old-type-only programs retain existing bytes
+and host/user/memory/remainder indices.
 
 In memory-backed modules, selecting a user function named `memory` or `__alloc`
 as an export fails with an export-name collision; unexported functions may use
@@ -330,7 +382,10 @@ An index must be finite, integral, nonnegative, and strictly below the length.
 Negative zero indexes the first element. NaN, infinities, negative/fractional
 indices, and out-of-bounds accesses trap rather than being rounded or truncated.
 Indexed assignment evaluates the array and index and checks bounds before evaluating
-its RHS. Element expressions in array literals execute left-to-right.
+its RHS, retaining the checked destination without reading the overwritten value.
+The replacement is validated before storage. Element expressions in array literals
+execute left-to-right after outer allocation/descriptor initialization. All three
+array types support indexing/replacement and `len`; compounds remain numeric-only.
 
 ## Numeric-array equality
 
@@ -355,13 +410,27 @@ including `i32` string/array handles. CLI and library binaries use the same ABI;
 no language-signature metadata or automatic native-value marshaling is involved.
 
 `createAbi(() => instance)` from `runtime/abi.cjs` offers explicit
-`encode(type, value)` and `decode(type, value)` operations. Encoding a string or
+`encode(type, value)` and `decode(type, value)` operations. Encoding a standalone string or
 numeric array allocates and copies it into guest memory; decoding copies it into
 a native value. Mutating a decoded array does not mutate guest storage. The helper
 refreshes memory views after growth, strictly decodes UTF-8, and limits each
 payload copy to 64 MiB. String encoding follows `TextEncoder`, including replacement
 of unpaired UTF-16 surrogates. Numeric-array encoding accepts plain JavaScript
 arrays of numbers, not typed arrays.
+
+The implemented #37 bool/string-array marshaling adapter accepts plain arrays of
+booleans/strings and
+copies on encode/decode, retaining native/guest mutation isolation. Each operation
+has a 64 MiB aggregate logical-copy budget: `N` bytes for `bool[]`, and
+`4 * N + sum(per-occurrence UTF-8 bytes)` for `string[]`. Repeated occurrences
+count repeatedly. This is not an RSS/object-overhead or heap quota; standalone
+string/numeric-array limits above are unchanged. Refresh views after allocations
+that may grow memory, including individual string allocations. Encoding captures
+the initial length and each scalar element once, completing snapshot validation
+and accounting before guest instance access/allocation. Only the checked snapshot
+is then copied.
+Getter effects are not rolled back. See [the copy contract](typed-arrays.md#node-copy-contract)
+and [final getter regression evidence](typed-arrays-validation-2026-10-15.txt).
 
 Use direct memory access for shared array mutation, zero-copy access, or
 instance-local handle identity. The following example implements explicit
@@ -372,7 +441,7 @@ conversion using the raw WebAssembly API.
 Register memory-backed imports through the existing API:
 
 ```rust
-use was_compiler::{Compiler, Type};
+use was_compiler::{ArrayElementType, Compiler, Type};
 
 let mut compiler = Compiler::new();
 
@@ -388,8 +457,8 @@ compiler.register_host_function(
     "adjust",
     "env",
     "adjust",
-    vec![Type::NumberArray],
-    Type::NumberArray,
+    vec![Type::Array(ArrayElementType::Number)],
+    Type::Array(ArrayElementType::Number),
 )?;
 
 let wasm = compiler.compile_source(r#"

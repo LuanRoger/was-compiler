@@ -12,6 +12,7 @@ use super::{
 
 pub(super) fn emit_array(
     elements: &[TypedExpr],
+    element_type: crate::ast::ArrayElementType,
     body: &mut BodyEmitter<'_>,
     span: Span,
 ) -> Result<Flow, CodegenError> {
@@ -20,7 +21,7 @@ pub(super) fn emit_array(
     };
     let length = u32::try_from(elements.len()).map_err(|_| limit())?;
     let size = length
-        .checked_mul(abi::NUMBER_ELEMENT_SIZE)
+        .checked_mul(super::array::width(element_type))
         .and_then(|payload| payload.checked_add(abi::DESCRIPTOR_SIZE))
         .filter(|size| u64::from(*size) <= super::memory::MAX_BYTES)
         .ok_or_else(limit)?;
@@ -49,17 +50,18 @@ pub(super) fn emit_array(
     let mut flow = Flow::FALLTHROUGH;
 
     for (index, element) in (0..length).zip(elements) {
-        expect_operand(body.name(), Type::Number, element.ty, span)?;
+        expect_operand(body.name(), element_type.value_type(), element.ty, span)?;
 
         body.local_get(temporary);
 
         flow = flow.then(body.emit_expr(element, span)?);
 
-        body.instruction(&Instruction::F64Store(memory_arg(
+        super::array::consume(element_type, body);
+        body.instruction(&super::array::store(
+            element_type,
             u64::from(abi::DESCRIPTOR_SIZE)
-                + u64::from(index) * u64::from(abi::NUMBER_ELEMENT_SIZE),
-            abi::NUMBER_ELEMENT_ALIGN_LOG2,
-        )));
+                + u64::from(index) * u64::from(super::array::width(element_type)),
+        ));
     }
 
     body.local_get(temporary);
@@ -77,10 +79,15 @@ pub(super) fn expect_index_types(
     let expected = if base.ty == ExprResult::Never || index.ty == ExprResult::Never {
         ExprResult::Never
     } else {
-        Type::Number.into()
+        super::array::element(base).value_type().into()
     };
     expect_result(body.name(), expected, result_type, span)?;
-    expect_operand(body.name(), Type::NumberArray, base.ty, span)?;
+    expect_operand(
+        body.name(),
+        Type::Array(super::array::element(base)),
+        base.ty,
+        span,
+    )?;
     expect_operand(body.name(), Type::Number, index.ty, span)
 }
 
@@ -93,7 +100,7 @@ pub(super) fn emit_address(
     let base_flow = body.emit_expr(base, span)?;
     let index_flow = body.emit_expr(index, span)?;
 
-    body.call(body.helper(Helper::ArrayAddress));
+    body.call(body.helper(super::array::address(super::array::element(base))));
 
     Ok(base_flow.then(index_flow))
 }

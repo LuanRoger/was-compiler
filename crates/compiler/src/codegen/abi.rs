@@ -15,6 +15,8 @@ pub(super) const NUMBER_ELEMENT_SIZE: u32 = 8;
 pub(super) const NUMBER_ELEMENT_ALIGNMENT: u32 = 8;
 pub(super) const NUMBER_ELEMENT_ALIGN_LOG2: u32 = NUMBER_ELEMENT_ALIGNMENT.trailing_zeros();
 pub(super) const STRING_ELEMENT_SIZE: u32 = 1;
+pub(super) const BOOL_ELEMENT_SIZE: u32 = 1;
+pub(super) const STRING_ARRAY_ELEMENT_SIZE: u32 = 4;
 pub(super) const MIN_ADDRESS: u32 = 8;
 pub(super) const ALLOCATION_ALIGNMENT: u32 = 8;
 pub(super) const MIN_ALLOCATION_BYTES: u32 = 8;
@@ -106,7 +108,7 @@ pub(super) fn value_type(
 ) -> Result<ValType, CodegenError> {
     match ty {
         Type::Number => Ok(ValType::F64),
-        Type::Bool | Type::String | Type::NumberArray | Type::Range => Ok(ValType::I32),
+        Type::Bool | Type::String | Type::Array(_) | Type::Range => Ok(ValType::I32),
         Type::Void => Err(CodegenError::UnsupportedAbiType {
             function: function.to_owned(),
             position,

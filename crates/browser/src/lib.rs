@@ -77,7 +77,7 @@ impl BrowserCompiler {
                 ) {
                     message.push_str(
                         "; range values are private and cannot cross host imports; \
-                         use number, bool, string, number[] parameters/results or void results",
+                         use number, bool, string, number[], bool[], string[] parameters/results or void results",
                     );
                 }
 
@@ -154,11 +154,13 @@ fn parse_type(name: &str) -> Result<Type, JsValue> {
         "number" => Ok(Type::Number),
         "bool" => Ok(Type::Bool),
         "string" => Ok(Type::String),
-        "number[]" => Ok(Type::NumberArray),
+        "number[]" => Ok(Type::Array(was_compiler::ArrayElementType::Number)),
+        "bool[]" => Ok(Type::Array(was_compiler::ArrayElementType::Bool)),
+        "string[]" => Ok(Type::Array(was_compiler::ArrayElementType::String)),
         "void" => Ok(Type::Void),
         "range" => Ok(Type::Range),
         _ => Err(js_error(&format!(
-            "unknown type {name:?}; expected number, bool, string, number[], or void"
+            "unknown type {name:?}; expected number, bool, string, number[], bool[], string[], or void"
         ))),
     }
 }

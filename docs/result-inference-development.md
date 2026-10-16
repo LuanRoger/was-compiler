@@ -12,6 +12,20 @@ See [the current inference contract](#issue-14-acyclic-chains-and-diamonds) and
 [release acceptance coverage](#issue-16-nativebrowser-release-acceptance).
 The earlier #11/#14/#15 sections retain historical evidence for their own checkpoints.
 
+## Typed-array inference interaction (#37)
+
+#37 adds `bool[]` and `string[]` across core, adapters and runtime;
+[final release gates passed](typed-arrays-validation-2026-10-15.txt) after the
+accessor fix (1,251 workspace tests, none ignored; 25 browser smoke groups).
+Explicitly declared named results provide
+literal expectations through value paths, but omitted named and anonymous results
+remain independently inferred across probe/final checking. Callers, other returns
+and sibling branches do not reinterpret `[]`; an inferred empty-result function
+retains `number[]` even when later used in a bool/string-array destination.
+Pipeline inputs remain independent of later stage formals. See [the full
+contextual-typing contract](typed-arrays.md#contextual-literal-typing-and-stable-inference).
+Historical WP7 evidence below predates and does not validate #37.
+
 ## Historical issue #11 integration
 
 This is the deliberately incremental #11 implementation on

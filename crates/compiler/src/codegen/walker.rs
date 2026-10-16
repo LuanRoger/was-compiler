@@ -202,7 +202,7 @@ pub(super) fn walk_expression<'ast, V: Visitor<'ast>>(
             walk_expression(&sequence.call, visitor)?;
         }
 
-        TypedExprKind::Array(elements) => {
+        TypedExprKind::Array(elements, _) => {
             for element in elements {
                 walk_expression(element, visitor)?;
             }

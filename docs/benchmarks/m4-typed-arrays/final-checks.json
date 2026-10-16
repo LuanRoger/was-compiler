@@ -1,0 +1,11 @@
+{
+  "all_recorded_production_measurement_m0_hashes_unchanged": true,
+  "checked_file_count": 94,
+  "all_document_links_resolve": true,
+  "recorder_python_syntax_valid": true,
+  "default_cargo_test_totals_passed_failed_ignored": [
+    1054,
+    0,
+    186
+  ]
+}

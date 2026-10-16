@@ -214,7 +214,10 @@ mod tests {
                 name: "remainder".to_owned(),
             }),
             binary(number(), BinaryOp::Divide, number()),
-            expr(TypedExprKind::Array(vec![])),
+            expr(TypedExprKind::Array(
+                vec![],
+                crate::ast::ArrayElementType::Number,
+            )),
             expr(TypedExprKind::Call {
                 func: FunctionRef::User(FunctionId(0)),
                 name: "remainder".to_owned(),
@@ -242,14 +245,20 @@ mod tests {
             }),
             binary(remainder(), BinaryOp::Add, number()),
             binary(number(), BinaryOp::Multiply, remainder()),
-            expr(TypedExprKind::Array(vec![number(), remainder()])),
+            expr(TypedExprKind::Array(
+                vec![number(), remainder()],
+                crate::ast::ArrayElementType::Number,
+            )),
             expr(TypedExprKind::Call {
                 func: FunctionRef::User(FunctionId(0)),
                 name: "call".to_owned(),
                 args: vec![number(), remainder()],
             }),
             expr(TypedExprKind::Index {
-                expr: Box::new(expr(TypedExprKind::Array(vec![remainder()]))),
+                expr: Box::new(expr(TypedExprKind::Array(
+                    vec![remainder()],
+                    crate::ast::ArrayElementType::Number,
+                ))),
                 index: Box::new(number()),
             }),
             expr(TypedExprKind::Index {

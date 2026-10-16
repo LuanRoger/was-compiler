@@ -2149,14 +2149,18 @@ fn values(value: number[]) -> number[] { return edit(value); }
             "edit",
             "env",
             "edit",
-            vec![Type::NumberArray],
-            Type::NumberArray,
+            vec![Type::Array(was_compiler::ArrayElementType::Number)],
+            Type::Array(was_compiler::ArrayElementType::Number),
         ),
         (
             "idle",
             "env",
             "unused",
-            vec![Type::Bool, Type::String, Type::NumberArray],
+            vec![
+                Type::Bool,
+                Type::String,
+                Type::Array(was_compiler::ArrayElementType::Number),
+            ],
             Type::Void,
         ),
     ] {

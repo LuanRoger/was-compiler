@@ -1,13 +1,46 @@
 use crate::tokens::Span;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Type {
     Number,
     String,
     Bool,
-    NumberArray,
+    Array(ArrayElementType),
     Range,
     Void,
+}
+
+impl std::fmt::Debug for Type {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Number => formatter.write_str("Number"),
+            Self::String => formatter.write_str("String"),
+            Self::Bool => formatter.write_str("Bool"),
+            // Existing stage errors render types through Debug. Preserve their
+            // numeric-array messages without retaining an obsolete API variant.
+            Self::Array(ArrayElementType::Number) => formatter.write_str("NumberArray"),
+            Self::Array(element) => formatter.debug_tuple("Array").field(element).finish(),
+            Self::Range => formatter.write_str("Range"),
+            Self::Void => formatter.write_str("Void"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArrayElementType {
+    Number,
+    Bool,
+    String,
+}
+
+impl ArrayElementType {
+    pub fn value_type(self) -> Type {
+        match self {
+            Self::Number => Type::Number,
+            Self::Bool => Type::Bool,
+            Self::String => Type::String,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

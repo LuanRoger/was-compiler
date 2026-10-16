@@ -356,7 +356,7 @@ fn forged_compound_places_types_ids_and_nested_expressions_are_checked() {
         function: "bad".into(),
         span,
     };
-    let array_local = || identifier(0, "a", Type::NumberArray);
+    let array_local = || identifier(0, "a", Type::Array(crate::ast::ArrayElementType::Number));
     let indexed = || element(array_local(), number());
     let mut wrong_root = indexed();
     wrong_root.ty = Type::Bool.into();
@@ -372,7 +372,10 @@ fn forged_compound_places_types_ids_and_nested_expressions_are_checked() {
         (
             element(identifier(0, "a", Type::Bool), number()),
             number(),
-            mismatch(Type::NumberArray, Type::Bool),
+            mismatch(
+                Type::Array(crate::ast::ArrayElementType::Number),
+                Type::Bool,
+            ),
         ),
         (
             element(array_local(), boolean()),
@@ -382,7 +385,7 @@ fn forged_compound_places_types_ids_and_nested_expressions_are_checked() {
         (indexed(), boolean(), mismatch(Type::Number, Type::Bool)),
         (
             element(
-                identifier(0, "a", Type::NumberArray),
+                identifier(0, "a", Type::Array(crate::ast::ArrayElementType::Number)),
                 number_literal("invalid"),
             ),
             number(),
@@ -394,7 +397,14 @@ fn forged_compound_places_types_ids_and_nested_expressions_are_checked() {
             invalid_number(),
         ),
         (
-            element(identifier(99, "unknown", Type::NumberArray), number()),
+            element(
+                identifier(
+                    99,
+                    "unknown",
+                    Type::Array(crate::ast::ArrayElementType::Number),
+                ),
+                number(),
+            ),
             number(),
             CodegenError::UnknownVariable {
                 function: "bad".into(),
@@ -403,13 +413,31 @@ fn forged_compound_places_types_ids_and_nested_expressions_are_checked() {
             },
         ),
         (
-            element(identifier(1, "numeric", Type::NumberArray), number()),
+            element(
+                identifier(
+                    1,
+                    "numeric",
+                    Type::Array(crate::ast::ArrayElementType::Number),
+                ),
+                number(),
+            ),
             number(),
-            mismatch(Type::Number, Type::NumberArray),
+            mismatch(
+                Type::Number,
+                Type::Array(crate::ast::ArrayElementType::Number),
+            ),
         ),
     ];
     for (target, value, expected) in cases {
-        let mut function = user(0, "bad", &[Type::NumberArray, Type::Number], Type::Void);
+        let mut function = user(
+            0,
+            "bad",
+            &[
+                Type::Array(crate::ast::ArrayElementType::Number),
+                Type::Number,
+            ],
+            Type::Void,
+        );
         function
             .body
             .push(compound(target, BinaryOp::Add, value, span));
@@ -462,7 +490,11 @@ fn forged_compound_places_types_ids_and_nested_expressions_are_checked() {
         );
     }
 
-    for ty in [Type::Bool, Type::String, Type::NumberArray] {
+    for ty in [
+        Type::Bool,
+        Type::String,
+        Type::Array(crate::ast::ArrayElementType::Number),
+    ] {
         let mut function = user(0, "bad", &[ty], Type::Void);
         function.body.push(compound(
             identifier(0, "x", ty),
@@ -480,16 +512,23 @@ fn forged_compound_places_types_ids_and_nested_expressions_are_checked() {
     }
     for target in [
         identifier(0, "later", Type::Number),
-        element(identifier(0, "later", Type::NumberArray), number()),
+        element(
+            identifier(
+                0,
+                "later",
+                Type::Array(crate::ast::ArrayElementType::Number),
+            ),
+            number(),
+        ),
     ] {
         let ty = if matches!(target.kind, TypedExprKind::Index { .. }) {
-            Type::NumberArray
+            Type::Array(crate::ast::ArrayElementType::Number)
         } else {
             Type::Number
         };
-        let value = if ty == Type::NumberArray {
+        let value = if ty == Type::Array(crate::ast::ArrayElementType::Number) {
             TypedExpr {
-                kind: TypedExprKind::Array(vec![]),
+                kind: TypedExprKind::Array(vec![], crate::ast::ArrayElementType::Number),
                 ty: ty.into(),
             }
         } else {
@@ -559,12 +598,18 @@ fn node_compound_preserves_checked_target_old_value_and_once_only_effects_across
             "index",
             "env",
             "index",
-            vec![Type::NumberArray],
+            vec![Type::Array(crate::ast::ArrayElementType::Number)],
             Type::Number,
         )
         .unwrap();
     compiler
-        .register_host_function("rhs", "env", "rhs", vec![Type::NumberArray], Type::Number)
+        .register_host_function(
+            "rhs",
+            "env",
+            "rhs",
+            vec![Type::Array(crate::ast::ArrayElementType::Number)],
+            Type::Number,
+        )
         .unwrap();
     let bytes = compiler
         .compile_source("fn update(a: number[]) -> void { a[index(a)] += rhs(a); }")

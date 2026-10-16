@@ -177,7 +177,10 @@ fn signatures_distinguish_parameter_order_and_return_types() {
 
 #[test]
 fn memory_parameter_and_return_abis_use_i32_for_hosts_and_users() {
-    for ty in [Type::String, Type::NumberArray] {
+    for ty in [
+        Type::String,
+        Type::Array(crate::ast::ArrayElementType::Number),
+    ] {
         for is_host in [false, true] {
             for position in ["parameter", "return"] {
                 let params = if position == "parameter" {
@@ -193,7 +196,10 @@ fn memory_parameter_and_return_abis_use_i32_for_hosts_and_users() {
                             kind: if ty == Type::String {
                                 TypedExprKind::String("value".to_owned())
                             } else {
-                                TypedExprKind::Array(vec![number()])
+                                TypedExprKind::Array(
+                                    vec![number()],
+                                    crate::ast::ArrayElementType::Number,
+                                )
                             },
                             ty: ty.into(),
                         })),
@@ -380,13 +386,18 @@ fn external_selection_preserves_internal_signatures_snapshots_and_helpers() {
     use crate::exports::ExportOptions;
 
     let mut compiler = Compiler::new();
-    let params = vec![Type::Number, Type::Bool, Type::String, Type::NumberArray];
+    let params = vec![
+        Type::Number,
+        Type::Bool,
+        Type::String,
+        Type::Array(crate::ast::ArrayElementType::Number),
+    ];
 
     for (name, ty) in [
         ("numeric", Type::Number),
         ("boolean", Type::Bool),
         ("text", Type::String),
-        ("array", Type::NumberArray),
+        ("array", Type::Array(crate::ast::ArrayElementType::Number)),
         ("nothing", Type::Void),
     ] {
         compiler

@@ -65,8 +65,8 @@ fn block(statements: Vec<TypedStatement>, tail: Option<TypedExpr>, ty: ExprResul
 
 fn array(elements: Vec<TypedExpr>) -> TypedExpr {
     TypedExpr {
-        kind: TypedExprKind::Array(elements),
-        ty: Type::NumberArray.into(),
+        kind: TypedExprKind::Array(elements, crate::ast::ArrayElementType::Number),
+        ty: Type::Array(crate::ast::ArrayElementType::Number).into(),
     }
 }
 
@@ -83,7 +83,11 @@ fn value_exits_use_mvp_outer_results_and_empty_backedges_without_result_locals()
         (Type::Number, number(), ValType::F64),
         (Type::Bool, boolean(), ValType::I32),
         (Type::String, string("s"), ValType::I32),
-        (Type::NumberArray, array(vec![]), ValType::I32),
+        (
+            Type::Array(crate::ast::ArrayElementType::Number),
+            array(vec![]),
+            ValType::I32,
+        ),
     ] {
         let value = loop_value(usize::MAX, vec![break_value(usize::MAX, value)], ty.into());
         let program = return_program(Some(value), ty, span());
@@ -113,11 +117,11 @@ fn value_exits_use_mvp_outer_results_and_empty_backedges_without_result_locals()
                 .iter()
                 .filter(|op| **op == DecodedInstruction::LocalSet(0))
                 .count(),
-            usize::from(ty == Type::NumberArray),
+            usize::from(ty == Type::Array(crate::ast::ArrayElementType::Number)),
         );
         assert_eq!(
             module.locals[0],
-            if ty == Type::NumberArray {
+            if ty == Type::Array(crate::ast::ArrayElementType::Number) {
                 vec![ValType::I32]
             } else {
                 vec![]
@@ -125,7 +129,10 @@ fn value_exits_use_mvp_outer_results_and_empty_backedges_without_result_locals()
         );
         assert_eq!(
             module.functions.len(),
-            if matches!(ty, Type::String | Type::NumberArray) {
+            if matches!(
+                ty,
+                Type::String | Type::Array(crate::ast::ArrayElementType::Number)
+            ) {
                 8
             } else {
                 1
@@ -576,14 +583,23 @@ fn noncompleting_while_conditions_consume_own_breaks_and_continues() {
 fn loop_planning_keeps_declaration_preorder_scratch_and_helper_order() {
     let indexed = TypedExpr {
         kind: TypedExprKind::Index {
-            expr: Box::new(identifier(88, "a", Type::NumberArray)),
+            expr: Box::new(identifier(
+                88,
+                "a",
+                Type::Array(crate::ast::ArrayElementType::Number),
+            )),
             index: Box::new(number_literal("0")),
         },
         ty: Type::Number.into(),
     };
     let rhs = block(
         vec![
-            declaration(88, Type::NumberArray, array(vec![number()]), span()),
+            declaration(
+                88,
+                Type::Array(crate::ast::ArrayElementType::Number),
+                array(vec![number()]),
+                span(),
+            ),
             statement(TypedStatementKind::CompoundAssignment {
                 target: indexed,
                 op: BinaryOp::Remainder,
@@ -783,15 +799,29 @@ fn value_loops_execute_once_with_live_arithmetic_call_array_and_place_prefixes()
         )),
         span(),
     )];
-    let mut arrays = user(2, "arrays", &[], Type::NumberArray);
+    let mut arrays = user(
+        2,
+        "arrays",
+        &[],
+        Type::Array(crate::ast::ArrayElementType::Number),
+    );
     arrays.body = vec![returned(
         Some(array(vec![touch("30"), exit(9, "4")])),
         span(),
     )];
-    let mut compound = user(3, "compound", &[Type::NumberArray], Type::Number);
+    let mut compound = user(
+        3,
+        "compound",
+        &[Type::Array(crate::ast::ArrayElementType::Number)],
+        Type::Number,
+    );
     let place = TypedExpr {
         kind: TypedExprKind::Index {
-            expr: Box::new(identifier(0, "p0", Type::NumberArray)),
+            expr: Box::new(identifier(
+                0,
+                "p0",
+                Type::Array(crate::ast::ArrayElementType::Number),
+            )),
             index: Box::new(touch("0")),
         },
         ty: Type::Number.into(),
@@ -875,12 +905,17 @@ fn statement_backedges_continue_and_value_breaks_preserve_effects_and_handles() 
         )),
         span(),
     )];
-    let mut values = user(3, "values", &[], Type::NumberArray);
+    let mut values = user(
+        3,
+        "values",
+        &[],
+        Type::Array(crate::ast::ArrayElementType::Number),
+    );
     values.body = vec![returned(
         Some(loop_value(
             9,
             vec![break_value(9, array(vec![number_literal("7")]))],
-            Type::NumberArray.into(),
+            Type::Array(crate::ast::ArrayElementType::Number).into(),
         )),
         span(),
     )];

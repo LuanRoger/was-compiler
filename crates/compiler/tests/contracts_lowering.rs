@@ -128,10 +128,13 @@ fn every_forbidden_contract_form_is_checked_in_skipped_and_unexported_contracts(
             }),
             Type::Bool,
         ),
-        expr(TypedExprKind::Array(vec![]), Type::Bool),
+        expr(
+            TypedExprKind::Array(vec![], was_compiler::ArrayElementType::Number),
+            Type::Bool,
+        ),
         expr(
             TypedExprKind::Index {
-                expr: Box::new(read(0, Type::NumberArray)),
+                expr: Box::new(read(0, Type::Array(was_compiler::ArrayElementType::Number))),
                 index: Box::new(number("0")),
             },
             Type::Bool,
@@ -409,15 +412,15 @@ fn contract_only_equality_and_len_keep_memory_helper_order_and_body_temporaries(
         TypedExprKind::Call {
             func: FunctionRef::Builtin(BuiltinFunction::Len),
             name: "len".into(),
-            args: vec![read(0, Type::NumberArray)],
+            args: vec![read(0, Type::Array(was_compiler::ArrayElementType::Number))],
         },
         Type::Number,
     );
     program.functions[0].contracts = vec![
         contract(binary(
-            read(0, Type::NumberArray),
+            read(0, Type::Array(was_compiler::ArrayElementType::Number)),
             BinaryOp::Equal,
-            read(1, Type::NumberArray),
+            read(1, Type::Array(was_compiler::ArrayElementType::Number)),
             Type::Bool,
         )),
         contract(binary(

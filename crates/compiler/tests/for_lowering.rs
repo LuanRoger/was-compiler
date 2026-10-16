@@ -367,7 +367,7 @@ fn completing_iterables_require_range_or_array_not_another_storage_type_or_void(
                 Type::Number => TypedExprKind::Number("1".into()),
                 Type::Bool => TypedExprKind::Bool(true),
                 Type::String => TypedExprKind::String("x".into()),
-                Type::NumberArray => unreachable!(),
+                Type::Array(_) => unreachable!(),
                 Type::Void => TypedExprKind::Block(was_compiler::typed_ast::TypedValueBlock {
                     statements: vec![],
                     tail: None,
@@ -395,8 +395,8 @@ fn valid_array_iterables_are_accepted_by_checked_lowering() {
         let mut program = analyze("fn main() -> void { for i in 0..1 { i; } }");
         let (_, _, iterable, _) = for_parts(&mut program.functions[0].body[0]);
         **iterable = TypedExpr {
-            kind: TypedExprKind::Array(elements),
-            ty: Type::NumberArray.into(),
+            kind: TypedExprKind::Array(elements, was_compiler::ArrayElementType::Number),
+            ty: Type::Array(was_compiler::ArrayElementType::Number).into(),
         };
         let snapshot = program.clone();
         let baseline = codegen::compile(&program).expect("valid numeric array iterable");
@@ -744,7 +744,7 @@ fn check_sparse_ids(iterable: &str) {
     *variable = outer_variable;
     match &mut iterable.kind {
         TypedExprKind::Range { start, .. } => **start = identifier(parameter, Type::Number),
-        TypedExprKind::Array(elements) => elements[0] = identifier(parameter, Type::Number),
+        TypedExprKind::Array(elements, _) => elements[0] = identifier(parameter, Type::Number),
         _ => panic!("range or array"),
     }
     body[0].kind = TypedStatementKind::Expression(identifier(outer_variable, Type::Number));
@@ -1018,7 +1018,7 @@ fn check_binding_initialization(iterable: &str) {
         let span = if during_iterable {
             match &mut iterable.kind {
                 TypedExprKind::Range { start, .. } => **start = identifier(id, Type::Number),
-                TypedExprKind::Array(elements) => elements[0] = identifier(id, Type::Number),
+                TypedExprKind::Array(elements, _) => elements[0] = identifier(id, Type::Number),
                 _ => panic!("range or array"),
             }
             for_span
@@ -1193,7 +1193,7 @@ fn array_annotations_do_not_disguise_numbers_or_forged_never_results() {
                 CodegenError::TypeMismatch {
                     function: "hidden".into(),
                     expected: Type::Number,
-                    found: Type::NumberArray,
+                    found: Type::Array(was_compiler::ArrayElementType::Number),
                     span,
                 }
             }
@@ -1206,7 +1206,7 @@ fn array_annotations_do_not_disguise_numbers_or_forged_never_results() {
                 CodegenError::ExprResultMismatch {
                     function: "hidden".into(),
                     expected: if corruption == 1 {
-                        Type::NumberArray.into()
+                        Type::Array(was_compiler::ArrayElementType::Number).into()
                     } else {
                         Type::Range.into()
                     },
@@ -1215,7 +1215,9 @@ fn array_annotations_do_not_disguise_numbers_or_forged_never_results() {
                 }
             }
             _ => {
-                let TypedExprKind::Array(elements) = &mut iterable.kind else {
+                let TypedExprKind::Array(elements, was_compiler::ArrayElementType::Number) =
+                    &mut iterable.kind
+                else {
                     panic!("array");
                 };
                 elements[0].ty = ExprResult::Never;
@@ -1240,13 +1242,14 @@ fn divergent_array_iterable_still_checks_hidden_body_and_annotation() {
     function_body(&bytes, 0);
     let mut forged = original.clone();
     let span = forged.functions[0].body[0].span;
-    for_parts(&mut forged.functions[0].body[0]).2.ty = Type::NumberArray.into();
+    for_parts(&mut forged.functions[0].body[0]).2.ty =
+        Type::Array(was_compiler::ArrayElementType::Number).into();
     assert_rejected(
         &forged,
         CodegenError::ExprResultMismatch {
             function: "hidden".into(),
             expected: ExprResult::Never,
-            found: Type::NumberArray.into(),
+            found: Type::Array(was_compiler::ArrayElementType::Number).into(),
             span,
         },
     );

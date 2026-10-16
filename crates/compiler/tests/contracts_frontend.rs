@@ -309,7 +309,7 @@ fn contract_results_require_exact_bool_without_coercions() {
     for (condition, found) in [
         ("1", Type::Number),
         ("\"text\"", Type::String),
-        ("xs", Type::NumberArray),
+        ("xs", Type::Array(was_compiler::ArrayElementType::Number)),
         ("r", Type::Range),
         ("len(xs)", Type::Number),
     ] {
@@ -355,7 +355,7 @@ fn permitted_constructs_still_receive_existing_operand_and_arity_checks() {
     assert_eq!(
         error(source),
         SemanticError::TypeMismatch {
-            expected: Type::NumberArray,
+            expected: Type::Array(was_compiler::ArrayElementType::Number),
             found: Type::Number,
             span: span(source, "len(1) > 0")
         }

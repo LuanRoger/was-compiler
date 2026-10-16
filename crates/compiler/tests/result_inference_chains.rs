@@ -282,14 +282,14 @@ fn chains_have_explicit_bytes_and_concrete_descriptor_signatures_at_all_levels()
             .collect::<Vec<_>>(),
         [
             Type::String,
-            Type::NumberArray,
+            Type::Array(was_compiler::ArrayElementType::Number),
             Type::Range,
             Type::Number,
             Type::Number,
             Type::Number,
             Type::Number,
             Type::String,
-            Type::NumberArray,
+            Type::Array(was_compiler::ArrayElementType::Number),
             Type::Range
         ]
     );

@@ -1,0 +1,42 @@
+M0 issue #37 baseline
+UTC: 2026-10-15T23:04:08.777004+00:00
+Working directory: C:\Users\luanr\Documents\Jobs\rust\was-compiler
+Offline cached dependencies; no production edits; caller debug profile, guest default compiler options. Power/thermal/background load not controlled.
+COMMAND: git --no-pager rev-parse HEAD
+e720e2b0330ae140bc0d2436358858d44ab1114f
+
+COMMAND: git --no-optional-locks status --short
+ M GLOSSARY.md
+?? crates/compiler/tests/memory_benchmarks.rs
+?? docs/adr/0006-typed-array-layout-and-lazy-element-validation.md
+?? docs/memory-evolution-design.md
+?? docs/memory-evolution-spec.md
+?? tests/support/memory_corpus.rs
+?? tests/support/memory_measure.cjs
+
+COMMAND: rustc --version --verbose
+rustc 1.98.0 (88d9e12ae 2026-08-18)
+binary: rustc
+commit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea
+commit-date: 2026-08-18
+host: x86_64-pc-windows-msvc
+release: 1.98.0
+LLVM version: 22.1.8
+
+COMMAND: cargo --version
+cargo 1.98.0 (797e8a9bc 2026-08-05)
+
+COMMAND: node --version
+v24.12.0
+
+SHA256 a9179e31b5dc8a74a294bc4db35261bc989249566f9a558a2d1171c8b820e5e1  tests/support/memory_corpus.rs
+SHA256 3d6c155c6d0d4c5923e47418b5bd1655d839b341d1f244ce89764f6e7e3dd1ea  tests/support/memory_measure.cjs
+SHA256 205bb6f901e0a82550b62083ca20a9cc0ddaa1e1be5b6d4eb3dc89b427a48390  crates/compiler/tests/memory_benchmarks.rs
+SHA256 7ac7ca4356f70ad44951746340f2085eb18e10287e831187a982234a3c23d907  tests/support/process.rs
+SHA256 99a8ebef9801e7eab3c1add9230696789d8bd4136fc24204ce1847085f04a12d  crates/compiler/benches/compiler.rs
+SHA256 ddf953170b47abceb3cda9fd8f370f718479da08befc16df65f5616b2f6f8312  crates/compiler/benches/support/corpus.rs
+SHA256 289d616165fd28cbeb26ca242b935142b91faedbc0d99d3d73d440ad402026aa  Cargo.lock
+SHA256 cbe103aa21fda52107eca6388a60592b0ae2fa214f89a8af16da70fd763fa647  GLOSSARY.md
+SHA256 fc39f12a62ff24fce9455938fc696e4a95d5a03c369e286afa1c9d4f8faa3f06  docs/adr/0006-typed-array-layout-and-lazy-element-validation.md
+SHA256 dd8ecdcff6019726a935c831e3e6d950120ef89074c78369c976e3bc088b2ca8  docs/memory-evolution-design.md
+SHA256 429365312415517e32ca0d964b250b1a679b13bedc2a79e04ec8ad128875b8bb  docs/memory-evolution-spec.md

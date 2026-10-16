@@ -100,7 +100,7 @@ pub(super) fn needed(program: &TypedProgram) -> bool {
                     ..
                 }
             ) || matches!(&statement.kind, TypedStatementKind::For { iterable, .. }
-                if iterable.ty != Type::NumberArray)
+                if super::array::iteration_element(iterable).is_none())
             {
                 return ControlFlow::Break(());
             }

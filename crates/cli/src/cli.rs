@@ -86,7 +86,7 @@ struct Arguments {
         long = "host",
         value_name = "DECL",
         value_parser = NonEmptyStringValueParser::new(),
-        help = "Register NAME=MODULE.FIELD(TYPES)->RESULT; repeatable"
+        help = "Register NAME=MODULE.FIELD(TYPES)->RESULT; types: number, bool, string, number[], bool[], string[]; void result; repeatable"
     )]
     hosts: Vec<String>,
 
@@ -272,7 +272,7 @@ fn register_host(compiler: &mut Compiler, declaration: &str) -> Result<(), Strin
             ) {
                 format!(
                     "{error}; range values are private and cannot cross host imports; \
-                     use number, bool, string, number[] parameters/results or void results"
+                     use number, bool, string, number[], bool[], string[] parameters/results or void results"
                 )
             } else {
                 error.to_string()
@@ -287,11 +287,13 @@ fn parse_type(name: &str) -> Result<Type, String> {
         "number" => Ok(Type::Number),
         "bool" => Ok(Type::Bool),
         "string" => Ok(Type::String),
-        "number[]" => Ok(Type::NumberArray),
+        "number[]" => Ok(Type::Array(was_compiler::ArrayElementType::Number)),
+        "bool[]" => Ok(Type::Array(was_compiler::ArrayElementType::Bool)),
+        "string[]" => Ok(Type::Array(was_compiler::ArrayElementType::String)),
         "range" => Ok(Type::Range),
         "void" => Ok(Type::Void),
         name => Err(format!(
-            "unknown type {name:?}; expected number, bool, string, number[], or void"
+            "unknown type {name:?}; expected number, bool, string, number[], bool[], string[], or void"
         )),
     }
 }
@@ -467,7 +469,10 @@ mod tests {
 
         assert_eq!(
             compiler.host_functions().functions()[0].params,
-            vec![Type::String, Type::NumberArray]
+            vec![
+                Type::String,
+                Type::Array(was_compiler::ArrayElementType::Number)
+            ]
         );
         assert_eq!(
             compiler.host_functions().functions()[1].return_type,

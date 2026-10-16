@@ -135,8 +135,16 @@ fn compiler() -> Compiler {
     let mut compiler = Compiler::new();
     for (name, params, result) in [
         ("emit", vec![Type::Number], Type::Void),
-        ("supply", vec![], Type::NumberArray),
-        ("mutate", vec![Type::NumberArray], Type::Void),
+        (
+            "supply",
+            vec![],
+            Type::Array(was_compiler::ArrayElementType::Number),
+        ),
+        (
+            "mutate",
+            vec![Type::Array(was_compiler::ArrayElementType::Number)],
+            Type::Void,
+        ),
     ] {
         compiler
             .register_host_function(name, "env", name, params, result)

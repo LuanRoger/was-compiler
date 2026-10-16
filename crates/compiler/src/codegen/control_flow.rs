@@ -9,7 +9,7 @@ use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
 use super::{
     CodegenError, abi, expect_operand, expect_result, expression,
     function::{BodyEmitter, LoopKind},
-    memory, range,
+    range,
 };
 
 pub(super) fn emit_if(
@@ -104,7 +104,7 @@ pub(super) fn emit_for(
     emitter: &mut BodyEmitter<'_>,
     span: Span,
 ) -> Result<Flow, CodegenError> {
-    if iterable.ty == ExprResult::Value(Type::NumberArray) {
+    if super::array::iteration_element(iterable).is_some() {
         return emit_array_for(id, variable, iterable, block, emitter, span);
     }
     expect_operand(emitter.name(), Type::Range, iterable.ty, span)?;
@@ -206,16 +206,18 @@ fn emit_array_for(
     emitter: &mut BodyEmitter<'_>,
     span: Span,
 ) -> Result<Flow, CodegenError> {
+    let element = super::array::element(iterable);
+    expect_operand(emitter.name(), Type::Array(element), iterable.ty, span)?;
     emitter.scoped(|emitter| {
         emitter.register_loop(id, span)?;
-        let binding = emitter.declaration(variable, Type::Number, span)?;
+        let binding = emitter.declaration(variable, element.value_type(), span)?;
         let handle = emitter.temporary(ValType::I32);
         let index = emitter.temporary(ValType::I32);
         let count = emitter.temporary(ValType::I32);
 
         // Validate even empty arrays before caching their fixed length.
         let iterable_flow = emitter.emit_expr(iterable, span)?;
-        emitter.call(emitter.helper(memory::Helper::ValidateArray));
+        emitter.call(emitter.helper(super::array::validator(element)));
         emitter.local_set(handle);
         emitter.local_get(handle);
         emitter.instruction(&Instruction::I32Load(MemArg {
@@ -239,14 +241,11 @@ fn emit_array_for(
         emitter.local_get(handle);
         emitter.local_get(index);
         emitter.instruction(&Instruction::F64ConvertI32U);
-        emitter.call(emitter.helper(memory::Helper::ArrayAddress));
-        emitter.instruction(&Instruction::F64Load(MemArg {
-            offset: 0,
-            align: abi::NUMBER_ELEMENT_ALIGN_LOG2,
-            memory_index: 0,
-        }));
+        emitter.call(emitter.helper(super::array::address(element)));
+        emitter.instruction(&super::array::load(element, 0));
+        super::array::consume(element, emitter);
         emitter.local_set(binding);
-        emitter.promote(variable, Type::Number, span)?;
+        emitter.promote(variable, element.value_type(), span)?;
         emitter.initialize(variable);
 
         let continue_label = emitter.begin_block()?;

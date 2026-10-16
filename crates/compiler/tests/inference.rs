@@ -59,7 +59,11 @@ fn compiler() -> Compiler {
         ("host_number", vec![Type::Number], Type::Number),
         ("host_bool", vec![], Type::Bool),
         ("host_string", vec![], Type::String),
-        ("host_array", vec![], Type::NumberArray),
+        (
+            "host_array",
+            vec![],
+            Type::Array(was_compiler::ArrayElementType::Number),
+        ),
     ] {
         compiler
             .register_host_function(name, "env", name, params, result)

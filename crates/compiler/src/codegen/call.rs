@@ -38,10 +38,11 @@ pub(super) fn emit(
             annotation,
             span,
         )?;
-        expect_operand(function, Type::NumberArray, args[0].ty, span)?;
+        let element = super::array::element(&args[0]);
+        expect_operand(function, Type::Array(element), args[0].ty, span)?;
         let flow = body.emit_expr(&args[0], span)?;
 
-        body.call(body.helper(Helper::ArrayLen));
+        body.call(body.helper(super::array::length(element)));
 
         return Ok((flow, Type::Number));
     }
@@ -285,11 +286,11 @@ fn normalize_host_value(ty: Type, body: &mut BodyEmitter<'_>) {
             body.call(body.helper(Helper::ValidateString));
         }
 
-        Type::NumberArray => {
-            body.call(body.helper(Helper::ValidateArray));
+        Type::Array(element) => {
+            body.call(body.helper(super::array::validator(element)));
         }
 
-        Type::Range => unreachable!("range host signatures rejected during layout"),
+        Type::Range => unreachable!("unsupported host signatures rejected during layout"),
 
         Type::Number | Type::Void => {}
     }

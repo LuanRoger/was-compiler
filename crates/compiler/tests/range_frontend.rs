@@ -344,7 +344,10 @@ fn range_operand_types_are_checked_even_after_divergence_or_in_skipped_code() {
     for (body, found) in [
         ("true..2;", Type::Bool),
         ("0..\"end\";", Type::String),
-        ("0..2 by [];", Type::NumberArray),
+        (
+            "0..2 by [];",
+            Type::Array(was_compiler::ArrayElementType::Number),
+        ),
         ("0..2 by noop();", Type::Void),
         ("(loop {})..true;", Type::Bool),
         ("0..(loop {}) by false;", Type::Bool),
@@ -647,13 +650,21 @@ fn membership_requires_exact_asymmetric_operand_types_even_in_skipped_code() {
     for (expr, left, right) in [
         ("true in 0..3", Type::Bool, Type::Range),
         ("\"1\" in 0..3", Type::String, Type::Range),
-        ("[] in 0..3", Type::NumberArray, Type::Range),
+        (
+            "[] in 0..3",
+            Type::Array(was_compiler::ArrayElementType::Number),
+            Type::Range,
+        ),
         ("(0..1) in 0..3", Type::Range, Type::Range),
         ("noop() in 0..3", Type::Void, Type::Range),
         ("1 in 2", Type::Number, Type::Number),
         ("1 in true", Type::Number, Type::Bool),
         ("1 in \"range\"", Type::Number, Type::String),
-        ("1 in []", Type::Number, Type::NumberArray),
+        (
+            "1 in []",
+            Type::Number,
+            Type::Array(was_compiler::ArrayElementType::Number),
+        ),
         ("1 in noop()", Type::Number, Type::Void),
         ("(loop {}) in true", Type::Number, Type::Bool),
         ("true in (loop {})", Type::Bool, Type::Range),

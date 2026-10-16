@@ -271,7 +271,10 @@ fn pattern_validation_retains_pattern_and_whole_match_origins() {
             pattern_span(),
         ),
         (
-            expr(TypedExprKind::Array(vec![]), Type::NumberArray),
+            expr(
+                TypedExprKind::Array(vec![], was_compiler::ArrayElementType::Number),
+                Type::Array(was_compiler::ArrayElementType::Number),
+            ),
             vec![wildcard(number("2"))],
             origin(),
         ),
@@ -489,8 +492,8 @@ fn statement_match_discards_heterogeneous_tails_with_empty_regions() {
             arm(MatchPatternKind::Number("0".into()), string("zero")),
             arm(MatchPatternKind::Number("1".into()), boolean(true)),
             wildcard(expr(
-                TypedExprKind::Array(vec![number("3")]),
-                Type::NumberArray,
+                TypedExprKind::Array(vec![number("3")], was_compiler::ArrayElementType::Number),
+                Type::Array(was_compiler::ArrayElementType::Number),
             )),
         ],
     ));
@@ -573,12 +576,12 @@ fn scrutinee_scratch_is_reserved_before_nested_matches_and_array_arm_scratch() {
         match_value(
             scrutinee,
             vec![wildcard(expr(
-                TypedExprKind::Array(vec![number("3")]),
-                Type::NumberArray,
+                TypedExprKind::Array(vec![number("3")], was_compiler::ArrayElementType::Number),
+                Type::Array(was_compiler::ArrayElementType::Number),
             ))],
-            Type::NumberArray,
+            Type::Array(was_compiler::ArrayElementType::Number),
         ),
-        Type::NumberArray,
+        Type::Array(was_compiler::ArrayElementType::Number),
     ));
     assert_eq!(locals(&bytes), [ValType::F64, ValType::I32, ValType::I32]);
     let indices: Vec<_> = ops(&bytes)
@@ -845,8 +848,11 @@ fn all_concrete_results_and_void_never_joins_use_their_exact_region_types() {
         (boolean(true), Type::Bool, ValType::I32),
         (string("a"), Type::String, ValType::I32),
         (
-            expr(TypedExprKind::Array(vec![]), Type::NumberArray),
-            Type::NumberArray,
+            expr(
+                TypedExprKind::Array(vec![], was_compiler::ArrayElementType::Number),
+                Type::Array(was_compiler::ArrayElementType::Number),
+            ),
+            Type::Array(was_compiler::ArrayElementType::Number),
             ValType::I32,
         ),
         (

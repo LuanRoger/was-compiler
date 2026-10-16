@@ -19,7 +19,7 @@ pub mod typed_ast;
 #[path = "../../../tests/support/process.rs"]
 mod test_process;
 
-pub use ast::Type;
+pub use ast::{ArrayElementType, Type};
 pub use codegen::CodegenError;
 pub use compiler::{CompileError, Compiler, CompilerOptions};
 pub use exports::ExportOptions;

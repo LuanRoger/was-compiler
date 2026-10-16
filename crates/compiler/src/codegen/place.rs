@@ -4,11 +4,10 @@ use crate::{
     tokens::Span,
     typed_ast::{TypedExpr, TypedExprKind},
 };
-use wasm_encoder::{Instruction, MemArg, ValType};
+use wasm_encoder::ValType;
 
 use super::{
-    CodegenError, abi, expect_operand, expression, function::BodyEmitter, indices::LocalIndex,
-    values,
+    CodegenError, expect_operand, expression, function::BodyEmitter, indices::LocalIndex, values,
 };
 
 enum Place<'a> {
@@ -69,7 +68,11 @@ impl<'a> Place<'a> {
         match self {
             Self::Local(index) => body.local_set(*index),
             Self::Cell(ty) => body.store_cell(*ty),
-            Self::Element { .. } => body.instruction(&Instruction::F64Store(element_arg())),
+            Self::Element { base, .. } => {
+                let element = super::array::element(base);
+                super::array::consume(element, body);
+                body.instruction(&super::array::store(element, 0));
+            }
         }
     }
 }
@@ -87,7 +90,7 @@ pub(super) fn emit_assignment(
             .ty
             .value_type()
             .expect("checked local has a storage type"),
-        Place::Element { .. } => Type::Number,
+        Place::Element { base, .. } => super::array::element(base).value_type(),
     };
     expect_operand(body.name(), ty, value.ty, span)?;
 
@@ -119,6 +122,14 @@ pub(super) fn emit_compound_assignment(
     })?;
     let place = Place::check(target, body, span)?;
 
+    if let Place::Element { base, .. } = &place {
+        expect_operand(
+            body.name(),
+            Type::Number,
+            super::array::element(base).value_type().into(),
+            span,
+        )?;
+    }
     expect_operand(body.name(), Type::Number, target.ty, span)?;
     expect_operand(body.name(), Type::Number, value.ty, span)?;
 
@@ -145,7 +156,7 @@ pub(super) fn emit_compound_assignment(
             let flow = values::emit_address(base, index, body, span)?;
             body.local_set(address);
             body.local_get(address);
-            body.instruction(&Instruction::F64Load(element_arg()));
+            body.instruction(&super::array::load(crate::ast::ArrayElementType::Number, 0));
             body.local_set(old_value);
 
             // Save the checked original address and old value before RHS effects,
@@ -167,13 +178,5 @@ fn invalid_target(body: &BodyEmitter<'_>, span: Span) -> CodegenError {
     CodegenError::InvalidAssignmentTarget {
         function: body.name().into(),
         span,
-    }
-}
-
-fn element_arg() -> MemArg {
-    MemArg {
-        offset: 0,
-        align: abi::NUMBER_ELEMENT_ALIGN_LOG2,
-        memory_index: 0,
     }
 }

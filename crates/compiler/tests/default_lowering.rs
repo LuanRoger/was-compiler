@@ -100,7 +100,10 @@ fn forged_default_origins_order_reads_and_whitelist_are_checked() {
                         span,
                     })
             }
-            9 => seq.bindings[1].value.kind = TypedExprKind::Array(vec![]),
+            9 => {
+                seq.bindings[1].value.kind =
+                    TypedExprKind::Array(vec![], was_compiler::ArrayElementType::Number)
+            }
             10 => {
                 seq.bindings[1].value.kind = TypedExprKind::Range {
                     start: Box::new(seq.bindings[0].value.clone()),

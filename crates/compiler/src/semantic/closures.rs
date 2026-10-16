@@ -145,7 +145,8 @@ impl SemanticAnalyzer {
         let mut arguments = Vec::with_capacity(args.len());
         let mut flow = Flow::FALLTHROUGH;
         for (arg, expected) in args.iter().zip(&callable.params) {
-            let (value, next) = self.analyze_expr(&arg.value, arg.span, context)?;
+            let (value, next) =
+                self.analyze_expected(&arg.value, arg.span, context, Some(*expected))?;
             self.expect_type(*expected, value.ty, arg.span)?;
             flow = flow.then(next);
             arguments.push(value);
@@ -175,6 +176,7 @@ impl SemanticAnalyzer {
         let next_variable = self.next_variable_id;
         let next_loop = self.next_loop_id;
         let loops = std::mem::take(&mut self.loops);
+        let result_expected = self.result_expected.take();
         self.owner = Some(BindingOwner::Closure(id));
         self.dependencies.push((id, Vec::new()));
         self.capture_contexts.push(CaptureContext {
@@ -221,6 +223,7 @@ impl SemanticAnalyzer {
         self.next_variable_id = next_variable;
         self.next_loop_id = next_loop;
         self.loops = loops;
+        self.result_expected = result_expected;
         let (params, body, return_type) = result?;
         Ok(TypedClosure {
             id,

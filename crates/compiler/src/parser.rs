@@ -153,10 +153,18 @@ impl<'tokens, 'source> Parser<'tokens, 'source> {
 
         self.advance();
 
-        if ty == Type::Number && self.consume(TokenKind::LeftBracket) {
+        if matches!(ty, Type::Number | Type::Bool | Type::String)
+            && self.consume(TokenKind::LeftBracket)
+        {
             self.expect(TokenKind::RightBracket)?;
 
-            Ok(Type::NumberArray)
+            Ok(Type::Array(if ty == Type::Bool {
+                crate::ast::ArrayElementType::Bool
+            } else if ty == Type::String {
+                crate::ast::ArrayElementType::String
+            } else {
+                crate::ast::ArrayElementType::Number
+            }))
         } else {
             Ok(ty)
         }
@@ -1290,7 +1298,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             [
                 &Type::Number,
-                &Type::NumberArray,
+                &Type::Array(crate::ast::ArrayElementType::Number),
                 &Type::Bool,
                 &Type::String
             ]
@@ -1307,7 +1315,7 @@ mod tests {
         assert_eq!(program.functions[1].return_type, Some(Type::Void));
         assert_eq!(
             parse("fn values() -> number[] {}").unwrap().functions[0].return_type,
-            Some(Type::NumberArray)
+            Some(Type::Array(crate::ast::ArrayElementType::Number))
         );
     }
 
@@ -1322,7 +1330,7 @@ mod tests {
             StatementKind::Let {
                 name: "xs".into(),
                 name_span: Span::new(24, 26),
-                ty: Some(Type::NumberArray),
+                ty: Some(Type::Array(crate::ast::ArrayElementType::Number)),
                 value: Expr::Array(vec![number("1"), number("2")]),
             }
         );
@@ -2047,8 +2055,8 @@ mod tests {
             "let x: number = 1;",
             "fn main(1: number) -> void {}",
             "fn main(x: unknown) -> void {}",
-            "fn main(x: bool[]) -> void {}",
-            "fn main() -> string[] {}",
+            "fn main(x: bool[][]) -> void {}",
+            "fn main() -> string[][] {}",
             "fn main(x) -> void {}",
             "fn main() -> void { let x; }",
             "fn main() -> void { let x = ; }",

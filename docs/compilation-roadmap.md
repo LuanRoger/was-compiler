@@ -10,6 +10,20 @@ The first deliverables after the foundation are **number literals from the typed
 AST**, then **arithmetic operations**. This roadmap does not introduce a second IR,
 optimizer, plugin system, or execution engine before those are needed.
 
+## Typed-array extension (#37)
+
+Core M1–M3 is implemented for `number[]`, `bool[]` and `string[]` through a closed
+`ArrayElementType` model and shared statically selected checked array operations.
+CLI/browser adapters and Node marshaling are implemented; [final release gates
+passed](typed-arrays-validation-2026-10-15.txt) after the accessor-snapshot fix,
+including 1,251 full-workspace tests with none ignored and 25 browser smoke groups.
+M4 [comparison tables](benchmarks/m4-typed-arrays/comparison.md) and
+[ranked optimization handoff](benchmarks/m4-typed-arrays/handoff.md) are complete
+historical measurements, with pre-fix runtime hashes distinct from the final
+release manifest. See [contracts, Rust migration and release evidence](typed-arrays.md).
+Earlier milestone/extension records below retain their historical scope.
+This work adds neither reclamation nor optimization transformations.
+
 ## Pipeline and ownership
 
 ```text
@@ -552,9 +566,13 @@ backend milestone.
 
 Local declarations accept `let name = initializer;` as well as the existing
 `let name: type = initializer;`. Every nonvoid expression already has a concrete
-`number`, `bool`, `string`, or `number[]` type; an omitted annotation uses that
-type. Empty `[]` infers `number[]` because only numeric arrays exist. Explicit
-annotations continue to require exact initializer-type matches.
+`number`, `bool`, `string`, `number[]`, `bool[]`, `string[]` or `range` type; an
+omitted annotation uses that type. Unconstrained empty `[]` retains the `number[]`
+fallback. Under #37, known array destinations/formals/explicit named results
+provide literal context through value paths, without sibling/caller/backward
+pipeline inference. Omitted/anonymous results remain independently inferred.
+Explicit annotations continue to require exact types; see [contextual array
+typing](typed-arrays.md#contextual-literal-typing-and-stable-inference).
 
 Semantic analysis checks the initializer before introducing the new binding.
 A same-named initializer reference therefore resolves only to an existing outer

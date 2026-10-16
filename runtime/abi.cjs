@@ -12,6 +12,8 @@ const DESCRIPTOR_LENGTH_OFFSET = 4;
 const DESCRIPTOR_ALIGNMENT = 8;
 const NUMBER_ELEMENT_SIZE = 8;
 const STRING_ELEMENT_SIZE = 1;
+const BOOL_ELEMENT_SIZE = 1;
+const STRING_HANDLE_SIZE = 4;
 const MIN_ADDRESS = 8;
 const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 const encoder = new TextEncoder();
@@ -65,8 +67,8 @@ function readDescriptor(memory, handle, width) {
     if (!(memory instanceof WebAssembly.Memory)) {
         throw new TypeError('descriptor-v1 requires an exported WebAssembly.Memory named memory');
     }
-    if (width !== STRING_ELEMENT_SIZE && width !== NUMBER_ELEMENT_SIZE) {
-        throw new TypeError('descriptor element width must be 1 or 8');
+    if (width !== STRING_ELEMENT_SIZE && width !== STRING_HANDLE_SIZE && width !== NUMBER_ELEMENT_SIZE) {
+        throw new TypeError('descriptor element width must be 1, 4 or 8');
     }
     const buffer = memory.buffer;
     const address = unsignedHandle(handle);
@@ -78,6 +80,23 @@ function readDescriptor(memory, handle, width) {
     range(buffer, data, bytes, width, 'descriptor payload');
     copySize(bytes);
     return { buffer, view, data, length, bytes };
+}
+
+function snapshotArray(type, value, label) {
+    if (!Array.isArray(value)) throw new TypeError(`${label} must be ${type}`);
+    const length = value.length;
+    const isString = type === 'string[]';
+    let bytes = copySize(length * (isString ? STRING_HANDLE_SIZE : BOOL_ELEMENT_SIZE));
+    const snapshot = new Array(length);
+    for (let i = 0; i < length; i++) {
+        const element = value[i];
+        if (typeof element !== (isString ? 'string' : 'boolean')) {
+            throw new TypeError(`${label}[${i}] must be ${isString ? 'string' : 'bool'}`);
+        }
+        if (isString) bytes = copySize(bytes + Buffer.byteLength(element, 'utf8'));
+        snapshot[i] = element;
+    }
+    return snapshot;
 }
 
 function validateNative(type, value, label = 'value') {
@@ -105,6 +124,10 @@ function validateNative(type, value, label = 'value') {
                 return;
             }
             break;
+        case 'string[]':
+        case 'bool[]':
+            snapshotArray(type, value, label);
+            return;
         case 'void':
             if (value === undefined) return;
             break;
@@ -128,12 +151,19 @@ function createAbi(getInstance) {
     }
 
     function encode(type, value, label = 'value') {
-        validateNative(type, value, label);
+        if (type === 'bool[]' || type === 'string[]') {
+            // Accessors may change values or length; encode only the checked scalar snapshot.
+            value = snapshotArray(type, value, label);
+        } else {
+            validateNative(type, value, label);
+        }
         if (type === 'number' || type === 'void') return value;
         if (type === 'bool') return value ? 1 : 0;
         const exports = memoryExports();
         const payload = type === 'string' ? encoder.encode(value) : value;
-        const width = type === 'string' ? STRING_ELEMENT_SIZE : NUMBER_ELEMENT_SIZE;
+        const width = type === 'string' ? STRING_ELEMENT_SIZE :
+            type === 'bool[]' ? BOOL_ELEMENT_SIZE :
+                type === 'string[]' ? STRING_HANDLE_SIZE : NUMBER_ELEMENT_SIZE;
         const bytes = copySize(payload.length * width);
         const handle = unsignedHandle(exports.__alloc(DESCRIPTOR_SIZE + bytes));
         const buffer = exports.memory.buffer;
@@ -142,7 +172,16 @@ function createAbi(getInstance) {
         const data = handle + DESCRIPTOR_SIZE;
         view.setUint32(handle + DESCRIPTOR_DATA_OFFSET, data, true);
         view.setUint32(handle + DESCRIPTOR_LENGTH_OFFSET, payload.length, true);
-        if (width === STRING_ELEMENT_SIZE) {
+        if (type === 'string[]') {
+            for (let i = 0; i < payload.length; i++) {
+                const stringHandle = encode('string', payload[i], `${label}[${i}]`);
+                // Nested allocations may detach every earlier view, not the saved offsets.
+                new DataView(exports.memory.buffer).setUint32(data + i * STRING_HANDLE_SIZE, stringHandle, true);
+            }
+        } else if (type === 'bool[]') {
+            const target = new Uint8Array(buffer, data, bytes);
+            for (let i = 0; i < payload.length; i++) target[i] = payload[i] ? 1 : 0;
+        } else if (type === 'string') {
             new Uint8Array(buffer, data, bytes).set(payload);
         } else {
             for (let i = 0; i < payload.length; i++) {
@@ -163,18 +202,41 @@ function createAbi(getInstance) {
             }
             return value === 1;
         }
-        if (type !== 'string' && type !== 'number[]') {
+        if (type !== 'string' && type !== 'number[]' && type !== 'bool[]' && type !== 'string[]') {
             throw new TypeError(`unsupported ABI type ${JSON.stringify(type)}`);
         }
+        const memory = memoryExports().memory;
         const descriptor = readDescriptor(
-            memoryExports().memory, value,
-            type === 'string' ? STRING_ELEMENT_SIZE : NUMBER_ELEMENT_SIZE);
+            memory, value,
+            type === 'string' ? STRING_ELEMENT_SIZE :
+                type === 'bool[]' ? BOOL_ELEMENT_SIZE :
+                    type === 'string[]' ? STRING_HANDLE_SIZE : NUMBER_ELEMENT_SIZE);
         if (type === 'string') {
             return decoder.decode(new Uint8Array(descriptor.buffer, descriptor.data, descriptor.bytes));
         }
+        if (type === 'string[]') {
+            // Check the entire logical copy before allocating native results or decoding text.
+            let bytes = descriptor.bytes;
+            for (let i = 0; i < descriptor.length; i++) {
+                const handle = descriptor.view.getUint32(descriptor.data + i * STRING_HANDLE_SIZE, true);
+                const string = readDescriptor(memory, handle, STRING_ELEMENT_SIZE);
+                bytes = copySize(bytes + string.bytes);
+            }
+        }
         const result = new Array(descriptor.length);
         for (let i = 0; i < result.length; i++) {
-            result[i] = descriptor.view.getFloat64(descriptor.data + i * NUMBER_ELEMENT_SIZE, true);
+            if (type === 'string[]') {
+                const handle = descriptor.view.getUint32(descriptor.data + i * STRING_HANDLE_SIZE, true);
+                result[i] = decode('string', handle, `${label}[${i}]`);
+            } else if (type === 'bool[]') {
+                const byte = descriptor.view.getUint8(descriptor.data + i);
+                if (byte !== 0 && byte !== 1) {
+                    throw new TypeError(`${label}[${i}] must be ABI bool (0 or 1)`);
+                }
+                result[i] = byte === 1;
+            } else {
+                result[i] = descriptor.view.getFloat64(descriptor.data + i * NUMBER_ELEMENT_SIZE, true);
+            }
         }
         return result;
     }

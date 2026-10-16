@@ -1,0 +1,1619 @@
+COMMAND: cargo test --offline -p was-compiler --test memory_benchmarks -- --include-ignored --test-threads=1
+EXIT: 0
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.28s
+     Running tests\memory_benchmarks.rs (target\debug\deps\memory_benchmarks-86d6c2035ce82483.exe)
+
+running 5 tests
+test bounded_memory_workloads_compile_deterministically_at_the_public_seam ... ok
+test memory_workloads_execute_with_independent_results_and_allocation_checks ... ok
+test record_memory_capacity ... ok
+test record_memory_guest_timing ... ok
+test record_memory_markers ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.41s
+
+
+COMMAND: cargo test --offline -p was-compiler --test benchmark_corpus -- --include-ignored
+EXIT: 0
+   Compiling was-compiler v0.1.0 (C:\Users\luanr\Documents\Jobs\rust\was-compiler\crates\compiler)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.25s
+     Running tests\benchmark_corpus.rs (target\debug\deps\benchmark_corpus-82169394c6ff1bad.exe)
+
+running 3 tests
+test workload_sizes_increase_source_and_module_sizes ... ok
+test benchmark_workloads_execute_against_independent_expected_results ... ok
+test corpus_is_deterministic_valid_and_optimization_invariant ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+
+
+COMMAND: cargo test --offline
+EXIT: 0
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.18s
+     Running unittests src\lib.rs (target\debug\deps\was_compiler-034920b2707c5ee8.exe)
+
+running 468 tests
+test codegen::export_tests::node_none_and_empty_only_export_runtime_memory_and_working_allocator ... ignored, requires Node.js
+test codegen::export_tests::node_none_and_empty_only_scalar_modules_keep_imports_but_no_exports ... ignored, requires Node.js
+test codegen::export_tests::node_selected_memory_exports_call_forward_helpers_with_unchanged_runtime_indices ... ignored, requires Node.js
+test codegen::export_tests::node_selected_scalar_exports_call_forward_unexported_helpers_and_imports ... ignored, requires Node.js
+test codegen::export_tests::node_unexported_reserved_source_names_remain_callable_in_memory_modules ... ignored, requires Node.js
+test codegen::export_tests::compiler_defaults_to_all_without_changing_copyable_options_literals ... ok
+test codegen::contracts_tests::function_walk_is_ordered_and_breaks_before_later_contracts_and_body_hooks ... ok
+test codegen::export_tests::duplicate_source_names_in_forged_programs_are_rejected_even_when_unexported ... ok
+test codegen::export_tests::export_options_are_default_cloneable_and_equatable ... ok
+test codegen::export_tests::empty_program_accepts_empty_selection_and_rejects_requested_names ... ok
+test codegen::export_tests::selection_never_skips_user_or_host_layout_validation ... ok
+test codegen::contracts_tests::independent_planners_visit_even_forbidden_contract_structure_before_body ... ok
+test codegen::function::tests::borrowed_call_targets_preserve_function_indices_with_shared_type_indices ... ok
+test codegen::function::tests::every_structured_label_has_a_unique_identity_and_dynamic_depth ... ok
+test codegen::function::tests::loop_scopes_restore_labels_loops_and_bindings_after_success_and_nested_errors ... ok
+test codegen::function::tests::match_arm_errors_restore_labels_and_bindings_without_reusing_scratch ... ok
+test codegen::export_tests::duplicate_selection_has_a_distinct_explicit_error_at_every_level ... ok
+test codegen::function::tests::short_circuit_condition_errors_restore_nested_expression_labels_and_loop_context ... ok
+test codegen::function::tests::statement_and_value_loop_cleanup_restores_scopes_on_body_and_result_errors ... ok
+test codegen::function::tests::scoped_bindings_restore_on_success_and_error_without_rewinding_temporaries ... ok
+test codegen::export_tests::scalar_reserved_names_remain_valid_selected_user_exports ... ok
+test codegen::export_tests::import_only_memory_modules_keep_runtime_exports_with_no_user_exports ... ok
+test codegen::function::tests::for_scopes_restore_after_iterable_and_body_errors_without_reusing_scratch ... ok
+test codegen::function::tests::value_expression_scopes_restore_bindings_and_labels_after_tail_errors ... ok
+test codegen::memory::tests::static_layout_limits_are_checked_before_narrowing ... ok
+test codegen::export_tests::unexported_bodies_still_report_errors_at_every_optimization_level ... ok
+test codegen::locals::tests::expression_declarations_are_planned_even_when_their_contents_and_results_are_forged ... ok
+test codegen::memory::tests::strings_are_interned_in_preorder_with_byte_lengths ... ok
+test codegen::export_tests::export_and_level_changes_preserve_options_registration_and_typed_import_snapshots ... ok
+test codegen::locals::tests::local_collection_traverses_without_validating_initializers_and_conditions ... ok
+test codegen::locals::tests::unsupported_local_type_precedes_duplicate_id_and_later_declaration_errors ... ok
+test codegen::locals::tests::slots_preserve_parameter_branch_loop_and_unreachable_declaration_order ... ok
+test codegen::export_tests::legacy_compile_and_default_layout_keep_all_exports ... ok
+test codegen::memory::tests::descriptor_layout_and_constants_are_fixed ... ok
+test codegen::memory_tests::layout::initial_memory_covers_large_static_payloads_and_heap_begins_after_them ... ok
+test codegen::memory::tests::scalar_only_program_has_no_memory_plan ... ok
+test codegen::memory::tests::helper_signatures_and_bodies_validate_with_a_function_offset ... ok
+test codegen::memory::tests::signatures_locals_expression_types_and_kinds_require_memory ... ok
+test codegen::memory_tests::layout::memory_modules_reject_user_exports_named_memory_or_allocator ... ok
+test codegen::memory::tests::helper_indices_and_signatures_are_fixed ... ok
+test codegen::memory_tests::runtime::node_all_invalid_indices_trap_and_negative_zero_is_valid_for_reads_and_writes ... ignored, requires Node.js
+test codegen::memory_tests::runtime::node_allocator_alignment_reservation_growth_overflow_and_large_arrays ... ignored, requires Node.js
+test codegen::memory_tests::runtime::node_arrays_sum_len_mutation_alias_reassignment_and_fresh_literals ... ignored, requires Node.js
+test codegen::memory_tests::runtime::node_guest_large_array_growth_and_bounded_allocator_exhaustion ... ignored, requires Node.js
+test codegen::memory_tests::runtime::node_host_memory_roundtrips_reentrant_allocator_growth_and_reference_mutation ... ignored, requires Node.js
+test codegen::memory_tests::runtime::node_invalid_exported_and_host_descriptors_trap_before_effects ... ignored, requires Node.js
+test codegen::memory_tests::runtime::node_memory_expression_order_live_prefixes_and_assignment_bounds_before_rhs ... ignored, requires Node.js
+test codegen::memory_tests::runtime::node_string_utf8_empty_nul_interning_and_distinct_descriptor_content_equality ... ignored, requires Node.js
+test codegen::export_tests::unexported_unused_reference_functions_still_require_memory ... ok
+test codegen::memory_tests::layout::scalar_only_modules_keep_their_sections_exports_and_function_counts ... ok
+test codegen::memory_tests::layout::static_strings_are_utf8_byte_descriptors_interned_in_deterministic_preorder ... ok
+test codegen::numeric::tests::node_executes_exact_remainder_for_extremes_and_random_binary64_inputs ... ignored, requires Node.js
+test codegen::memory_tests::layout::memory_abi_import_offsets_seven_unique_helpers_and_bytes_are_stable_at_all_levels ... ok
+test codegen::memory_tests::layout::memory_is_needed_by_signatures_locals_and_unreachable_literals ... ok
+test codegen::memory_tests::validation::indexed_assignment_checks_identifier_base_target_index_and_rhs_types ... ok
+test codegen::memory_tests::validation::forged_memory_roots_operands_and_nested_errors_preserve_statement_spans ... ok
+test codegen::range_tests::forged_range_equality_is_rejected_without_defining_handle_equality ... ok
+test codegen::numeric::tests::scanner_does_not_require_remainder_for_other_operators_or_leaf_expressions ... ok
+test codegen::memory_tests::layout::scalar_only_modules_allow_user_exports_named_memory_and_allocator ... ok
+test codegen::memory_tests::validation::len_checks_arity_and_rejects_strings_in_source_and_typed_ast ... ok
+test codegen::numeric::tests::scanner_checks_later_functions_without_following_calls ... ok
+test codegen::numeric::tests::scanner_finds_remainder_in_every_expression_child ... ok
+test codegen::memory_tests::validation::memory_handle_types_are_not_interchangeable_in_assignments_and_host_calls ... ok
+test codegen::numeric::tests::emitted_helper_validates_without_memory_or_imports ... ok
+test codegen::numeric::tests::scanner_finds_remainder_in_every_statement_child_even_after_return ... ok
+test codegen::memory_tests::validation::memory_local_initializers_remain_checked_in_unreachable_nested_blocks ... ok
+test codegen::numeric::tests::compound_remainder_statement_hook_stops_before_expression_traversal ... ok
+test codegen::range_tests::forged_range_host_snapshots_are_rejected_even_when_unused ... ok
+test codegen::range_tests::forged_range_operand_is_checked_even_when_hidden ... ok
+test codegen::range_tests::internal_range_parameters_are_validated_as_records_not_descriptors ... ok
+test codegen::range_tests::range_helpers_follow_remainder_even_when_only_hidden_construction_needs_them ... ok
+test codegen::temporaries::tests::allocation_counts_are_per_occurrence_and_do_not_reuse_branch_or_loop_slots ... ok
+test codegen::range_tests::range_construction_uses_private_integer_record_and_appended_helpers ... ok
+test codegen::temporaries::tests::arrays_in_every_expression_child_are_counted_without_type_validation ... ok
+test codegen::temporaries::tests::assignment_targets_conditions_and_returns_are_counted_before_runtime_filtering ... ok
+test codegen::export_tests::unknown_selection_rejects_non_user_names_without_mutation_at_every_level ... ok
+test codegen::temporaries::tests::overflow_aborts_at_the_array_before_visiting_children ... ok
+test codegen::temporaries::tests::compound_scratch_types_follow_preorder_without_reusing_skipped_slots ... ok
+test codegen::temporaries::tests::compound_pair_overflow_aborts_before_target_and_rhs_children ... ok
+test codegen::range_tests::range_operands_preserve_nested_local_and_temporary_planning ... ok
+test codegen::tests::block_values::checked_lowering_rejects_forged_result_categories_including_value_void ... ok
+test codegen::temporaries::tests::empty_block_has_no_temporary_slots ... ok
+test codegen::tests::block_values::divergent_initializers_introduce_static_bindings_without_stores_or_drops ... ok
+test codegen::tests::block_values::eager_never_does_not_mask_later_argument_array_index_or_equality_type_errors ... ok
+test codegen::tests::block_values::expression_local_scopes_reject_sibling_and_later_forged_reads ... ok
+test codegen::tests::block_values::expression_transfers_resolve_dynamic_depths_through_if_and_block_regions ... ok
+test codegen::tests::block_values::expression_locals_keep_outer_declaration_preorder_before_initializer_bindings ... ok
+test codegen::tests::block_values::forged_if_arms_conditions_and_missing_else_are_checked_structurally ... ok
+test codegen::tests::block_values::node_value_blocks_preserve_original_compound_places_and_conditional_effects ... ignored, requires Node.js
+test codegen::tests::block_values::hidden_skipped_and_unreachable_value_children_are_not_pruned ... ok
+test codegen::tests::block_values::never_conditions_and_unreachable_tails_do_not_create_live_region_results ... ok
+test codegen::tests::block_values::own_loop_condition_transfers_resolve_through_value_region_labels ... ok
+test codegen::memory_tests::validation::memory_expressions_validate_with_live_stack_prefixes_and_nested_calls_at_all_levels ... ok
+test codegen::tests::block_values::assignments_and_compounds_propagate_abrupt_target_and_rhs_flow ... ok
+test codegen::tests::block_values::short_circuit_rhs_never_retains_a_normal_bool_path_but_left_never_does_not ... ok
+test codegen::export_tests::scalar_selection_preserves_all_imports_signatures_bodies_and_call_indices ... ok
+test codegen::range_tests::range_value_regions_and_divergent_operands_produce_valid_wasm ... ok
+test codegen::tests::calls::call_ids_are_authoritative_even_when_names_match_other_users_or_hosts ... ok
+test codegen::tests::block_values::eager_expressions_propagate_never_without_stopping_static_lowering ... ok
+test codegen::tests::block_values::value_children_preserve_independent_memory_temporary_and_remainder_planning ... ok
+test codegen::tests::calls::call_arguments_are_type_checked_and_emitted_left_to_right ... ok
+test codegen::tests::block_values::divergent_arms_join_each_concrete_type_without_artificial_result_locals ... ok
+test codegen::tests::calls::call_statements_preserve_drop_cleanup_after_return_for_host_and_user_results ... ok
+test codegen::tests::calls::calls_check_real_return_types_including_void_before_argument_errors ... ok
+test codegen::tests::block_values::scalar_handle_and_void_regions_use_mvp_results_and_only_values_are_dropped ... ok
+test codegen::tests::calls::calls_reject_argument_counts_before_emitting_any_argument ... ok
+test codegen::tests::calls::nested_builtin_argument_types_are_checked_before_emission_in_all_statement_contexts ... ok
+test codegen::tests::calls::unknown_call_references_do_not_spill_between_host_and_user_tables_or_use_names ... ok
+test codegen::tests::calls::self_and_mutual_calls_link_without_executing_unbounded_guest_recursion ... ok
+test codegen::tests::calls::host_bool_arguments_are_normalized_immediately_between_nested_scalar_calls ... ok
+test codegen::tests::calls::calls_require_exact_argument_types_at_first_and_higher_positions ... ok
+test codegen::tests::calls::void_calls_are_rejected_in_scalar_returns_initializers_assignments_and_arguments ... ok
+test codegen::tests::compound_assignment::node_all_compound_operators_use_numeric_and_exact_remainder_semantics ... ignored, requires Node.js
+test codegen::tests::calls::invalid_unreachable_calls_abort_without_partial_output_and_keep_statement_spans ... ok
+test codegen::tests::compound_assignment::node_compound_preserves_checked_target_old_value_and_once_only_effects_across_growth ... ignored, requires Node.js
+test codegen::tests::calls::host_call_statements_drop_only_scalar_results_and_normalize_bool_returns ... ok
+test codegen::tests::compound_assignment::checked_boundary_rejects_hidden_skipped_and_unreachable_compound_rhs_errors ... ok
+test codegen::tests::compound_assignment::forged_non_arithmetic_compound_operators_are_rejected_with_statement_spans ... ok
+test codegen::tests::compound_assignment::forged_compound_places_types_ids_and_nested_expressions_are_checked ... ok
+test codegen::tests::control_flow::bare_void_returns_are_emitted_including_unreachable_returns ... ok
+test codegen::tests::control_flow::all_numeric_returns_are_emitted_in_source_order_even_when_unreachable ... ok
+test codegen::tests::compound_assignment::legacy_array_temporary_groups_and_preorder_slots_remain_byte_identical ... ok
+test codegen::tests::control_flow::forged_if_and_while_conditions_require_bool_and_preserve_statement_spans ... ok
+test codegen::tests::compound_assignment::local_compound_live_old_value_survives_array_construction_and_branching_callee ... ok
+test codegen::tests::calls::forward_nested_scalar_and_void_calls_preserve_import_indices_at_all_optimization_levels ... ok
+test codegen::tests::control_flow::if_else_complete_returns_emit_unreachable_after_end_and_validate ... ok
+test codegen::tests::control_flow::invalid_statements_in_unreachable_branches_loops_and_continuations_are_diagnosed ... ok
+test codegen::tests::control_flow::forged_branch_and_loop_local_reads_do_not_escape_their_scope ... ok
+test codegen::tests::compound_assignment::typed_scratch_and_array_temporaries_emit_in_planned_order_without_reuse ... ok
+test codegen::tests::control_flow::missing_return_paths_include_partial_nested_conditionals_and_all_loops ... ok
+test codegen::tests::control_flow::scoped_branch_and_loop_declarations_preserve_initialized_outer_bindings ... ok
+test codegen::tests::control_flow::while_emits_empty_block_loop_exit_and_back_edge_with_body_locals ... ok
+test codegen::tests::control_flow::nested_loops_keep_relative_exit_and_back_edge_depths ... ok
+test codegen::tests::control_flow::nested_return_type_errors_keep_inner_statement_spans ... ok
+test codegen::tests::expressions::equality_checks_parent_result_before_rejecting_void_left_operand ... ok
+test codegen::tests::expressions::bool_equality_normalizes_both_operands_and_not_emits_eqz ... ok
+test codegen::tests::control_flow::nested_complete_and_partial_returns_validate_with_fallbacks ... ok
+test codegen::tests::expressions::equality_with_correct_parent_result_retains_number_expected_void_left_error ... ok
+test codegen::tests::expressions::forged_bool_operator_roots_and_operands_are_type_checked ... ok
+test codegen::tests::compound_assignment::remainder_in_hidden_unreachable_and_runtime_skipped_compounds_plans_exact_helper ... ok
+test codegen::tests::expressions::logical_branches_preserve_live_equality_operands_and_call_arguments ... ok
+test codegen::tests::expressions::logical_operators_guard_rhs_calls_inside_i32_result_ifs ... ok
+test codegen::tests::expressions::logical_rhs_is_validated_even_when_runtime_short_circuit_would_skip_it ... ok
+test codegen::tests::expressions::arithmetic_preserves_import_indices_and_is_not_folded_at_any_optimization_level ... ok
+test codegen::tests::expressions::source_returns_emit_remainder_helper_calls_after_literal_or_parameter_operands ... ok
+test codegen::tests::compound_assignment::scalar_compounds_keep_old_value_on_stack_and_need_no_memory_import_or_scratch ... ok
+test codegen::tests::expressions::source_unary_negation_emits_f64_neg_without_folding ... ok
+test codegen::tests::expressions::source_arithmetic_emits_operands_before_each_opcode_or_helper_call ... ok
+test codegen::tests::expressions::source_numeric_literals_emit_f64_const_return_and_end ... ok
+test codegen::tests::expressions::valid_underflowing_literals_may_round_to_zero ... ok
+test codegen::tests::expressions::nested_arithmetic_preserves_precedence_associativity_and_operand_order ... ok
+test codegen::tests::layout::empty_module_is_valid ... ok
+test codegen::tests::layout::numeric_returns_preserve_parameter_signatures_and_import_index_offsets ... ok
+test codegen::tests::layout::empty_void_functions_have_only_end_and_are_exported_in_source_order ... ok
+test codegen::tests::layout::internal_signatures_are_checked_even_when_not_exported ... ok
+test codegen::tests::layout::import_only_module_has_no_exports_or_bodies ... ok
+test codegen::tests::layout::forged_unused_host_signatures_are_checked_before_export_selection ... ok
+test codegen::tests::compound_assignment::indexed_compounds_decode_once_only_address_and_old_load_before_rhs_for_all_operators ... ok
+test codegen::tests::layout::u32_limits_are_checked_without_truncation ... ok
+test codegen::tests::locals::non_identifier_assignment_targets_and_index_bases_are_rejected_before_rhs ... ok
+test codegen::tests::layout::signatures_are_deduplicated_across_imports_and_users_with_import_first_indices ... ok
+test codegen::tests::layout::output_is_deterministic ... ok
+test codegen::tests::locals::forward_reads_self_initializers_and_assignments_before_declaration_are_uninitialized ... ok
+test codegen::tests::locals::duplicate_variable_ids_are_rejected_at_the_repeated_parameter_or_declaration ... ok
+test codegen::tests::locals::scalar_expression_statements_drop_values_even_after_return ... ok
+test codegen::tests::locals::scalar_local_types_are_checked_before_initialization_or_rhs_emission ... ok
+test codegen::tests::locals::local_layout_collects_and_emits_nested_shadow_bindings_in_preorder ... ok
+test codegen::tests::locals::bool_literals_variables_and_returns_preserve_mixed_local_order_and_reset_function_ids ... ok
+test codegen::tests::layout::signatures_distinguish_parameter_order_and_return_types ... ok
+test codegen::tests::locals::sparse_variable_ids_and_diagnostic_names_do_not_determine_wasm_indices ... ok
+test codegen::tests::expressions::numeric_comparisons_emit_f64_operands_and_bool_results_at_all_optimization_levels ... ok
+test codegen::tests::locals::unknown_ids_are_rejected_for_reads_and_assignments_without_name_or_cross_function_lookup ... ok
+test codegen::tests::locals::unsupported_local_types_are_rejected_before_body_emission_even_in_unreachable_nested_blocks ... ok
+test codegen::tests::locals::unreachable_local_initializers_and_assignments_are_still_validated ... ok
+test codegen::tests::loop_control::forged_targets_reject_unknown_inactive_outer_and_cross_function_loops_with_spans ... ok
+test codegen::tests::loop_control::hidden_skipped_and_unreachable_loop_bodies_and_transfers_are_all_checked ... ok
+test codegen::tests::loop_control::duplicate_loop_ids_are_function_wide_even_in_nested_unreachable_and_sibling_arms ... ok
+test codegen::tests::loop_control::nested_transfers_decode_relative_depths_with_statement_and_expression_ifs ... ok
+test codegen::tests::malformed::duplicate_export_names_are_rejected ... ok
+test codegen::tests::malformed::empty_result_functions_are_rejected_without_placeholder_bodies ... ok
+test codegen::tests::locals::scalar_parameters_locals_and_mutations_emit_dense_slots_at_all_optimization_levels ... ok
+test codegen::tests::malformed::errors_from_later_functions_propagate_without_partial_module_output ... ok
+test codegen::tests::loop_control::valid_unreachable_transfers_and_following_statements_are_still_emitted ... ok
+test codegen::tests::malformed::invalid_unreachable_returns_are_not_skipped ... ok
+test codegen::tests::malformed::invalid_host_ids_are_rejected ... ok
+test codegen::tests::loop_control::transfers_do_not_make_unreachable_returns_count_as_returning_if_arms ... ok
+test codegen::tests::malformed::malformed_return_types_and_numeric_expression_types_are_checked ... ok
+test codegen::tests::loop_control::partial_transfer_paths_do_not_turn_later_returns_into_guaranteed_if_returns ... ok
+test codegen::tests::malformed::invalid_user_ids_are_rejected ... ok
+test codegen::tests::malformed::malformed_typed_numeric_literals_are_rejected_with_the_statement_span ... ok
+test codegen::tests::malformed::nested_invalid_expressions_and_literals_propagate_in_left_to_right_order ... ok
+test codegen::tests::loop_control::returns_before_unreachable_transfers_keep_the_existing_if_unreachable_marker ... ok
+test codegen::tests::malformed::malformed_memory_expression_statements_keep_their_span_even_after_return ... ok
+test codegen::tests::malformed::malformed_memory_expression_kinds_are_rejected_with_the_statement_span ... ok
+test codegen::tests::malformed::remainder_checks_root_types_before_operands_and_operand_types_before_literals ... ok
+test codegen::tests::malformed::source_arithmetic_with_wrong_types_is_still_rejected_by_semantic_analysis ... ok
+test codegen::tests::malformed::source_builtin_len_propagates_overflowing_array_element_literals ... ok
+test codegen::tests::loop_control::transfers_preserve_planning_of_unreachable_locals_temporaries_strings_and_helpers ... ok
+test codegen::tests::layout::memory_parameter_and_return_abis_use_i32_for_hosts_and_users ... ok
+test codegen::tests::malformed::nested_numeric_literal_errors_preserve_the_enclosing_statement_span ... ok
+test codegen::tests::runtime::node_executes_arithmetic_with_ieee754_rounding_and_special_results ... ignored, requires Node.js
+test codegen::tests::runtime::node_executes_bool_assignments_returns_and_drops_at_all_optimization_levels ... ignored, requires Node.js
+test codegen::tests::malformed::void_parameters_are_rejected_for_hosts_and_users ... ok
+test codegen::tests::malformed::overflowing_numeric_literals_are_rejected_in_source_and_typed_ast ... ok
+test codegen::tests::runtime::node_executes_comparisons_ieee754_and_noncanonical_bool_operators_at_all_levels ... ignored, requires Node.js
+test codegen::tests::runtime::node_executes_guest_only_factorial_and_mutual_recursion_base_cases_at_all_levels ... ignored, requires Node.js
+test codegen::tests::runtime::node_executes_host_bool_normalization_ieee754_numbers_and_import_link_errors ... ignored, requires Node.js
+test codegen::tests::malformed::void_returns_reject_any_value_including_void_typed_expressions ... ok
+test codegen::tests::runtime::node_executes_host_if_and_repeated_loop_conditions_at_all_levels ... ignored, requires Node.js
+test codegen::tests::runtime::node_executes_if_loops_early_returns_and_nested_shadowing_at_all_levels ... ignored, requires Node.js
+test codegen::tests::runtime::node_executes_nested_arithmetic_with_unused_provider_imports ... ignored, requires Node.js
+test codegen::tests::runtime::node_executes_nested_user_host_calls_left_to_right_with_void_side_effects ... ignored, requires Node.js
+test codegen::tests::runtime::node_executes_numeric_exports_with_unused_provider_imports ... ignored, requires Node.js
+test codegen::tests::runtime::node_executes_numeric_literal_returns ... ignored, requires Node.js
+test codegen::tests::runtime::node_executes_parameterized_arithmetic_and_numeric_mutations_at_all_optimization_levels ... ignored, requires Node.js
+test codegen::tests::runtime::node_executes_self_and_mutual_recursion_with_a_bounded_host_tick ... ignored, requires Node.js
+test codegen::tests::runtime::node_executes_short_circuit_host_effects_in_order_at_all_levels ... ignored, requires Node.js
+test codegen::tests::value_loops::abrupt_break_and_return_rhs_unwind_live_prefixes_without_running_trailing_effects ... ignored, requires Node.js
+test codegen::tests::value_loops::invalid_break_children_remain_checked_in_hidden_skipped_and_unreachable_code ... ok
+test codegen::export_tests::memory_reserved_names_collide_only_when_the_user_function_is_exported ... ok
+test codegen::tests::value_loops::statement_backedges_continue_and_value_breaks_preserve_effects_and_handles ... ignored, requires Node.js
+test codegen::tests::value_loops::loop_ids_remain_unique_across_kinds_unreachable_nodes_and_function_local ... ok
+test codegen::tests::value_loops::value_loops_execute_once_with_live_arithmetic_call_array_and_place_prefixes ... ignored, requires Node.js
+test codegen::tests::value_loops::forged_loop_categories_are_recomputed_from_reachable_breaks ... ok
+test codegen::tests::value_loops::nested_value_and_statement_loops_resolve_identity_beneath_expression_regions ... ok
+test codegen::tests::value_loops::noncompleting_while_conditions_consume_own_breaks_and_continues ... ok
+test codegen::tests::value_loops::loop_planning_keeps_declaration_preorder_scratch_and_helper_order ... ok
+test codegen::tests::value_loops::nonvoid_completion_accepts_explicit_divergence_but_not_possible_fallthrough ... ok
+test codegen::tests::value_loops::divergence_in_logical_and_value_if_regions_restores_polymorphism ... ok
+test codegen::tests::value_loops::wrong_break_kinds_are_rejected_even_after_unconditional_transfers ... ok
+test codegen::tests::malformed::arithmetic_requires_numeric_roots_and_operands_even_in_nested_typed_ast ... ok
+test codegen::tests::value_loops::reachable_conflicting_breaks_report_the_loop_span_in_source_order ... ok
+test codegen::tests::value_loops::void_break_values_are_invalid_and_never_rhs_does_not_transfer_a_value ... ok
+test codegen::validation::tests::checked_bodies_and_layout_are_an_immutable_export_snapshot ... ok
+test codegen::validation::tests::checked_construction_preserves_scope_and_reference_errors ... ok
+test codegen::tests::value_loops::value_break_targets_reject_unknown_inactive_outer_and_cross_function_ids ... ok
+test codegen::tests::value_loops::unreachable_conflicting_breaks_are_checked_without_invalid_wasm_payloads ... ok
+test codegen::validation::tests::first_function_body_errors_precede_later_function_local_errors ... ok
+test codegen::validation::tests::hidden_unreachable_and_short_circuited_errors_are_not_skipped ... ok
+test codegen::validation::tests::local_type_checks_still_precede_duplicate_bindings_and_body_literals ... ok
+test codegen::validation::tests::layout_errors_still_precede_body_validation ... ok
+test codegen::walker::tests::compound_walk_visits_target_then_rhs_and_respects_skip_and_break_hooks ... ok
+test codegen::validation::tests::missing_return_precedes_errors_in_later_functions ... ok
+test codegen::walker::tests::declaration_only_walk_skips_expression_roots_and_all_their_children ... ok
+test codegen::walker::tests::empty_blocks_still_receive_entry_and_exit_hooks ... ok
+test codegen::validation::tests::subsequent_validation_observes_edits_after_the_checked_borrow_ends ... ok
+test codegen::tests::value_loops::value_exits_use_mvp_outer_results_and_empty_backedges_without_result_locals ... ok
+test codegen::walker::tests::loop_bodies_and_break_values_keep_structural_preorder_and_abort_hooks ... ok
+test codegen::validation::tests::validated_view_borrows_the_original_tree_and_owned_host_snapshot ... ok
+test codegen::walker::tests::every_hook_can_abort_without_visiting_later_nodes_or_synthesizing_exits ... ok
+test codegen::walker::tests::loop_transfers_are_structural_leaves_without_pruning_later_children ... ok
+test codegen::walker::tests::range_fields_are_visited_left_to_right_including_optional_step ... ok
+test codegen::walker::tests::preorder_covers_every_statement_and_expression_child_without_runtime_shortcuts ... ok
+test codegen::walker::tests::match_patterns_are_separate_visits_in_scrutinee_pattern_body_order ... ok
+test codegen::walker::tests::value_blocks_keep_scope_hooks_open_through_tails_and_visit_both_arms ... ok
+test codegen::walker::tests::visitors_can_be_reused_after_a_break ... ok
+test codegen::validation::tests::checked_boundary_matches_the_existing_independent_abi_fixture ... ok
+test compiler::tests::default_compiler_disables_optimization ... ok
+test compiler::tests::compiling_existing_typed_program_uses_its_import_snapshot ... ok
+test codegen::validation::tests::empty_program_and_import_only_memory_modules_are_checked_without_user_bodies ... ok
+test compiler::tests::foundation_compiles_empty_void_functions_with_imports ... ok
+test compiler::tests::host_calls_are_typed_and_resolved_without_changing_user_ids ... ok
+test compiler::tests::host_calls_follow_normal_semantic_rules ... ok
+test compiler::tests::hosts_survive_analyzer_reuse_and_typed_output_owns_a_snapshot ... ok
+test compiler::tests::options_and_level_changes_preserve_host_registration ... ok
+test diagnostic::tests::compiler_stages_have_locations_and_source_excerpts ... ok
+test diagnostic::tests::malformed_and_eof_spans_are_clamped_safely ... ok
+test compiler::tests::optimization_levels_preserve_errors ... ok
+test diagnostic::tests::utf8_crlf_tabs_and_multiline_spans_render_without_invalid_slicing ... ok
+test compiler::tests::pipeline_preserves_errors_from_each_stage ... ok
+test diagnostic::tests::unlocated_errors_do_not_invent_line_numbers ... ok
+test flow::tests::abrupt_completion_ignores_unreachable_flow ... ok
+test flow::tests::empty_outcomes_and_fallthrough_removal_compose ... ok
+test flow::tests::conditional_composition_preserves_prior_abrupt_paths ... ok
+test flow::tests::function_completion_requires_return_or_explicit_divergence ... ok
+test flow::tests::infinite_loops_consume_transfers_without_inventing_fallthrough ... ok
+test flow::tests::short_circuit_preserves_skipped_rhs_and_lhs_transfers ... ok
+test flow::tests::while_consumes_transfers_and_conservatively_completes ... ok
+test flow::tests::value_break_constraints_follow_reachable_sequence_and_nested_boundaries ... ok
+test host::tests::invalid_registration_does_not_consume_an_id ... ok
+test host::tests::external_signatures_accept_all_current_values_and_void_results ... ok
+test flow::tests::joins_are_unordered_idempotent_outcome_unions ... ok
+test host::tests::loop_keywords_reserve_only_language_names_not_import_names ... ok
+test host::tests::memory_backed_host_signatures_preserve_language_types ... ok
+test host::tests::void_parameters_are_rejected_at_registration ... ok
+test host::tests::registration_preserves_names_signatures_and_order ... ok
+test lexer::tests::allows_digits_after_identifier_start ... ok
+test lexer::tests::block_comments_close_at_the_first_delimiter_without_nesting ... ok
+test lexer::tests::comment_delimiters_inside_strings_remain_literal_text ... ok
+test lexer::tests::comments_separate_identifier_number_and_operator_fragments ... ok
+test lexer::tests::compound_operator_bytes_cannot_be_joined_across_trivia ... ok
+test lexer::tests::compound_operators_preserve_comment_and_string_boundaries_and_byte_spans ... ok
+test lexer::tests::compound_operators_use_longest_match_and_preserve_arrow_and_single_tokens ... ok
+test lexer::tests::consumes_both_bytes_of_logical_operators ... ok
+test lexer::tests::loop_control_keywords_preserve_boundaries_and_utf8_spans ... ok
+test lexer::tests::loop_keyword_preserves_boundaries_comments_and_byte_spans ... ok
+test codegen::validation::tests::checked_and_legacy_paths_preserve_bytes_for_all_exports_and_levels ... ok
+test lexer::tests::preserves_utf8_byte_spans_after_comments ... ok
+test lexer::tests::preserves_division_and_star_tokens_around_comments ... ok
+test lexer::tests::rejects_malformed_numbers_as_single_tokens ... ok
+test lexer::tests::rejects_single_logical_operator_bytes_without_consuming_the_next_token ... ok
+test lexer::tests::rejects_unterminated_block_comments_with_original_byte_spans ... ok
+test lexer::tests::rejects_unterminated_strings ... ok
+test lexer::tests::skips_adjacent_and_multiline_block_comments ... ok
+test lexer::tests::skips_line_comments_through_lf_cr_crlf_or_eof ... ok
+test lexer::tests::tokenizes_a_function_using_grammar_literals ... ok
+test lexer::tests::tokenizes_colons_and_semicolons ... ok
+test codegen::tests::layout::external_selection_preserves_internal_signatures_snapshots_and_helpers ... ok
+test lexer::tests::tokenizes_integers_and_decimals ... ok
+test lexer::tests::tokenizes_string_contents_without_quotes ... ok
+test lexer::tests::unknown_characters_are_invalid_and_lexing_continues ... ok
+test optimization::tests::levels_borrow_the_input_until_optimization_passes_exist ... ok
+test parser::tests::binary_operators_are_left_associative ... ok
+test parser::tests::bare_loop_statements_end_at_the_brace_and_allow_an_optional_semicolon ... ok
+test parser::tests::discarded_branch_tails_keep_token_spans_and_parenthesized_if_context ... ok
+test parser::tests::discarded_nested_unary_tails_keep_their_shapes_and_token_spans ... ok
+test parser::tests::handles_token_slices_without_eof_and_empty_slices ... ok
+test parser::tests::compound_assignments_reuse_invalid_assignment_target_errors ... ok
+test parser::tests::compound_assignments_report_missing_values_and_semicolons ... ok
+test parser::tests::final_if_is_a_tail_but_nonfinal_if_is_a_statement ... ok
+test codegen::export_tests::memory_selection_preserves_runtime_exports_helpers_data_and_call_indices ... ok
+test parser::tests::incomplete_local_declarations_report_the_offending_token ... ok
+test parser::tests::loop_transfer_keywords_are_not_expressions_or_names ... ok
+test parser::tests::parses_all_compound_assignments_with_both_targets_and_original_spans ... ok
+test parser::tests::parses_bare_loop_transfers_with_original_spans ... ok
+test parser::tests::parses_calls_array_access_and_literals ... ok
+test parser::tests::parses_declarations_and_both_assignment_targets ... ok
+test parser::tests::parentheses_override_precedence_and_unary_binds_tightly ... ok
+test parser::tests::loop_expressions_accept_ordinary_operand_continuation_and_strict_bodies ... ok
+test parser::tests::parses_break_values_with_expressions_and_original_byte_spans ... ok
+test parser::tests::parses_functions_parameters_and_types ... ok
+test parser::tests::parses_mixed_inferred_and_annotated_declarations_with_original_spans ... ok
+test parser::tests::ordinary_value_contexts_keep_unparenthesized_if_arithmetic ... ok
+test parser::tests::parses_nested_control_flow_and_return_forms ... ok
+test compiler::tests::optimization_levels_preserve_wasm_and_the_input_program ... ok
+test parser::tests::rejects_continue_values_labels_and_missing_transfer_semicolons ... ok
+test parser::tests::rejects_invalid_assignment_targets ... ok
+test parser::tests::rejects_tokens_after_eof ... ok
+test parser::tests::rejects_malformed_constructs ... ok
+test parser::tests::reports_missing_closing_brace_at_eof ... ok
+test parser::tests::reports_missing_semicolon_at_the_offending_token ... ok
+test parser::tests::rejects_compound_assignments_in_expressions_and_malformed_places ... ok
+test parser::tests::respects_every_binary_precedence_level ... ok
+test parser::tests::statement_if_discards_tails_and_else_if_retains_statement_shapes ... ok
+test parser::tests::legacy_if_followed_by_unary_statements_preserves_head_wasm_bytes ... ok
+test parser::tests::supports_every_binary_operator ... ok
+test parser::tests::truncated_compound_assignments_never_panic ... ok
+test parser::tests::truncated_programs_never_panic ... ok
+test parser::tests::value_block_adjacency_requires_semicolons_without_newline_heuristics ... ok
+test parser::tests::value_blocks_classify_final_nonfinal_and_parenthesized_loops_without_newlines ... ok
+test parser::tests::truncated_value_blocks_and_if_expressions_never_panic ... ok
+test parser::tests::value_blocks_preserve_tails_statements_and_utf8_byte_spans ... ok
+test semantic::tests::accepts_empty_program_without_an_entrypoint ... ok
+test semantic::tests::accepts_arbitrary_main_signatures_and_all_value_types ... ok
+test parser::tests::bare_if_preserves_following_unary_statements_and_byte_spans ... ok
+test parser::tests::whole_if_binary_continuation_in_statement_positions_requires_parentheses ... ok
+test semantic::tests::accepts_fibonacci_and_sum_using_builtin_len ... ok
+test semantic::tests::accepts_forward_references_recursion_and_mutual_recursion ... ok
+test semantic::tests::analyzer_can_reanalyze_the_same_program_after_success_or_failure ... ok
+test semantic::tests::analyzer_does_not_preserve_functions_or_locals_after_success ... ok
+test semantic::tests::analyzer_cleans_nested_scopes_and_registered_functions_after_failure ... ok
+test semantic::tests::array_equality_accepts_parameters_returns_and_boolean_contexts ... ok
+test semantic::tests::array_equality_errors_are_checked_in_unreachable_and_skipped_expressions ... ok
+test semantic::tests::builtin_len_is_reserved_for_every_signature ... ok
+test semantic::tests::analyzer_recovers_after_registration_parameter_and_return_errors ... ok
+test semantic::tests::arrays_require_number_elements_and_empty_arrays_are_number_arrays ... ok
+test semantic::tests::assignments_require_the_binding_type ... ok
+test semantic::tests::checks_nested_array_and_index_expressions ... ok
+test parser::tests::value_block_bare_if_stops_before_unary_statements_and_tails ... ok
+test semantic::tests::checks_expressions_inside_call_arguments ... ok
+test semantic::tests::calls_enforce_user_function_and_builtin_argument_counts ... ok
+test semantic::tests::child_scopes_can_shadow_and_restore_outer_bindings ... ok
+test semantic::tests::child_bindings_do_not_leak_to_parents_or_siblings ... ok
+test semantic::tests::binary_results_have_the_expected_types ... ok
+test semantic::tests::calls_enforce_every_parameter_type_and_argument_position ... ok
+test semantic::tests::compound_assignment_checks_unreachable_code_and_does_not_guarantee_return ... ok
+test semantic::tests::expression_flow_composition_preserves_nested_transfers_and_unreachable_trees ... ok
+test semantic::tests::compound_assignment_checks_target_base_and_index_before_rhs ... ok
+test semantic::tests::explicit_loop_divergence_satisfies_nonvoid_completion_without_accepting_fallthrough ... ok
+test semantic::tests::expression_flow_reaches_initializers_assignments_indices_and_returns ... ok
+test semantic::tests::compound_assignments_accept_all_arithmetic_operators_and_number_places ... ok
+test semantic::tests::declarations_require_exact_types_without_coercion ... ok
+test semantic::tests::functions_are_not_first_class_variable_values ... ok
+test semantic::tests::eager_never_operands_propagate_transfers_without_hiding_later_errors ... ok
+test semantic::tests::expression_if_requires_else_even_with_divergent_conditions_and_branches ... ok
+test semantic::tests::if_and_while_conditions_must_be_bool ... ok
+test semantic::tests::inference_preserves_initializer_type_and_duplicate_error_order ... ok
+test semantic::tests::inferred_declarations_preserve_same_scope_duplicate_checks ... ok
+test semantic::tests::inferred_initializers_still_require_valid_expression_types ... ok
+test semantic::tests::indexing_requires_an_array_base_and_number_index ... ok
+test semantic::tests::inferred_void_initializers_are_invalid_local_types ... ok
+test semantic::tests::initializer_can_call_a_function_before_shadowing_it ... ok
+test semantic::tests::inferred_bindings_keep_the_initializer_type_on_reassignment ... ok
+test semantic::tests::inferred_locals_obey_scope_and_unreachable_code_checks ... ok
+test semantic::tests::initializer_is_analyzed_before_registering_the_variable ... ok
+test semantic::tests::leaving_a_shadowing_scope_restores_function_calls ... ok
+test semantic::tests::local_and_parameter_bindings_shadow_functions_when_called ... ok
+test semantic::tests::compound_assignments_require_number_targets_and_rhs_without_coercion ... ok
+test semantic::tests::loop_context_is_clean_after_success_failure_and_analyzer_reuse ... ok
+test semantic::tests::loop_body_bindings_shadow_without_leaking_and_still_check_duplicates ... ok
+test semantic::tests::loop_break_values_reject_void_but_never_rhs_does_not_supply_an_exit ... ok
+test semantic::tests::loop_break_kinds_are_checked_even_after_unreachable_transfers ... ok
+test semantic::tests::loop_errors_restore_context_kind_scopes_and_analyzer_reuse ... ok
+test semantic::tests::manually_constructed_index_checks_void_base_and_preserves_statement_span ... ok
+test semantic::tests::manually_constructed_index_expressions_can_read_nonidentifier_arrays ... ok
+test semantic::tests::loop_transfers_do_not_prune_static_checks_or_bindings ... ok
+test semantic::tests::loop_transfers_require_an_enclosing_loop_even_in_unreachable_or_hidden_code ... ok
+test semantic::tests::nested_loop_errors_restore_the_enclosing_loop_and_scope ... ok
+test semantic::tests::loop_transfers_are_not_function_returns_and_whiles_stay_conservative ... ok
+test semantic::tests::nested_loop_kinds_and_results_do_not_constrain_the_outer_loop ... ok
+test semantic::tests::never_initializers_require_annotations_but_unreachable_bindings_remain_checked ... ok
+test semantic::tests::parameters_and_locals_do_not_leak_between_functions ... ok
+test semantic::tests::parameters_and_top_level_body_share_a_scope ... ok
+test semantic::tests::never_loop_inference_requires_annotations_and_keeps_unreachable_checks ... ok
+test semantic::tests::plain_assignment_keeps_its_existing_target_and_rhs_error_order ... ok
+test semantic::tests::nonvoid_functions_require_a_return_on_every_path ... ok
+test semantic::tests::rejects_duplicate_functions_at_the_second_function_span ... ok
+test semantic::tests::rejects_duplicate_parameters ... ok
+test semantic::tests::raw_compound_assignments_reject_every_nonarithmetic_operator ... ok
+test semantic::tests::rejects_duplicate_variables_in_each_kind_of_scope ... ok
+test semantic::tests::rejects_void_parameters_and_variables_with_declaration_spans ... ok
+test semantic::tests::rejects_undefined_variables_and_functions ... ok
+test semantic::tests::semantic_error_implements_the_standard_error_contract ... ok
+test semantic::tests::returns_require_exact_declared_types ... ok
+test semantic::tests::scoped_value_blocks_preserve_initializer_shadowing_and_check_unreachable_nodes ... ok
+test semantic::tests::raw_compound_assignments_reuse_identifier_rooted_place_checks ... ok
+test semantic::tests::rejects_manually_constructed_invalid_assignment_targets ... ok
+test semantic::tests::semantic_flow_composes_only_reachable_outcomes_without_pruning_the_tree ... ok
+test semantic::tests::sibling_scopes_and_functions_can_reuse_names ... ok
+test semantic::tests::sequential_returns_and_complete_branches_establish_guaranteed_return ... ok
+test semantic::tests::short_circuit_never_rhs_keeps_normal_completion_and_all_static_checks ... ok
+test semantic::tests::unary_operators_require_their_exact_operand_types ... ok
+test semantic::tests::unreachable_statements_and_branches_are_still_typechecked ... ok
+test semantic::tests::value_blocks_and_if_expressions_join_exact_results_and_discard_statement_tails ... ok
+test semantic::tests::value_conditions_arm_mismatches_and_void_initializers_keep_type_diagnostics ... ok
+test semantic::tests::unreachable_break_types_do_not_constrain_value_loop_results ... ok
+test semantic::tests::void_calls_are_legal_expression_statements ... ok
+test semantic::tests::binary_operators_accept_only_their_supported_operand_pairs ... ok
+test semantic::tests::void_functions_reject_every_return_value_including_void_calls ... ok
+test semantic::tests::value_loops_infer_all_concrete_results_and_allow_matching_reachable_exits ... ok
+test semantic::tests::value_loop_conflicts_use_first_reachable_type_and_enclosing_loop_span ... ok
+test semantic::typed_tests::assignments_control_flow_void_calls_and_bare_returns_are_lowered ... ok
+test semantic::typed_tests::builtin_len_is_resolved_separately_and_empty_arrays_are_typed ... ok
+test semantic::tests::while_condition_transfers_are_in_scope_and_errors_restore_analyzer_state ... ok
+test semantic::typed_tests::array_equality_preserves_array_operands_and_bool_results_at_every_node ... ok
+test semantic::typed_tests::analyzing_successful_and_failing_programs_does_not_mutate_parser_ast ... ok
+test semantic::typed_tests::compound_assignment_shadowing_restores_ids_and_adds_no_bindings ... ok
+test semantic::typed_tests::expression_results_keep_identity_separate_from_never_compatibility ... ok
+test semantic::tests::void_calls_are_rejected_in_all_typed_value_contexts ... ok
+test semantic::typed_tests::function_ids_follow_source_order_for_forward_self_and_mutual_calls ... ok
+test semantic::typed_tests::function_parameter_and_nested_statement_spans_are_preserved ... ok
+test semantic::typed_tests::compound_assignments_preserve_all_operators_typed_places_calls_and_spans ... ok
+test semantic::typed_tests::inferred_shadow_initializers_resolve_outer_ids_and_restore_bindings ... ok
+test semantic::typed_tests::inferred_declarations_resolve_every_initializer_to_a_concrete_type ... ok
+test semantic::typed_tests::loop_body_shadowing_restores_bindings_after_unreachable_transfers ... ok
+test semantic::typed_tests::loop_scopes_preserve_shadow_initializer_ids_unreachable_nodes_and_byte_spans ... ok
+test semantic::typed_tests::nested_arithmetic_arrays_calls_and_indices_have_types_at_every_node ... ok
+test semantic::typed_tests::mixed_loop_ids_follow_preorder_and_target_the_nearest_kind_including_conditions ... ok
+test semantic::typed_tests::loop_ids_follow_source_preorder_and_transfers_target_the_nearest_loop ... ok
+test semantic::typed_tests::typed_if_results_distinguish_value_void_and_never_without_flow_annotations ... ok
+test semantic::typed_tests::nested_string_comparisons_and_boolean_operators_preserve_operand_types ... ok
+test semantic::typed_tests::shadow_initializers_use_outer_ids_and_leaving_scopes_restores_bindings ... ok
+test semantic::typed_tests::typed_program_owns_names_literals_and_bodies_after_inputs_are_dropped ... ok
+test semantic::typed_tests::reusing_analyzer_after_success_failure_or_empty_program_resets_ids ... ok
+test semantic::typed_tests::typed_value_blocks_preserve_spans_tails_and_shadow_initializer_ids ... ok
+test semantic::typed_tests::value_loop_results_distinguish_concrete_values_and_never_rhs_breaks ... ok
+test semantic::typed_tests::while_condition_blocks_resolve_transfers_to_their_own_loop ... ok
+test semantic::typed_tests::variable_ids_put_parameters_first_never_reuse_scopes_and_reset_per_function ... ok
+
+test result: ok. 434 passed; 0 failed; 34 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+     Running tests\abi.rs (target\debug\deps\abi-f90d455710515dd3.exe)
+
+running 3 tests
+test node_guest_and_explicit_host_marshaling_agree_on_descriptor_bytes ... ignored, requires Node.js
+test static_descriptors_match_independent_little_endian_bytes ... ok
+test memory_abi_preserves_pre_refactor_module_bytes_at_every_level ... ok
+
+test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\array_equality.rs (target\debug\deps\array_equality-dba85ca74ebd87fb.exe)
+
+running 8 tests
+test node_array_content_equality_ieee754_aliases_and_no_mutation_at_all_levels ... ignored, requires Node.js on PATH
+test node_array_equality_evaluates_once_left_to_right_and_observes_current_storage ... ignored, requires Node.js on PATH
+test node_array_equality_traps_on_both_malformed_descriptors_before_shortcuts ... ignored, requires Node.js on PATH
+test scalar_only_equality_keeps_the_exact_module_bytes_without_memory_helpers ... ok
+test array_equality_helper_is_appended_without_moving_imports_users_or_existing_helpers ... ok
+test forged_array_equality_checks_nested_elements_even_when_unreachable_or_skipped ... ok
+test array_equality_validates_and_is_deterministic_without_mutating_typed_input ... ok
+test forged_array_equality_rejects_result_and_mixed_operand_types_with_statement_spans ... ok
+
+test result: ok. 5 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests\array_for_loops.rs (target\debug\deps\array_for_loops-923669bca34f163d.exe)
+
+running 10 tests
+test node_descriptor_entry_traps_even_empty_and_each_element_rechecks_descriptor ... ignored, requires Node.js
+test node_empty_capture_alias_mutation_once_only_effect_and_special_elements ... ignored, requires Node.js
+test node_iterable_transfers_target_outer_loop_and_return_without_yielding ... ignored, requires Node.js
+test node_nested_loops_expression_continue_break_return_and_shadowing ... ignored, requires Node.js
+test array_for_compiles_through_public_pipeline ... ok
+test scratch_is_reserved_before_iterable_children_without_nested_or_sibling_reuse ... ok
+test array_literal_temporary_follows_reserved_for_scratch ... ok
+test decoded_array_for_has_exact_scratch_unsigned_count_checked_load_and_latch ... ok
+test export_selection_does_not_prune_array_bodies_imports_or_shift_helpers ... ok
+test fixtures_validate_deterministically_with_owned_imports_and_optimization_parity ... ok
+
+test result: ok. 6 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests\benchmark_corpus.rs (target\debug\deps\benchmark_corpus-7a4e9de4d6e724bc.exe)
+
+running 3 tests
+test benchmark_workloads_execute_against_independent_expected_results ... ignored, requires Node.js on PATH
+test workload_sizes_increase_source_and_module_sizes ... ok
+test corpus_is_deterministic_valid_and_optimization_invariant ... ok
+
+test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+     Running tests\block_values.rs (target\debug\deps\block_values-27d99bf6f9898164.exe)
+
+running 12 tests
+test node_expression_transfers_and_compounds_preserve_original_places_and_trap_order ... ignored, requires Node.js on PATH
+test node_selected_arms_short_circuit_values_scopes_and_divergence_have_observable_effects ... ignored, requires Node.js on PATH
+test syntax_rejects_adjacency_truncation_and_implicit_function_or_while_tails ... ok
+test source_regions_decode_mvp_results_discards_and_expression_local_slots ... ok
+test public_forged_region_results_and_missing_else_are_rejected_without_mutation ... ok
+test forged_literals_in_skipped_arms_short_circuits_and_unreachable_tails_are_checked ... ok
+test legacy_statement_if_followed_by_unary_minus_keeps_independent_mvp_bytes ... ok
+test analysis_succeeds_but_compilation_checks_overflowing_literals_in_hidden_regions ... ok
+test value_contexts_reject_missing_else_void_mismatched_arms_and_bad_conditions ... ok
+test hidden_and_abrupt_source_children_still_receive_scope_type_and_return_checks ... ok
+test analyzed_value_and_never_joins_keep_concrete_storage_and_region_spans ... ok
+test public_pipeline_is_owned_deterministic_and_independent_of_optimization ... ok
+
+test result: ok. 10 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests\closures_frontend.rs (target\debug\deps\closures_frontend-219ddc8874f28480.exe)
+
+running 37 tests
+test closures_call_named_defaults_and_contracts_but_are_not_pipeline_stages ... ok
+test callables_obey_declaration_order_shadowing_scope_and_positional_signatures ... ok
+test captures_preserve_all_concrete_types_original_identity_and_declaration_order ... ok
+test calls_use_concrete_results_and_never_only_tails_need_an_inferable_return ... ok
+test expression_and_block_results_cover_every_concrete_type_and_void ... ok
+test capture_free_local_callable_can_be_declared_and_invoked ... ok
+test closures_have_independent_loop_and_variable_id_contexts ... ok
+test analysis_and_diagnostics_are_identical_at_all_optimization_levels ... ok
+test immediate_creator_values_are_captured_even_when_skipped_or_nested ... ok
+test captured_locals_retain_concrete_types_and_indexed_places_use_original_array_binding ... ok
+test capturing_callable_dependencies_forward_live_context_without_value_reads ... ok
+test captured_compounds_keep_numeric_types_and_original_binding_provenance ... ok
+test closure_owned_mutable_values_and_read_only_iteration_bindings_keep_existing_rules ... ok
+test closure_returns_do_not_infer_creator_results_and_unreachable_returns_are_checked ... ok
+test dependencies_use_callable_source_discovery_order_not_call_order ... ok
+test named_recursion_in_lambda_bodies_requires_named_annotations_but_not_creator_returns ... ok
+test inferable_results_require_exact_reachable_joins_and_complete_value_paths ... ok
+test capture_shadowing_initializer_visibility_and_assignment_types_remain_lexical ... ok
+test captured_compounds_check_invalid_types_targets_and_skipped_children ... ok
+test iteration_captures_preserve_original_read_only_number_metadata ... ok
+test malformed_and_unsupported_lambda_syntax_stays_in_parser ... ok
+test lambdas_and_callable_bindings_are_not_values ... ok
+test nested_capturing_dependencies_stop_at_their_creator_and_keep_initializer_visibility ... ok
+test nested_captures_forward_original_bindings_without_capturing_creator_owned_locals ... ok
+test nested_dependencies_and_callable_ids_are_source_preorder_not_inference_order ... ok
+test transparent_lambda_parentheses_and_utf8_trivia_preserve_focused_spans ... ok
+test repeated_closure_checks_preserve_initial_error_order_and_initializer_visibility ... ok
+test unsupported_placements_annotations_and_lexical_calls_keep_narrow_origins ... ok
+test unreachable_and_skipped_lambda_syntax_participates_in_named_recursion_discovery ... ok
+test recognized_lambda_return_is_a_placement_error_even_in_void_creator ... ok
+test nested_capture_types_shadowing_and_skipped_places_preserve_original_owners ... ok
+test deeply_nested_context_free_declarations_preserve_results_owners_and_dependencies ... ok
+test iteration_capture_writes_are_rejected_without_weakening_shadowing_or_transfer_boundaries ... ok
+test nested_iteration_convergence_dependency_only_helpers_do_not_recapture_shadowed_values ... ok
+test nested_iteration_convergence_preserves_original_capture_and_dependency_provenance ... ok
+test nested_inference_compound_checks_preserve_captures_and_repeated_analysis ... ok
+test nested_iteration_convergence_rejects_skipped_and_unreachable_read_only_writes ... ok
+
+test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+     Running tests\closures_lowering.rs (target\debug\deps\closures_lowering-7a7d6fe0d5ffc5b9.exe)
+
+running 54 tests
+test capture_metadata_must_be_complete_canonical_initialized_and_original ... ok
+test capture_storage_is_eager_but_environment_allocation_stays_in_the_declaration_branch ... ok
+test captures_reject_out_of_scope_uninitialized_unused_and_synthetic_originals ... ok
+test captured_parameter_uses_shared_cell_and_hidden_environment ... ok
+test ancestor_capture_is_forwarded_without_allocating_another_cell ... ok
+test captured_scalar_compound_keeps_cell_and_old_value_below_mutating_rhs_without_scratch ... ok
+test captured_index_places_save_original_address_and_old_value_before_binding_reassignment ... ok
+test body_discovery_appends_helpers_after_memory_remainder_and_range_helpers ... ok
+test closure_result_checks_returns_tails_fallthrough_and_never_only_bodies ... ok
+test checked_lifecycle_orders_layout_all_user_bodies_and_helpers_in_preorder ... ok
+test captured_compounds_reject_every_nonnumeric_rhs_category_and_check_divergent_indices ... ok
+test all_capture_types_use_uniform_slots_and_preserve_handle_validation_before_promotion ... ok
+test capturing_helpers_validate_and_promote_their_own_parameters_with_hidden_index_shift ... ok
+test captured_compounds_keep_numeric_place_rhs_operator_and_owner_checks ... ok
+test every_helper_is_checked_with_independent_value_and_loop_contexts ... ok
+test helper_normalized_bindings_keep_their_final_call_only_read_permission ... ok
+test helper_body_and_result_errors_precede_exact_capture_and_dependency_completeness ... ok
+test helpers_reject_duplicate_parameters_uninitialized_locals_and_read_only_writes ... ok
+test helper_signatures_have_only_explicit_parameters_and_sparse_ids_are_owner_local ... ok
+test closure_signatures_validate_unused_handle_parameters_before_the_body ... ok
+test iteration_captures_reject_forged_writes_even_after_return_or_in_skipped_operands ... ok
+test lexical_call_checks_arity_result_and_all_arguments_after_divergence ... ok
+test lexical_calls_require_declaration_time_scope_and_canonical_exact_dependencies ... ok
+test lexical_calls_are_rejected_by_contract_and_default_whitelists ... ok
+test lexical_permission_is_not_global_existence_and_calls_keep_their_own_spans ... ok
+test forged_identity_owner_and_capture_metadata_are_rejected_even_when_unused ... ok
+test malformed_dependency_order_and_nested_ownership_have_stable_declaration_origins ... ok
+test missing_dependency_metadata_preserves_body_checks_and_distinct_error_origins ... ok
+test iteration_capture_metadata_is_derived_from_live_original_provenance ... ok
+test every_concrete_body_result_and_void_compiles_without_exporting_helpers ... ok
+test iteration_cells_allocate_inside_the_yield_region_before_the_body ... ok
+test missing_capture_entries_fail_and_context_dependencies_forward_live_environments ... ok
+test nested_calls_preserve_transitive_external_dependencies_and_source_preorder ... ok
+test nested_missing_dependencies_keep_the_parent_declaration_error_origin ... ok
+test noncompleting_initializer_allocates_no_cell_before_unreachable_declaration ... ok
+test public_typed_callable_compiles_to_unexported_direct_helper_without_memory ... ok
+test integrated_source_retains_named_calls_normalized_defaults_contracts_and_owner_local_loops ... ok
+test parent_helper_retains_child_capture_and_dependency_facts_after_scope_exit ... ok
+test captured_compounds_preserve_helper_local_transfers_divergence_and_skipped_checks ... ok
+test sparse_captured_compounds_distinguish_original_owner_from_same_id_helper_parameter ... ok
+test nested_helpers_capture_only_their_immediate_creators_own_bindings ... ok
+test transitive_requirements_reject_missing_extra_noncanonical_and_wrong_context_metadata ... ok
+test unreachable_closure_tails_are_checked_against_the_signature ... ok
+test shared_storage_is_deterministic_across_options_and_keeps_helper_exports_private ... ok
+test nested_helpers_plan_locals_and_scratch_without_polluting_the_creator ... ok
+test nested_iteration_original_provenance_rejects_writes_in_unreachable_leaf_bodies ... ok
+test transitive_contexts_keep_capture_slots_before_live_dependency_pointers ... ok
+test nested_iteration_metadata_checks_original_owners_at_every_forwarding_boundary ... ok
+test forged_capture_places_support_all_compounds_in_creator_and_helper ... ok
+test ancestor_forwarding_preserves_every_concrete_type_through_three_intermediates ... ok
+test recursive_contexts_keep_local_environment_pointers_and_only_allocator_writes_heap ... ok
+test nested_iteration_convergence_preserves_cells_contexts_and_full_module_order ... ok
+test wide_independent_siblings_keep_direct_helpers_and_lexical_dependency_checks ... ok
+test many_captures_with_repeated_accesses_preserve_canonical_slots_and_metadata_checks ... ok
+
+test result: ok. 54 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+     Running tests\closures_runtime.rs (target\debug\deps\closures_runtime-f1784127c0f21a5f.exe)
+
+running 27 tests
+test allocation_timing_preserves_parameter_contract_initializer_and_declaration_effects ... ignored, requires Node.js on PATH
+test arguments_execute_once_left_to_right_and_transfers_stay_in_the_caller ... ignored, requires Node.js on PATH
+test capture_storage_survives_recursive_reentrant_and_post_trap_invocations_and_memory_growth ... ignored, requires Node.js on PATH
+test captured_array_iterations_check_each_yield_before_allocating_its_cell ... ignored, requires Node.js on PATH
+test captured_array_iterations_keep_distinct_cells_shared_by_same_iteration_readers ... ignored, requires Node.js on PATH
+test captured_compound_rhs_transfers_preserve_stack_prefixes_and_skip_stores ... ignored, requires Node.js on PATH
+test captured_compounds_preserve_independent_ieee754_results_for_cells_and_elements ... ignored, requires Node.js on PATH
+test captured_indexed_places_keep_original_handles_addresses_and_old_elements_across_rhs_effects ... ignored, requires Node.js on PATH
+test captured_indexed_places_trap_on_invalid_descriptors_and_bounds_before_rhs_events ... ignored, requires Node.js on PATH
+test captured_iteration_storage_grows_before_body_or_helper_effects_and_survives_traps ... ignored, requires Node.js on PATH
+test captured_iterations_allocate_only_successful_yields_even_when_declarations_are_skipped ... ignored, requires Node.js on PATH
+test captured_iterations_preserve_iterable_effects_rebinding_alias_mutations_and_mutable_shadowing ... ignored, requires Node.js on PATH
+test captured_range_iterations_keep_fresh_monotonic_eight_byte_cells ... ignored, requires Node.js on PATH
+test captured_scalar_compounds_save_old_values_and_write_the_original_shared_cell ... ignored, requires Node.js on PATH
+test declarations_do_not_execute_bodies_and_nested_dependencies_remain_lexical ... ignored, requires Node.js on PATH
+test dependency_only_intermediates_forward_live_sibling_contexts_without_reconstruction ... ignored, requires Node.js on PATH
+test helper_parameter_validation_precedes_body_even_for_unused_malformed_handles ... ignored, requires Node.js on PATH
+test helpers_carry_all_concrete_types_and_discover_body_only_memory_ranges_and_remainder ... ignored, requires Node.js on PATH
+test named_defaults_contracts_traps_and_bounded_creator_recursion_work_inside_helpers ... ignored, requires Node.js on PATH
+test nested_helpers_share_original_cells_across_shadowing_and_owner_local_bindings ... ignored, requires Node.js on PATH
+test nested_iteration_convergence_dependency_only_helpers_keep_original_live_contexts ... ignored, requires Node.js on PATH
+test nested_iteration_convergence_keeps_live_dependencies_and_original_compound_places ... ignored, requires Node.js on PATH
+test recursive_creators_keep_original_cells_and_nested_live_dependencies_per_invocation ... ignored, requires Node.js on PATH
+test reentrant_live_contexts_and_retained_handles_survive_inner_traps_and_growth ... ignored, requires Node.js on PATH
+test shared_cells_preserve_all_types_rebinding_aliases_and_original_shadowed_bindings ... ignored, requires Node.js on PATH
+test unused_range_parameters_validate_records_before_helper_body_and_recover_after_traps ... ignored, requires Node.js on PATH
+test zero_argument_expression_block_returns_and_own_loops_keep_independent_contexts ... ignored, requires Node.js on PATH
+
+test result: ok. 0 passed; 0 failed; 27 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\comments.rs (target\debug\deps\comments-6ed1426c5fdc5ba5.exe)
+
+running 5 tests
+test errors_after_comments_keep_original_utf8_offsets_and_columns ... ok
+test comments_do_not_join_identifier_or_operator_fragments_in_source ... ok
+test comment_only_source_still_requires_a_function ... ok
+test unterminated_block_comments_report_original_spans_through_parse_errors ... ok
+test comments_between_every_token_preserve_emitter_golden_at_all_levels ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\compound_assignment.rs (target\debug\deps\compound_assignment-e09f164e8ca1e69c.exe)
+
+running 4 tests
+test node_compounds_observe_old_elements_aliasing_shadowing_loops_and_all_numeric_operators ... ignored, requires Node.js on PATH
+test compound_rejections_keep_stage_message_and_span_at_every_level ... ok
+test scalar_compounds_match_explicit_arithmetic_bytes_at_every_level ... ok
+test compound_analysis_compilation_and_export_selection_preserve_owned_input_and_indices ... ok
+
+test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\contracts_frontend.rs (target\debug\deps\contracts_frontend-c0470f3d3d68ace5.exe)
+
+running 27 tests
+test defaults_keep_earlier_formal_scope_and_their_original_diagnostics ... ok
+test lexical_parameter_shadowing_of_builtin_len_is_preserved ... ok
+test defaults_and_contracts_share_whitelist_but_not_error_variants ... ok
+test host_calls_are_rejected_without_argument_typing_even_when_skipped ... ok
+test all_formals_are_available_and_contract_ids_match_actual_callee_parameters ... ok
+test contract_metadata_is_owned_and_analyzer_recovers_after_declaration_errors ... ok
+test contract_results_require_exact_bool_without_coercions ... ok
+test invalid_contracts_precede_recursion_and_inference_errors ... ok
+test optimization_options_do_not_change_analysis_contracts_or_diagnostics ... ok
+test malformed_clauses_remain_parser_errors ... ok
+test invalid_and_nonfinite_raw_contract_literals_use_declaration_semantic_errors ... ok
+test numeric_errors_preserve_default_and_ordinary_body_staging ... ok
+test inferred_forward_diamonds_keep_source_order_and_contracts_in_final_output ... ok
+test contract_scope_does_not_include_body_caller_or_other_function_parameters ... ok
+test contracts_parse_with_or_without_result_annotations_and_without_newlines ... ok
+test declarations_stage_per_function_not_as_separate_global_default_and_contract_passes ... ok
+test ordered_clauses_preserve_expression_only_utf8_spans_and_parentheses ... ok
+test requires_is_reserved_but_longer_identifiers_and_string_text_are_not ... ok
+test false_contract_does_not_change_completion_or_excuse_invalid_body ... ok
+test requires_reserves_only_host_language_names_and_failed_registration_is_atomic ... ok
+test parameter_types_and_defaults_precede_same_function_contracts ... ok
+test underflow_and_nonfinite_arithmetic_are_not_constant_folded_or_rejected ... ok
+test permitted_constructs_still_receive_existing_operand_and_arity_checks ... ok
+test unused_unexported_contracts_are_checked_before_any_body ... ok
+test truncated_contract_syntax_never_panics ... ok
+test rejects_every_nonwhitelisted_construct_even_in_skipped_operands ... ok
+test whitelist_accepts_all_existing_scalar_operators_and_handle_equality ... ok
+
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\contracts_lowering.rs (target\debug\deps\contracts_lowering-4e176718fccc2a71.exe)
+
+running 14 tests
+test constant_false_does_not_excuse_body_checks_or_missing_returns ... ok
+test admitted_malformed_children_keep_ordinary_errors_and_contract_origins ... ok
+test empty_contracts_preserve_bytes_and_true_checks_are_not_eliminated ... ok
+test contract_only_remainder_plans_a_helper_without_memory_and_keeps_checks_at_all_levels ... ok
+test divergent_argument_cannot_reach_contract_entry_but_later_defaults_are_checked ... ok
+test range_formal_reads_are_admitted_but_do_not_broaden_operator_rules ... ok
+test static_strings_are_discovered_in_contract_order_before_body_and_after_prior_functions ... ok
+test direct_recursive_and_default_calls_share_the_same_callee_entry_checks ... ok
+test contract_only_equality_and_len_keep_memory_helper_order_and_body_temporaries ... ok
+test contract_only_strings_enable_memory_without_body_or_signature_memory ... ok
+test entry_validates_all_handle_parameters_then_ordered_contracts_then_body ... ok
+test collection_inequality_contracts_complement_content_helpers_without_allocation ... ok
+test every_forbidden_contract_form_is_checked_in_skipped_and_unexported_contracts ... ok
+test inferred_and_explicit_contract_calls_preserve_analyzed_and_source_bytes ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\contracts_runtime.rs (target\debug\deps\contracts_runtime-af2e8b5e4daf8667.exe)
+
+running 8 tests
+test caller_transfers_and_skipped_calls_never_invoke_contracts_or_body ... ignored, requires Node.js on PATH
+test calls_bind_written_arguments_then_defaults_before_contracts_and_body ... ignored, requires Node.js on PATH
+test collection_inequality_checks_contents_special_values_and_suppresses_body ... ignored, requires Node.js on PATH
+test contracts_preserve_ieee_remainder_signed_zero_and_elementwise_equality ... ignored, requires Node.js on PATH
+test declaration_order_and_logical_guards_skip_a_proven_trapping_later_check ... ignored, requires Node.js on PATH
+test guards_shared_contents_and_all_descriptor_parameters_are_checked_at_entry ... ignored, requires Node.js on PATH
+test selected_export_calls_private_contracts_using_the_analyzed_import_snapshot ... ignored, requires Node.js on PATH
+test selected_exports_and_analyzed_host_snapshot_preserve_contracts_at_all_levels ... ok
+
+test result: ok. 1 passed; 0 failed; 7 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\default_lowering.rs (target\debug\deps\default_lowering-e7798d553a734f73.exe)
+
+running 4 tests
+test explicit_initializers_cannot_read_bindings_and_default_origins_survive_child_errors ... ok
+test dependent_defaults_encode_full_arity_and_ordered_invocation_locals ... ok
+test forged_defaults_in_unreachable_and_short_circuited_unexported_bodies_are_checked ... ok
+test forged_default_origins_order_reads_and_whitelist_are_checked ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\default_runtime.rs (target\debug\deps\default_runtime-c8c97b876a468533.exe)
+
+running 3 tests
+test defaults_capture_values_share_handles_and_use_invocation_local_storage_at_all_levels ... ignored, requires Node.js on PATH
+test explicit_effects_precede_default_traps_and_transfers_preserve_caller_context ... ignored, requires Node.js on PATH
+test full_positional_default_declarations_preserve_bytes_import_snapshot_and_selection ... ok
+
+test result: ok. 1 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\diagnostics.rs (target\debug\deps\diagnostics-b65de3953f478171.exe)
+
+running 5 tests
+test every_semantic_variant_and_compile_wrapper_preserve_raw_span_offsets ... ok
+test every_located_codegen_variant_and_compile_wrapper_preserve_raw_span_offsets ... ok
+test every_parse_variant_and_compile_wrapper_preserve_raw_span_offsets ... ok
+test every_unlocated_codegen_variant_remains_unlocated_through_rendering ... ok
+test library_diagnostics_match_pre_refactor_cli_text_exactly ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\emitter.rs (target\debug\deps\emitter-b782ee0a1d7d9964.exe)
+
+running 3 tests
+test node_emitter_preserves_control_flow_temporaries_bool_normalization_and_host_effect_order ... ignored, requires Node.js
+test export_selection_preserves_pre_refactor_non_export_sections_at_all_levels ... ok
+test native_emitter_matches_pre_refactor_binary_at_all_levels_without_mutating_typed_input ... ok
+
+test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests\for_frontend.rs (target\debug\deps\for_frontend-d59ad1d0636a416f.exe)
+
+running 30 tests
+test body_transfers_resolve_the_nearest_active_loop ... ok
+test for_keyword_preserves_boundaries_trivia_strings_and_utf8_spans ... ok
+test analyzer_can_be_reused_after_for_scope_or_transfer_errors ... ok
+test for_is_always_a_statement_even_when_final_in_a_value_block ... ok
+test bodies_and_later_iterable_children_are_checked_despite_divergence_or_skipping ... ok
+test for_accepts_range_values_from_existing_expression_forms ... ok
+test iterable_rejects_types_other_than_range_or_numeric_array ... ok
+test iterable_resolves_outer_names_before_introducing_the_iteration_binding ... ok
+test iterable_return_and_divergence_do_not_invent_normal_completion ... ok
+test for_accepts_array_values_from_existing_expression_forms ... ok
+test iterable_outer_continue_flow_keeps_later_value_breaks_unreachable ... ok
+test iterable_transfers_target_enclosing_loops_not_the_new_for ... ok
+test iterable_transfers_without_an_enclosing_loop_are_rejected ... ok
+test for_iterable_in_a_while_condition_targets_the_active_while ... ok
+test for_reserves_source_and_host_language_names_only ... ok
+test iterable_outer_break_flow_is_not_consumed_by_for ... ok
+test body_let_shadowing_is_distinct_mutable_and_does_not_change_outer_binding ... ok
+test array_iteration_preserves_readonly_scope_and_checks_skipped_children ... ok
+test iteration_scope_ends_at_the_body_and_inner_shadow_scope_restores_readonly ... ok
+test iteration_binding_rejects_writes_even_when_unreachable ... ok
+test malformed_for_and_expression_forms_are_rejected_with_locations ... ok
+test nested_for_iterable_uses_the_enclosing_for_binding_and_transfer_target ... ok
+test parser_keeps_the_exact_for_contract_and_original_span ... ok
+test loop_and_iteration_ids_are_independent_per_function ... ok
+test readonly_errors_in_runtime_skipped_code_keep_compile_error_spans ... ok
+test range_for_exposes_a_numeric_iteration_binding ... ok
+test readonly_target_errors_precede_rhs_errors_and_indexing_remains_typed ... ok
+test range_for_flow_is_conservative_about_empty_iteration ... ok
+test value_breaks_in_for_are_rejected_even_after_transfers_or_divergence ... ok
+test truncated_for_programs_and_token_slices_do_not_panic ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\for_loops.rs (target\debug\deps\for_loops-71d5de696f07d985.exe)
+
+running 10 tests
+test node_body_transfers_advance_through_nested_regions_and_restore_shadow_scopes ... ignored, requires Node.js on PATH
+test node_consumed_records_validate_before_yield_and_fields_are_cached_before_body ... ignored, requires Node.js on PATH
+test node_exact_progressions_match_bounded_bigint_reference_and_membership ... ignored, requires Node.js on PATH
+test node_iterable_and_endpoints_evaluate_once_left_to_right_before_validation ... ignored, requires Node.js on PATH
+test node_iterable_transfers_use_enclosing_targets_and_return_before_body ... ignored, requires Node.js on PATH
+test hidden_unreachable_for_bodies_still_reject_forged_targets_and_value_breaks ... ok
+test decoded_for_uses_integer_induction_empty_regions_and_a_continue_latch ... ok
+test nested_and_sibling_fors_reserve_distinct_scratch_without_new_helpers ... ok
+test owned_import_snapshots_and_export_selection_preserve_bodies_and_indices ... ok
+test public_fixtures_validate_and_are_deterministic_at_every_optimization_level ... ok
+
+test result: ok. 5 passed; 0 failed; 5 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+     Running tests\for_lowering.rs (target\debug\deps\for_lowering-3da7d9ea81464aec.exe)
+
+running 21 tests
+test iteration_binding_and_scratch_have_exact_types_and_order ... ok
+test completing_iterables_require_range_or_array_not_another_storage_type_or_void ... ok
+test divergent_array_iterable_still_checks_hidden_body_and_annotation ... ok
+test normally_completing_iterable_does_not_make_body_return_definite ... ok
+test iteration_binding_is_uninitialized_in_its_iterable_and_after_its_scope ... ok
+test array_annotations_do_not_disguise_numbers_or_forged_never_results ... ok
+test for_bindings_participate_in_function_wide_variable_id_uniqueness ... ok
+test iteration_binding_annotations_are_checked_against_numeric_storage ... ok
+test valid_array_iterables_are_accepted_by_checked_lowering ... ok
+test nested_expression_transfers_decode_latch_and_exit_depths_not_fixed_depths ... ok
+test range_annotations_do_not_disguise_numbers_or_forged_never_results ... ok
+test genuine_never_iterable_preserves_completion_but_still_checks_the_body ... ok
+test iterable_finishes_and_record_is_cached_before_for_regions_and_binding ... ok
+test inner_shadow_is_mutable_and_readonly_restriction_restores_after_its_scope ... ok
+test loop_ids_remain_unique_in_iterable_body_and_unreachable_siblings ... ok
+test sparse_ids_are_valid_and_function_local_without_affecting_wasm_indices ... ok
+test iterable_transfers_use_the_enclosing_loop_never_the_new_for ... ok
+test planning_keeps_preorder_slots_for_nested_unreachable_and_short_circuited_fors ... ok
+test both_transfers_reject_unknown_inactive_outer_and_cross_function_targets ... ok
+test wrong_kind_value_breaks_are_rejected_even_when_unreachable_or_rhs_is_never ... ok
+test ordinary_and_all_compound_writes_reject_exact_readonly_id_and_span_everywhere ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests\inference.rs (target\debug\deps\inference-4c289b05b4404518.exe)
+
+running 4 tests
+test node_inferred_initializers_run_once_in_order_with_aliases_shadowing_and_control_flow ... ignored, requires Node.js on PATH
+test forged_inferred_declaration_types_still_fail_backend_checks_when_unexported_or_unreachable ... ok
+test inferred_locals_keep_f64_numbers_i32_handles_and_independent_slot_layout ... ok
+test inference_preserves_raw_bytes_at_every_level_and_export_surface ... ok
+
+test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests\loop_control.rs (target\debug\deps\loop_control-70fc7de453acc002.exe)
+
+running 6 tests
+test node_transfers_recheck_conditions_exit_nearest_loop_and_skip_effects_and_traps ... ignored, requires Node.js on PATH
+test public_typed_transfer_targets_are_checked_in_unexported_and_skipped_code ... ok
+test outside_loop_errors_keep_transfer_spans_even_when_source_cannot_execute ... ok
+test transfer_syntax_and_while_still_requires_fallback_returns ... ok
+test source_transfers_decode_expected_depths_without_adding_memory_or_helpers ... ok
+test transfers_preserve_optimization_export_and_owned_import_snapshot_contracts ... ok
+
+test result: ok. 5 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\match_frontend.rs (target\debug\deps\match_frontend-d0a3b6dcee8aab27.exe)
+
+running 17 tests
+test forged_raw_patterns_validate_literals_operators_and_domains ... ok
+test never_scrutinees_still_check_domains_coverage_results_and_bodies ... ok
+test final_matches_are_value_tails_and_parentheses_allow_continuation ... ok
+test coverage_and_scrutinee_errors_use_enclosing_location ... ok
+test match_is_excluded_from_default_and_contract_whitelists_even_when_skipped ... ok
+test all_pattern_domains_coverage_and_duplicates_are_accepted ... ok
+test pattern_domain_and_wildcard_errors_use_pattern_location ... ok
+test mismatched_arm_results_use_offending_arm_span ... ok
+test inference_discovers_all_arm_calls_returns_and_lexical_shadowing ... ok
+test match_and_wildcard_are_reserved_only_as_exact_source_names ... ok
+test arms_are_scoped_and_all_arms_are_checked_even_after_coverage_or_transfer ... ok
+test statement_matches_discard_heterogeneous_results_in_every_bare_context ... ok
+test every_arm_contributes_conservative_return_and_loop_transfer_flow ... ok
+test source_pattern_overflow_is_static_but_underflow_and_large_fractions_are_valid ... ok
+test patterns_and_arms_preserve_utf8_byte_spans_and_signed_spellings ... ok
+test malformed_match_syntax_is_rejected_and_truncations_do_not_panic ... ok
+test value_results_join_all_concrete_categories_void_and_never ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\match_lowering.rs (target\debug\deps\match_lowering-33b5a8fe8e044acf.exe)
+
+running 18 tests
+test runtime_selects_first_arm_once_with_nan_signed_zero_fractional_and_string_patterns ... ignored, requires Node.js
+test duplicate_patterns_do_not_prune_loop_break_constraints ... ok
+test arm_blocks_cannot_leak_initialized_bindings_to_other_arms ... ok
+test match_is_rejected_in_forged_contracts_and_normalized_defaults ... ok
+test never_scrutinee_arm_breaks_do_not_constrain_enclosing_value_loop ... ok
+test value_joins_are_structural_even_for_shadowed_arms_and_never_scrutinees ... ok
+test forged_result_annotations_and_arm_literals_remain_independently_checked ... ok
+test boolean_coverage_without_wildcard_has_an_unreachable_residual_not_a_fake_result ... ok
+test arm_transfers_use_dynamic_depths_and_preserve_live_operand_prefixes ... ok
+test every_arm_is_checked_in_statement_value_and_unreachable_matches ... ok
+test numeric_chain_caches_once_and_uses_mvp_result_regions_and_fractional_comparisons ... ok
+test pattern_only_strings_enable_memory_after_never_scrutinee ... ok
+test pattern_validation_retains_pattern_and_whole_match_origins ... ok
+test statement_match_discards_heterogeneous_tails_with_empty_regions ... ok
+test scrutinee_scratch_is_reserved_before_nested_matches_and_array_arm_scratch ... ok
+test never_scrutinees_reserve_no_match_scratch_or_local_set_but_check_all_arms ... ok
+test string_patterns_intern_in_scrutinee_pattern_body_order_and_call_content_equality ... ok
+test all_concrete_results_and_void_never_joins_use_their_exact_region_types ... ok
+
+test result: ok. 17 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\match_runtime.rs (target\debug\deps\match_runtime-2bc5ec58bc765d59.exe)
+
+running 6 tests
+test abrupt_arms_and_scrutinees_cross_for_latches_nested_regions_and_live_prefixes ... ignored, requires Node.js on PATH
+test content_strings_normalized_bools_discard_and_all_value_categories ... ignored, requires Node.js on PATH
+test match_rhs_preserves_checked_places_old_values_aliases_and_scrutinee_traps ... ignored, requires Node.js on PATH
+test named_defaults_inference_contracts_and_traps_preserve_effect_order ... ignored, requires Node.js on PATH
+test ordered_patterns_scrutinee_once_selected_effects_and_ieee_inputs ... ignored, requires Node.js on PATH
+test scalar_match_caches_scrutinee_and_uses_ordered_typed_regions_not_a_jump_table ... ok
+
+test result: ok. 1 passed; 0 failed; 5 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\memory_benchmarks.rs (target\debug\deps\memory_benchmarks-e7c65e9a33bb6c74.exe)
+
+running 5 tests
+test memory_workloads_execute_with_independent_results_and_allocation_checks ... ignored, requires Node.js on PATH
+test record_memory_capacity ... ignored, manual bounded M0 capacity baseline; requires Node.js
+test record_memory_guest_timing ... ignored, manual bounded M0 guest timing baseline; requires Node.js
+test record_memory_markers ... ignored, manual bounded M0 allocation baseline; requires Node.js
+test bounded_memory_workloads_compile_deterministically_at_the_public_seam ... ok
+
+test result: ok. 1 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests\named_arguments.rs (target\debug\deps\named_arguments-fc19dbe740cfe514.exe)
+
+running 9 tests
+test raw_arguments_retain_names_full_utf8_origins_and_nested_values ... ok
+test lexical_shadowing_precedes_named_target_rejection ... ok
+test malformed_named_syntax_remains_rejected ... ok
+test reordered_named_arguments_have_written_bindings_and_formal_order_reads ... ok
+test expression_checks_follow_written_order_with_exact_types_and_origins ... ok
+test named_structure_errors_precede_expression_errors_in_written_order ... ok
+test unreachable_skipped_and_unselected_calls_still_receive_binding_checks ... ok
+test positional_calls_keep_legacy_tree_error_locations_and_bytes ... ok
+test mixed_prefix_forward_recursive_nested_and_all_value_types_compile ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\named_call_lowering.rs (target\debug\deps\named_call_lowering-688a606d446ea69d.exe)
+
+running 11 tests
+test nested_sequence_initializers_cannot_read_enclosing_bindings ... ok
+test final_call_children_are_still_traversed_by_declaration_planning ... ok
+test synthetic_storage_ids_are_unique_across_the_whole_function ... ok
+test synthetic_bindings_cannot_be_read_in_any_initializer_or_escape ... ok
+test never_initializers_preserve_canonical_result_and_check_later_children ... ok
+test written_order_storage_and_formal_order_reads_are_encoded_and_validated ... ok
+test initializers_transfer_to_the_existing_loop_with_live_stack_prefixes ... ok
+test skipped_initializers_plan_declaration_preorder_memory_scratch_and_remainder_separately ... ok
+test synthetic_bindings_cannot_be_assigned_in_initializers ... ok
+test forged_structure_mapping_origins_and_canonical_arguments_are_rejected ... ok
+test normalized_calls_support_mixed_storage_types_and_void_results ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\named_call_runtime.rs (target\debug\deps\named_call_runtime-34263dff6f90d5a4.exe)
+
+running 5 tests
+test named_source_effects_execute_at_all_levels ... ignored, requires Node.js on PATH; named source frontend is integrated separately
+test named_source_transfers_execute_at_all_levels ... ignored, requires Node.js on PATH; named source frontend is integrated separately
+test typed_sequences_execute_bounded_transfers_and_traps_at_all_levels ... ignored, requires Node.js on PATH
+test typed_sequences_execute_effects_at_all_levels ... ignored, requires Node.js on PATH
+test typed_sequences_preserve_import_snapshot_export_choices_and_determinism ... ok
+
+test result: ok. 1 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests\named_defaults.rs (target\debug\deps\named_defaults-a6733bd99a206e41.exe)
+
+running 33 tests
+test declaration_scopes_do_not_leak_between_functions_or_inherit_caller_builtin_shadowing ... ok
+test chained_defaults_use_invocation_bindings_and_formal_order ... ok
+test default_and_explicit_origins_retain_parentheses_comments_and_utf8_byte_offsets ... ok
+test each_parameter_type_is_checked_before_its_own_default_whitelist ... ok
+test defaults_resolve_only_earlier_formals_not_self_later_body_or_caller_names ... ok
+test defaults_reuse_exact_existing_expression_types_at_declaration_origins ... ok
+test earlier_handle_reads_content_equality_and_builtin_len_are_allowed_and_remapped ... ok
+test bound_call_expression_checks_follow_written_order_and_call_site_origins ... ok
+test feature_path_checks_parameter_types_in_declarations_without_defaults ... ok
+test earlier_default_error_precedes_a_later_functions_invalid_parameter_type ... ok
+test earlier_default_error_precedes_a_later_duplicate_function ... ok
+test earlier_default_error_precedes_a_later_parameter_type_in_the_same_function ... ok
+test explicit_arguments_and_following_statements_cannot_lookup_synthetic_formals ... ok
+test bound_call_structure_and_missing_required_errors_precede_explicit_expressions ... ok
+test every_declared_default_is_checked_before_bodies_and_in_source_order ... ok
+test explicit_later_formals_are_available_before_an_omitted_default_and_supersede_templates ... ok
+test explicit_transfers_keep_the_existing_loop_and_never_result_without_skipping_checks ... ok
+test forged_raw_default_literals_use_the_shared_lexical_rules_and_preserve_origins ... ok
+test malformed_default_syntax_remains_a_parse_error ... ok
+test generated_binding_ids_follow_declaration_preorder_across_nested_calls ... ok
+test analysis_trees_and_diagnostics_are_deterministic_across_optimization_levels ... ok
+test forward_recursive_nested_and_void_default_calls_preserve_canonical_targets ... ok
+test no_default_programs_keep_registration_errors_before_earlier_body_errors ... ok
+test nontrailing_defaults_and_invalid_parameter_declarations_are_rejected ... ok
+test omitted_defaults_follow_written_arguments_and_remap_earlier_formals ... ok
+test read_only_declaration_scope_does_not_change_body_parameter_mutability ... ok
+test whitelist_checks_skipped_children_before_the_ordinary_expression_checker ... ok
+test overflowing_default_literals_are_checked_even_when_unused_supplied_or_skipped ... ok
+test underflowing_defaults_retain_literals_and_ordinary_body_overflow_keeps_its_stage ... ok
+test unreachable_skipped_and_unselected_bound_calls_still_check_required_arguments ... ok
+test whitelist_accepts_all_existing_scalar_operators_without_constant_folding ... ok
+test full_positional_calls_keep_the_direct_tree_legacy_diagnostics_and_bytes ... ok
+test whitelist_rejects_allocations_reads_control_flow_writes_and_nonbuiltin_calls ... ok
+
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\pipelines_adapters.rs (target\debug\deps\pipelines_adapters-0bfd59131cc481fa.exe)
+
+running 1 test
+test named_default_pipeline_compilation_retains_owned_host_snapshot_and_determinism ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests\pipelines_frontend.rs (target\debug\deps\pipelines_frontend-24f18a5b99562224.exe)
+
+running 23 tests
+test injected_type_errors_use_prefix_and_written_errors_use_argument_spans ... ok
+test discarded_expression_joins_stay_structural_and_statement_matches_discard_each_arm ... ok
+test malformed_stage_syntax_and_split_operator_bytes_are_rejected ... ok
+test defaults_and_contracts_reject_raw_pipeline_even_in_skipped_operands ... ok
+test pipeline_only_recursion_includes_unreachable_and_skipped_syntax ... ok
+test never_and_unreachable_pipeline_children_remain_statically_checked ... ok
+test positional_stages_normalize_with_distinct_injection_and_written_indices ... ok
+test named_pipeline_binding_errors_keep_written_spans_and_structural_priority ... ok
+test named_and_default_children_are_checked_after_never_and_in_skipped_source ... ok
+test pipeline_precedence_is_below_or_and_stages_are_left_associative ... ok
+test final_void_stages_inherit_only_discarded_control_tails ... ok
+test raw_stages_preserve_parenthesized_input_argument_and_comment_byte_spans ... ok
+test input_then_structural_then_written_then_result_error_order_is_preserved ... ok
+test named_defaults_keep_declaration_resolution_hygiene_and_inference_dependencies ... ok
+test bare_control_classification_stays_unchanged_and_parentheses_allow_pipelines ... ok
+test pipeline_compilation_uses_owned_import_snapshot_after_registry_changes ... ok
+test stage_eligibility_shadowing_and_void_restrictions_are_explicit ... ok
+test void_stage_context_errors_keep_exact_spans_after_never_and_skipped_children ... ok
+test discard_permission_stops_at_values_operands_conditions_and_arguments ... ok
+test named_defaults_preserve_mapping_origins_prefixes_and_declaration_spans ... ok
+test void_stages_keep_declaration_inference_and_written_error_precedence ... ok
+test all_concrete_types_and_supplied_defaults_preserve_full_arity ... ok
+test inferred_forward_nested_chains_and_diamonds_keep_source_order ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\pipelines_lowering.rs (target\debug\deps\pipelines_lowering-fa0573057a801675.exe)
+
+running 25 tests
+test injection_retains_mapping_type_result_and_default_whitelist_checks ... ok
+test duplicate_misplaced_and_wrongly_mapped_injections_are_rejected ... ok
+test injected_transfer_uses_the_caller_context_with_a_live_stack_prefix ... ok
+test final_void_call_is_valid_but_void_cannot_be_injected ... ok
+test nested_injections_use_distinct_slots_and_only_direct_calls ... ok
+test final_void_source_emits_once_only_locals_and_a_direct_call_without_drop ... ok
+test injection_precedes_written_arguments_and_defaults_with_direct_formal_order_call ... ok
+test forged_final_void_reconstructs_never_flow_and_checks_later_bindings ... ok
+test injections_accept_caller_locals_and_each_concrete_storage_type ... ok
+test multiple_pipeline_defaults_store_once_in_formal_order_after_written_arguments ... ok
+test nested_named_default_stages_have_distinct_once_only_storage_and_direct_calls ... ok
+test nested_binding_ids_cannot_collide_or_escape_to_outer_arguments ... ok
+test never_injection_preserves_signature_result_and_checks_unreachable_children ... ok
+test omitted_pipeline_defaults_capture_injection_then_each_dependent_default_once ... ok
+test outer_discard_does_not_authorize_void_pipeline_values_or_nonfinal_stages ... ok
+test forged_final_void_keeps_mapping_ownership_signature_and_default_checks ... ok
+test skipped_and_unexported_injections_still_check_origins_and_default_reads ... ok
+test pipeline_helpers_follow_users_memory_remainder_and_range_order ... ok
+test final_void_discard_regions_are_empty_and_keep_direct_calls ... ok
+test pipeline_default_origins_and_named_formal_mappings_remain_checked ... ok
+test named_mixed_and_default_pipeline_sources_match_checked_normalization ... ok
+test injection_and_explicit_initializers_cannot_read_owned_bindings_even_when_nested ... ok
+test named_pipeline_ownership_checks_include_all_defaults_and_nested_scopes ... ok
+test later_named_stage_defaults_and_children_are_checked_after_never ... ok
+test pipeline_defaults_read_only_earlier_formals_not_earlier_storage_slots ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests\pipelines_runtime.rs (target\debug\deps\pipelines_runtime-e25cd125f8ba0915.exe)
+
+running 14 tests
+test caller_returns_breaks_and_continues_prevent_later_pipeline_effects ... ignored, requires Node.js on PATH
+test final_void_defaults_and_contracts_observe_captured_handles_and_shared_mutation ... ignored, requires Node.js on PATH
+test final_void_discard_contexts_execute_only_selected_nested_tails ... ignored, requires Node.js on PATH
+test final_void_transfers_stop_written_arguments_defaults_contracts_and_body ... ignored, requires Node.js on PATH
+test final_void_traps_preserve_default_parameter_and_ordered_contract_boundaries ... ignored, requires Node.js on PATH
+test named_pipeline_arguments_keep_written_order_and_defaults_use_formal_order ... ignored, requires Node.js on PATH
+test named_pipeline_input_argument_and_default_traps_prevent_later_effects ... ignored, requires Node.js on PATH
+test named_pipeline_parameter_validation_precedes_ordered_contracts_and_body ... ignored, requires Node.js on PATH
+test named_pipeline_transfers_stop_later_written_arguments_defaults_and_stages ... ignored, requires Node.js on PATH
+test pipeline_defaults_capture_scalars_but_observe_shared_handles_after_written_effects ... ignored, requires Node.js on PATH
+test pipeline_input_argument_contract_and_body_traps_stop_later_effects ... ignored, requires Node.js on PATH
+test pipeline_input_arguments_contracts_and_stages_execute_once_in_written_order ... ignored, requires Node.js on PATH
+test pipelines_carry_every_concrete_type_and_keep_range_stages_internal ... ignored, requires Node.js on PATH
+test pipelines_preserve_scalar_captures_array_aliases_and_fresh_literal_storage ... ignored, requires Node.js on PATH
+
+test result: ok. 0 passed; 0 failed; 14 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\process.rs (target\debug\deps\process-2378e6c3fdc3b9e4.exe)
+
+running 9 tests
+test subprocess_fixture ... ok
+test spawn_errors_identify_the_command ... ok
+test absent_input_is_immediate_eof ... ok
+test drains_both_output_pipes_while_writing_stdin ... ok
+test preserves_nonzero_status_and_both_output_streams ... ok
+test early_exit_does_not_block_stdin_writer_or_hide_status ... ok
+test held_open_stdin_is_not_closed_before_child_exits ... ok
+test timeout_reports_both_streams_and_finishes_cleanup ... ok
+test timeout_unblocks_a_writer_when_child_does_not_read_stdin ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.04s
+
+     Running tests\range_frontend.rs (target\debug\deps\range_frontend-f519ab30f29c76b7.exe)
+
+running 24 tests
+test decimals_stop_at_ranges_without_accepting_other_malformed_decimals ... ok
+test malformed_ranges_and_chains_are_parser_errors_with_locations ... ok
+test membership_keyword_reserves_source_names_but_not_host_import_names ... ok
+test membership_of_a_number_in_a_range_analyzes_as_bool ... ok
+test membership_flow_sequences_left_before_right_without_collecting_unreachable_breaks ... ok
+test divergent_range_operands_produce_never_without_hiding_later_checks ... ok
+test membership_tokens_preserve_keyword_trivia_and_utf8_boundaries ... ok
+test divergent_membership_operands_use_never_compatibility ... ok
+test membership_checks_both_children_and_preserves_first_error_order ... ok
+test malformed_membership_reports_the_offending_token ... ok
+test membership_numeric_domains_and_internal_range_calls_are_not_static_errors ... ok
+test membership_uses_comparison_precedence_and_left_associativity ... ok
+test invalid_numeric_domains_are_not_new_static_errors ... ok
+test range_inference_preserves_initializer_scope_and_first_error_order ... ok
+test parses_range_annotations_arithmetic_and_contextual_steps ... ok
+test range_blocks_ifs_and_loops_join_exact_concrete_results ... ok
+test range_equality_and_inequality_have_no_identity_or_sequence_contract ... ok
+test range_locals_copies_assignment_and_internal_calls_have_concrete_types ... ok
+test range_punctuation_preserves_numbers_and_utf8_byte_spans ... ok
+test range_tokens_preserve_trivia_string_and_keyword_boundaries ... ok
+test ranges_bind_below_arithmetic_above_comparison_and_equality ... ok
+test range_operand_types_are_checked_even_after_divergence_or_in_skipped_code ... ok
+test ranges_do_not_enable_other_range_operations ... ok
+test membership_requires_exact_asymmetric_operand_types_even_in_skipped_code ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\range_membership.rs (target\debug\deps\range_membership-c6e1aace0aa829cc.exe)
+
+running 4 tests
+test node_exact_membership_uses_literal_interval_and_congruence_expectations ... ignored, requires Node.js on PATH
+test node_membership_effects_are_once_left_to_right_and_stop_on_abrupt_return ... ignored, requires Node.js on PATH
+test node_membership_validates_corrupted_records_before_invalid_candidates ... ignored, requires Node.js on PATH
+test public_membership_fixtures_validate_at_every_optimization_level ... ok
+
+test result: ok. 1 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests\ranges.rs (target\debug\deps\ranges-de171f7de7833c96.exe)
+
+running 22 tests
+test node_internal_calls_blocks_if_loops_and_copies_share_one_immutable_record ... ignored, requires Node.js on PATH
+test node_internal_parameter_boundaries_reject_corrupted_private_record_fields ... ignored, requires Node.js on PATH
+test node_invalid_discarded_empty_and_constant_ranges_trap_after_all_operand_effects ... ignored, requires Node.js on PATH
+test node_records_pin_bytes_safe_limits_signed_zero_default_steps_and_fresh_construction ... ignored, requires Node.js on PATH
+test malformed_ranges_chains_and_legacy_malformed_decimals_are_parse_errors ... ok
+test forged_range_equality_and_invalid_literals_are_checked_left_to_right ... ok
+test only_selected_range_signatures_are_rejected_but_every_host_snapshot_is_checked ... ok
+test internal_range_signatures_alone_require_memory_and_parameter_validation ... ok
+test decoded_record_stores_and_mvp_regions_use_exact_integers_and_i32_handles ... ok
+test overflowing_literals_in_range_children_retain_codegen_errors_and_statement_spans ... ok
+test range_children_plan_nested_locals_memory_remainder_and_abrupt_flow ... ok
+test membership_lowers_to_exact_integer_congruence_without_floating_remainder ... ok
+test forged_range_result_categories_and_each_wrong_child_are_checked_in_hidden_code ... ok
+test forged_range_children_in_skipped_arms_and_after_abrupt_inputs_are_not_pruned ... ok
+test extension_helpers_follow_legacy_memory_and_remainder_without_reordering ... ok
+test forged_membership_annotations_and_children_are_checked_even_when_skipped ... ok
+test wrong_operands_equality_and_range_misuse_are_static_errors_even_when_hidden ... ok
+test syntax_preserves_numeric_tokens_arithmetic_precedence_and_contextual_by ... ok
+test divergent_membership_reconstructs_flow_and_validates_without_an_artificial_result ... ok
+test membership_discovery_in_hidden_skipped_and_never_children_preserves_helper_order ... ok
+test owned_pipeline_snapshots_export_selection_and_optimization_preserve_all_bodies ... ok
+test constant_invalid_numbers_are_runtime_constructions_not_static_range_errors ... ok
+
+test result: ok. 18 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests\remainder.rs (target\debug\deps\remainder-43929c105a5654b2.exe)
+
+running 15 tests
+test node_remainder_array_elements_index_assignments_calls_and_content_equality_without_alias_shortcuts ... ignored, requires Node.js on PATH
+test node_remainder_evaluates_both_operands_once_left_to_right_and_skips_logical_rhs ... ignored, requires Node.js on PATH
+test node_remainder_exhaustive_special_values_signed_finite_fractions_and_extreme_ratios ... ignored, requires Node.js on PATH
+test node_remainder_precedence_mixed_arithmetic_unary_variables_and_control_flow ... ignored, requires Node.js on PATH
+test node_remainder_seeded_raw_float64_differential_fuzz_and_boundary_stress ... ignored, requires Node.js on PATH
+test no_remainder_preserves_exact_scalar_module_bytes ... ok
+test valid_underflowing_literals_and_unary_negative_zero_remain_valid_remainder_operands ... ok
+test scalar_remainder_appends_one_private_signature_deduplicated_helper_without_memory_or_imports ... ok
+test helper_is_discovered_in_unreachable_and_short_circuited_code ... ok
+test remainder_validates_deterministically_at_all_levels_without_mutating_typed_input ... ok
+test forged_remainder_result_and_each_operand_must_be_number_even_when_unreachable_or_skipped ... ok
+test remainder_follows_users_and_seven_unchanged_memory_helpers_preserving_imports_and_calls ... ok
+test forged_remainder_validates_nested_operand_kinds_and_reports_left_to_right_errors ... ok
+test export_selection_keeps_unexported_remainder_compiled_and_changes_only_exports ... ok
+test remainder_still_validates_lexical_numbers_and_overflow_in_both_operands ... ok
+
+test result: ok. 10 passed; 0 failed; 5 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests\result_inference.rs (target\debug\deps\result_inference-26778ba27c4ed1d6.exe)
+
+running 35 tests
+test duplicate_parameters_precede_inference_graph_errors ... ok
+test dependency_probes_choose_the_smallest_source_index_after_each_completion ... ok
+test lexical_shadowing_excludes_variables_from_user_call_edges ... ok
+test all_concrete_language_results_are_inferred ... ok
+test fully_annotated_programs_keep_body_errors_before_later_duplicate_parameters ... ok
+test backend_reconstructs_return_payload_category_instead_of_trusting_inferred_metadata ... ok
+test graph_diagnostics_use_source_order_across_dependencies_and_recursive_components ... ok
+test declaration_errors_precede_graph_errors_and_graph_errors_precede_probes ... ok
+test annotated_results_break_scheduling_dependencies_but_not_recursive_graph_checks ... ok
+test explicit_recursive_components_and_old_body_error_order_are_preserved ... ok
+test node_inferred_all_type_results_preserve_scalar_descriptor_and_internal_range_abi ... ignored, requires Node.js on PATH
+test node_inferred_nested_returns_loops_aliases_named_calls_and_traps_preserve_effect_order ... ignored, requires Node.js on PATH
+test branch_block_and_for_names_do_not_leak_into_siblings_or_enclosing_scopes ... ok
+test initializers_and_iterables_resolve_before_their_new_bindings ... ok
+test backend_rejects_forged_inferred_signature_and_hidden_return_mismatch_at_every_level ... ok
+test local_never_inference_errors_precede_function_result_selection ... ok
+test mixed_reachable_returns_have_stable_first_type_and_reject_void_value_mixtures ... ok
+test inferred_ranges_remain_private_and_export_selection_does_not_skip_body_checks ... ok
+test omitted_result_infers_number_without_changing_parameter_types ... ok
+test raw_result_annotations_are_optional_but_parameters_and_named_tails_are_not ... ok
+test never_only_value_return_syntax_requires_an_annotation_even_when_unreachable ... ok
+test host_builtin_and_annotated_forward_calls_are_available_during_inference ... ok
+test nonvoid_inference_keeps_conservative_definite_return_rules ... ok
+test probes_precede_final_source_order_checks_without_reordering_function_ids ... ok
+test recursion_requires_annotations_even_with_anchors_skipped_calls_or_unused_functions ... ok
+test short_circuit_rhs_constrains_possible_returns_without_constant_folding ... ok
+test resolved_calls_keep_written_type_check_order_and_checker_span_origins ... ok
+test unrelated_inference_does_not_require_annotations_on_an_explicit_recursive_component ... ok
+test unreachable_returns_do_not_select_a_type_but_final_check_rejects_mismatches ... ok
+test recursive_graph_traverses_every_raw_expression_and_statement_child ... ok
+test value_return_syntax_is_found_in_every_nested_raw_expression_region ... ok
+test unannotated_dependencies_resolve_in_both_source_orders_including_skipped_calls ... ok
+test large_annotated_to_inferred_cycle_reports_the_unannotated_source_member ... ok
+test inferred_results_have_explicit_annotation_bytes_and_abi_at_every_level ... ok
+test reachable_returns_compose_through_nested_expression_and_loop_regions ... ok
+
+test result: ok. 33 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\result_inference_adapters.rs (target\debug\deps\result_inference_adapters-131b6d0bfff1dd52.exe)
+
+running 2 tests
+test node_inferred_defaulted_exports_remain_full_arity_and_calls_apply_defaults ... ignored, requires Node.js on PATH
+test inferred_defaulted_analysis_retains_the_host_snapshot_and_private_range_export_policy ... ok
+
+test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\result_inference_chains.rs (target\debug\deps\result_inference_chains-64212dd85cb49300.exe)
+
+running 10 tests
+test node_descriptor_and_internal_range_chains_execute_bounded_diamond ... ignored, requires Node.js on PATH
+test node_forward_chain_and_diamond_preserve_values_and_effect_order ... ignored, requires Node.js on PATH
+test forward_chain_resolves_concrete_results ... ok
+test checked_backend_rejects_forged_chain_signatures_and_hidden_body_mismatches ... ok
+test recursive_omitted_results_remain_rejected_even_with_concrete_anchors ... ok
+test resolved_chains_still_check_unreachable_returns_against_concrete_results ... ok
+test chain_to_void_infers_void_without_inventing_never_signatures ... ok
+test scheduling_preserves_owned_source_order_call_ids_import_snapshot_and_layout ... ok
+test diamonds_join_never_with_concrete_results_in_either_declaration_order ... ok
+test chains_have_explicit_bytes_and_concrete_descriptor_signatures_at_all_levels ... ok
+
+test result: ok. 8 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\result_inference_combined.rs (target\debug\deps\result_inference_combined-407a7b0e8f805cc7.exe)
+
+running 8 tests
+test combined_diamond_traps_after_all_explicit_effects_or_before_later_arguments_and_defaults ... ignored, requires Node.js on PATH
+test mixed_diamonds_execute_once_in_written_order_with_capture_aliases_and_fresh_invocations ... ignored, requires Node.js on PATH
+test nested_explicit_transfers_keep_caller_and_nearest_loop_contexts_in_the_diamond ... ignored, requires Node.js on PATH
+test skipped_and_unreachable_arguments_are_checked_after_combined_dependency_resolution ... ok
+test trapping_default_diamond_is_concrete_and_matches_explicit_bytes_at_all_levels ... ok
+test nested_transfer_diamond_resolves_caller_results_and_validates_at_every_level ... ok
+test mixed_call_diamond_has_canonical_concrete_calls_and_owned_source_order_layout ... ok
+test descriptor_default_diamond_keeps_full_arity_private_ranges_and_required_memory ... ok
+
+test result: ok. 5 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests\result_inference_combined_checks.rs (target\debug\deps\result_inference_combined_checks-b0ec3d7129b77538.exe)
+
+running 11 tests
+test newly_ready_diamond_branches_report_named_argument_errors_in_source_order ... ok
+test combined_inferred_signatures_do_not_hide_body_or_normalized_result_mismatches ... ok
+test defaults_cannot_read_written_earlier_but_formal_later_inferred_arguments_even_when_skipped ... ok
+test nested_inferred_bindings_cannot_escape_into_unreachable_unexported_statements ... ok
+test nested_diamond_initializers_retain_invocation_ownership_and_default_scope ... ok
+test ordinary_literals_in_combined_programs_remain_checked_at_lowering_with_their_own_origins ... ok
+test unused_or_supplied_defaults_validate_whitelist_and_literals_before_diamond_inference ... ok
+test inferred_diamond_rechecks_normalized_targets_and_final_results_in_nested_calls ... ok
+test nested_inferred_calls_cannot_supply_foreign_or_duplicate_formal_mapping_ids ... ok
+test forward_named_default_diamond_keeps_concrete_signatures_and_source_order_calls ... ok
+test combined_diagnostics_progress_from_declarations_to_graph_to_dependencies_to_final_bodies ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\result_inference_defaults.rs (target\debug\deps\result_inference_defaults-8703cd0afd289321.exe)
+
+running 15 tests
+test inferred_caller_captures_scalars_and_observes_shared_handle_defaults_in_written_order ... ignored, requires Node.js on PATH
+test inferred_callers_preserve_return_break_continue_and_skip_later_effects ... ignored, requires Node.js on PATH
+test inferred_defaulted_callee_executes_dependent_defaults_per_invocation_with_raw_full_arity ... ignored, requires Node.js on PATH
+test pure_defaults_can_trap_after_explicit_effects_without_folding_ieee_arithmetic ... ignored, requires Node.js on PATH
+test default_errors_keep_declaration_origins_and_explicit_errors_keep_argument_origins ... ok
+test forged_default_child_in_inferred_program_keeps_checked_lowering_origin ... ok
+test defaults_validate_before_scc_dependencies_and_probes_even_when_unused_or_supplied ... ok
+test inferred_defaulted_callee_is_available_to_annotated_caller ... ok
+test resolved_call_type_errors_keep_default_normalized_written_argument_origins ... ok
+test inferred_caller_to_annotated_named_default_target_decodes_full_arity_and_locals ... ok
+test defaulted_calls_retain_conservative_lexical_recursion_and_shadowing ... ok
+test defaulted_functions_keep_no_implicit_return_and_never_only_annotation_rules ... ok
+test normalized_explicit_returns_constrain_only_reachable_caller_flow ... ok
+test resolved_dependencies_include_defaulted_calls_and_skipped_explicit_arguments ... ok
+test inferred_defaulted_signatures_match_explicit_bytes_for_every_concrete_type ... ok
+
+test result: ok. 11 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests\runtime.rs (target\debug\deps\runtime-21a7054632071594.exe)
+
+running 16 tests
+test node_abi_descriptor_alignment_ranges_utf8_and_copy_limits ... ignored, requires Node.js
+test node_abi_host_boolean_conversions_without_memory ... ignored, requires Node.js
+test node_abi_host_copies_and_memory_growth_refresh ... ignored, requires Node.js
+test node_abi_host_golden_descriptors_and_payloads ... ignored, requires Node.js
+test node_alias_imports_use_raw_callbacks ... ignored, requires Node.js
+test node_example_provider_uses_explicit_descriptor_abi ... ignored, requires Node.js
+test node_explicit_memory_roundtrips_and_raw_descriptor_imports ... ignored, requires Node.js
+test node_library_and_cli_invocation_arguments ... ignored, requires Node.js
+test node_malformed_binary_and_ignored_custom_sections ... ignored, requires Node.js
+test node_raw_arguments_counts_and_bounds_traps ... ignored, requires Node.js
+test node_raw_export_selection ... ignored, requires Node.js
+test node_raw_i64_arguments_and_results ... ignored, requires Node.js
+test node_raw_imports_and_missing_providers ... ignored, requires Node.js
+test node_runner_file_errors_and_option_validation ... ignored, requires Node.js
+test node_start_callbacks_and_raw_memory_imports_and_exports ... ignored, requires Node.js
+test runtime_fixtures_have_no_interface_metadata ... ok
+
+test result: ok. 1 passed; 0 failed; 15 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\value_loops.rs (target\debug\deps\value_loops-834fe4bafee1c6a4.exe)
+
+running 10 tests
+test node_value_loops_preserve_results_aliases_effects_and_abrupt_stack_prefixes ... ignored, requires Node.js on PATH
+test source_contexts_preserve_raw_breaks_statement_loops_and_value_block_tails ... ok
+test break_kind_void_and_reachable_conflicts_keep_public_stage_and_byte_spans ... ok
+test forged_loop_target_kind_and_result_are_checked_in_hidden_and_unreachable_bodies ... ok
+test nested_loop_result_types_and_targets_are_independent ... ok
+test legacy_empty_void_signature_and_statement_if_bytes_remain_unchanged ... ok
+test unreachable_valid_break_mismatches_do_not_join_but_their_children_are_checked ... ok
+test all_four_source_results_decode_mvp_value_exits_and_empty_backedges ... ok
+test no_exit_is_never_with_concrete_annotated_storage_and_explicit_divergence_completion ... ok
+test public_pipeline_preserves_owned_snapshots_exports_and_o0_through_o3_bytes ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests\workspace_contract.rs (target\debug\deps\workspace_contract-bb1cbb72e70a594f.exe)
+
+running 3 tests
+test shared_compatibility_assets_resolve_outside_package_directory ... ok
+test core_production_dependency_graph_is_adapter_free ... ok
+test standalone_downstream_consumer_builds_and_uses_public_api ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+     Running tests\wp5_interactions.rs (target\debug\deps\wp5_interactions-3791b0f1df300545.exe)
+
+running 3 tests
+test combined_features_execute_effects_aliases_transfers_and_traps_at_all_levels ... ignored, requires Node.js
+test combined_unreachable_skipped_unexported_children_are_still_checked ... ok
+test combined_features_preserve_snapshot_layout_helpers_and_export_independence ... ok
+
+test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running unittests src\main.rs (target\debug\deps\was_compiler-8b65c10f36655a38.exe)
+
+running 13 tests
+test cli::tests::host_declarations_reuse_registration_validation ... ok
+test cli::tests::clap_configuration_is_valid ... ok
+test cli::tests::clap_help_uses_a_successful_exit_status ... ok
+test cli::contract_tests::host_mapping_preserves_registration_order_and_separates_syntax_from_validation ... ok
+test cli::contract_tests::host_export_and_level_flags_do_not_change_explicit_format_or_stdout_policy ... ok
+test cli::contract_tests::only_an_exact_dash_output_path_means_stdout ... ok
+test cli::tests::clap_parses_attached_values_and_optimization_levels ... ok
+test cli::contract_tests::export_mapping_preserves_owned_selection_order_and_defers_layout_validation ... ok
+test cli::tests::default_and_file_formats_keep_wat_stdout_safe ... ok
+test cli::tests::source_file_is_required_even_with_output_options ... ok
+test cli::tests::invalid_and_conflicting_options_are_rejected ... ok
+test cli::contract_tests::optimization_syntax_maps_to_copyable_compiler_options_without_changing_artifact_policy ... ok
+test cli::contract_tests::format_and_destination_matrix_preserves_exact_lowercase_extension_inference ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\abi.rs (target\debug\deps\abi-4dc1b3dd1d2467cb.exe)
+
+running 1 test
+test cli_and_library_match_the_pre_refactor_memory_fixture ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests\cli.rs (target\debug\deps\cli-6f65d3a9b3d1754e.exe)
+
+running 51 tests
+test attached_option_values_and_separated_levels_preserve_artifacts ... ok
+test export_selection_still_compiles_invalid_unexported_bodies ... ok
+test comments_preserve_raw_cli_and_library_wasm ... ok
+test file_diagnostics_and_unicode_crlf_tabs_have_correct_locations ... ok
+test invalid_loop_transfers_report_locations_without_replacing_output ... ok
+test binary_cli_output_is_exactly_raw_library_codegen ... ok
+test loop_is_reserved_only_as_a_host_language_name ... ok
+test located_diagnostics_show_absolute_file_paths_phases_and_source_carets ... ok
+test named_defaults_node_cli_forward_wrapper_and_raw_full_arity_at_every_level ... ignored, requires Node.js
+test node_cli_compiles_and_runs_the_array_example_to_65 ... ignored, requires Node.js
+test node_cli_entry_and_json_arguments_use_raw_numeric_scalars_and_handles ... ignored, requires Node.js
+test node_cli_raw_numeric_hosts_accept_unwrapped_callbacks ... ignored, requires Node.js
+test node_embedding_array_boundaries_trap_for_raw_handles ... ignored, requires Node.js
+test node_embedding_string_and_array_hosts_receive_and_return_raw_handles ... ignored, requires Node.js
+test node_runner_reports_compilation_errors_for_plain_wat ... ignored, requires Node.js
+test inferred_cli_reassignment_and_void_errors_preserve_diagnostics_and_outputs ... ok
+test file_sources_emit_plain_wat_to_stdout ... ok
+test inferred_cli_binary_matches_annotated_library_at_every_level ... ok
+test dash_source_is_a_literal_file_and_ignores_stdin ... ok
+test end_of_options_accepts_dash_prefixed_source_paths ... ok
+test help_flags_print_usage_without_compiling_or_writing ... ok
+test output_io_failure_does_not_create_parents_or_leave_sibling_temporaries ... ok
+test export_selection_preserves_source_order_bodies_and_memory_abi ... ok
+test missing_source_is_a_usage_error_without_artifacts ... ok
+test compound_cli_output_matches_library_bytes_and_wat_at_every_level ... ok
+test every_optimization_preset_is_currently_a_noop ... ok
+test output_canonicalizing_to_input_is_refused_without_source_damage ... ok
+test loop_transfers_match_library_binary_and_wat_at_every_level ... ok
+test repeatable_host_declarations_preserve_raw_imports_in_registration_order ... ok
+test scalar_no_exports_retains_every_function_without_adding_memory ... ok
+test source_io_errors_are_exit_one_and_label_the_input ... ok
+test output_formats_follow_extension_unless_explicitly_overridden ... ok
+test failed_compilation_never_replaces_or_creates_outputs ... ok
+test unterminated_block_comment_reports_original_location_and_preserves_output ... ok
+test stdin_is_not_consumed_implicitly_or_for_a_literal_dash_source ... ok
+test successful_compilation_overwrites_a_valid_artifact_without_leaking_files ... ok
+test malformed_or_invalid_host_declarations_exit_one_without_outputs ... ok
+test memory_abi_name_conflicts_are_codegen_errors_only_when_selected ... ok
+test scalar_memory_and_allocator_names_are_valid_raw_exports ... ok
+test unknown_and_duplicate_exports_are_unlocated_codegen_errors ... ok
+test private_range_signatures_require_explicit_cli_exports_and_preserve_library_bytes ... ok
+test statement_and_value_loops_match_library_binary_and_wat_at_every_level ... ok
+test invalid_arguments_exit_two_without_artifacts ... ok
+test value_blocks_cli_binary_and_wat_match_library_at_every_level ... ok
+test named_defaults_cli_bytes_exports_and_full_arity_match_library_at_every_level ... ok
+test range_host_signatures_report_private_abi_and_preserve_outputs_at_every_level ... ok
+test output_flags_without_source_leave_existing_and_missing_artifacts_unchanged ... ok
+test named_defaults_cli_diagnostic_origins_preserve_destinations_at_every_level ... ok
+test range_exports_report_cli_remedies_and_preserve_outputs_at_every_level ... ok
+test value_blocks_cli_diagnostics_preserve_locations_and_destinations_at_every_level ... ok
+test value_loops_cli_errors_preserve_spans_and_destinations_at_every_level ... ok
+
+test result: ok. 44 passed; 0 failed; 7 ignored; 0 measured; 0 filtered out; finished in 3.78s
+
+     Running tests\closures_adapters.rs (target\debug\deps\closures_adapters-6eaf11e732e692df.exe)
+
+running 6 tests
+test cli_capture_lifetime_survives_recursion_reentry_trap_and_memory_growth ... ignored, requires Node.js on PATH
+test cli_captured_compounds_preserve_rhs_effects_and_match_core_execution ... ignored, requires Node.js on PATH
+test cli_nested_iteration_contexts_keep_original_indexed_places ... ignored, requires Node.js on PATH
+test cli_closure_eof_diagnostic_preserves_exact_byte_span_and_destination ... ok
+test cli_semantic_errors_keep_focused_utf8_crlf_spans_and_existing_outputs ... ok
+test cli_closure_wasm_and_wat_match_library_at_all_levels_and_export_selections ... ok
+
+test result: ok. 3 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 2.11s
+
+     Running tests\contracts_adapters.rs (target\debug\deps\contracts_adapters-0e0743c8fdf07f31.exe)
+
+running 3 tests
+test requires_is_reserved_only_for_host_language_names_in_cli_and_native ... ok
+test cli_contract_bytes_and_wat_match_native_at_every_level_and_export_selection ... ok
+test cli_contract_diagnostics_keep_utf8_crlf_origins_destinations_and_recover ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.73s
+
+     Running tests\diagnostics.rs (target\debug\deps\diagnostics-14eccc3e88597933.exe)
+
+running 1 test
+test cli_diagnostics_match_pre_refactor_text_and_exit_status_exactly ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests\match_adapters.rs (target\debug\deps\match_adapters-f95ca3d304b226e0.exe)
+
+running 3 tests
+test cli_match_wasm_and_wat_equal_library_at_all_levels ... ok
+test cli_match_diagnostics_preserve_pattern_arm_utf8_origins_and_existing_output ... ok
+test match_and_wildcard_are_reserved_only_as_source_names_in_native_and_cli ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.43s
+
+     Running tests\pipelines_adapters.rs (target\debug\deps\pipelines_adapters-09af83ecb5e54340.exe)
+
+running 4 tests
+test cli_discarded_void_pipelines_execute_defaults_contracts_and_full_arity_wrappers ... ignored, requires Node.js for bounded CLI-produced pipeline execution
+test ordinary_calls_keep_named_defaults_hosts_builtins_zero_arity_and_void_support ... ok
+test cli_pipeline_wasm_and_wat_equal_native_at_every_level_and_export_selection ... ok
+test cli_pipeline_errors_preserve_utf8_stage_argument_prefix_spans_and_output ... ok
+
+test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 2.31s
+
+     Running tests\result_inference_adapters.rs (target\debug\deps\result_inference_adapters-c85e06ec842584d4.exe)
+
+running 2 tests
+test cli_inferred_defaults_match_explicit_library_bytes_and_full_arity_at_every_level ... ok
+test cli_combined_diagnostics_keep_original_unicode_crlf_tab_origins_and_output_files ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.99s
+
+     Running tests\result_inference_release.rs (target\debug\deps\result_inference_release-37f9a4a444ab31fd.exe)
+
+running 7 tests
+test node_executes_cli_inferred_default_chains_with_raw_descriptor_and_boolean_host_abi ... ignored, requires Node.js on PATH
+test cli_descriptor_chains_keep_source_order_full_arity_snapshot_and_private_exports ... ok
+test cli_and_core_reject_hidden_recursive_components_before_body_errors ... ok
+test cli_and_core_keep_lexical_shadowing_out_of_the_recursion_graph ... ok
+test cli_compile_and_direct_codegen_keep_hidden_literal_errors_at_lowering ... ok
+test cli_and_core_progress_through_default_graph_dependency_and_final_check_errors ... ok
+test cli_and_core_keep_incompatible_incomplete_and_never_only_result_origins ... ok
+
+test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 1.36s
+
+   Doc-tests was_compiler
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+COMMAND: cargo clippy --offline --all-targets -- -D warnings
+EXIT: 0
+    Checking was-compiler v0.1.0 (C:\Users\luanr\Documents\Jobs\rust\was-compiler\crates\compiler)
+    Checking was-compiler-cli v0.1.0 (C:\Users\luanr\Documents\Jobs\rust\was-compiler\crates\cli)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.39s
+
+COMMAND: git --no-pager diff --check
+EXIT: 0
+

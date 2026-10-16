@@ -94,7 +94,10 @@ fn all_concrete_language_results_are_inferred() {
         ("fn n() { return 42; }", Type::Number),
         ("fn b() { return true; }", Type::Bool),
         ("fn s() { return \"é\"; }", Type::String),
-        ("fn a() { return []; }", Type::NumberArray),
+        (
+            "fn a() { return []; }",
+            Type::Array(was_compiler::ArrayElementType::Number),
+        ),
         ("fn r() { return 1..=9 by 2; }", Type::Range),
         ("fn v() {}", Type::Void),
         ("fn v() { return; }", Type::Void),
@@ -150,7 +153,7 @@ fn mixed_reachable_returns_have_stable_first_type_and_reject_void_value_mixtures
         (
             "if flag { return \"x\"; } return [];",
             Type::String,
-            Type::NumberArray,
+            Type::Array(was_compiler::ArrayElementType::Number),
         ),
         (
             "if flag { return 0..2; } return 1;",
@@ -762,7 +765,7 @@ fn inferred_results_have_explicit_annotation_bytes_and_abi_at_every_level() {
             Type::Number,
             Type::Bool,
             Type::String,
-            Type::NumberArray,
+            Type::Array(was_compiler::ArrayElementType::Number),
             Type::Void,
             Type::Range,
             Type::Number,

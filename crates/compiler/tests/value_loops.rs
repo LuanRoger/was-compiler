@@ -185,7 +185,12 @@ fn all_four_source_results_decode_mvp_value_exits_and_empty_backedges() {
         ("number", Type::Number, "1", ValType::F64),
         ("bool", Type::Bool, "true", ValType::I32),
         ("string", Type::String, "\"λ\"", ValType::I32),
-        ("number[]", Type::NumberArray, "[1]", ValType::I32),
+        (
+            "number[]",
+            Type::Array(was_compiler::ArrayElementType::Number),
+            "[1]",
+            ValType::I32,
+        ),
     ] {
         let source = format!(
             "fn main(flag: bool) -> {name} {{ let value = loop {{ if flag {{ break {literal}; }} break {literal}; }}; return value; }}"
@@ -307,7 +312,7 @@ fn break_kind_void_and_reachable_conflicts_keep_public_stage_and_byte_spans() {
         &source,
         SemanticError::TypeMismatch {
             expected: Type::String,
-            found: Type::NumberArray,
+            found: Type::Array(was_compiler::ArrayElementType::Number),
             span: span(&source, statement),
         },
     );
@@ -319,7 +324,12 @@ fn unreachable_valid_break_mismatches_do_not_join_but_their_children_are_checked
         ("number", Type::Number, "1", "true"),
         ("bool", Type::Bool, "true", "\"unused\""),
         ("string", Type::String, "\"s\"", "[2]"),
-        ("number[]", Type::NumberArray, "[]", "false"),
+        (
+            "number[]",
+            Type::Array(was_compiler::ArrayElementType::Number),
+            "[]",
+            "false",
+        ),
     ] {
         let source = format!(
             "fn main() -> {name} {{ let x = loop {{ break {first}; break {second}; }}; return x; }}"
@@ -373,11 +383,11 @@ fn nested_loop_result_types_and_targets_are_independent() {
     };
     assert_eq!(*ty, ExprResult::Value(Type::Number));
     let mut ids = vec![*id];
-    for (statement, expected) in
-        body[1..4]
-            .iter()
-            .zip([Type::Bool, Type::String, Type::NumberArray])
-    {
+    for (statement, expected) in body[1..4].iter().zip([
+        Type::Bool,
+        Type::String,
+        Type::Array(was_compiler::ArrayElementType::Number),
+    ]) {
         let TypedStatementKind::Let { value, ty, .. } = &statement.kind else {
             panic!("expected nested local");
         };
@@ -411,7 +421,10 @@ fn no_exit_is_never_with_concrete_annotated_storage_and_explicit_divergence_comp
         ("number", Type::Number),
         ("bool", Type::Bool),
         ("string", Type::String),
-        ("number[]", Type::NumberArray),
+        (
+            "number[]",
+            Type::Array(was_compiler::ArrayElementType::Number),
+        ),
     ] {
         let source = format!(
             "fn main() -> number {{ let x: {name} = loop {{ continue; break true; break 1; }}; x; }}"

@@ -12,6 +12,7 @@ use wasm_encoder::{
 };
 
 mod abi;
+mod array;
 mod call;
 mod control_flow;
 mod expression;
@@ -368,9 +369,13 @@ fn assemble(validated: &validation::ValidatedProgram<'_>) -> Vec<u8> {
     let mut data = DataSection::new();
 
     if let Some(memory) = &layout.memory {
-        for (helper, plan) in memory::Helper::ALL.into_iter().zip(&memory.helpers) {
+        for (helper, plan) in memory.plan.helpers().into_iter().zip(&memory.helpers) {
             functions.function(plan.type_index.raw());
-            code.function(&memory::emit(helper, memory.first_function.raw()));
+            code.function(&memory::emit_planned(
+                helper,
+                memory.first_function.raw(),
+                &memory.plan,
+            ));
         }
 
         memories.memory(MemoryType {

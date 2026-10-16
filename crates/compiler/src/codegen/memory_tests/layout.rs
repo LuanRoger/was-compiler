@@ -59,7 +59,12 @@ fn scalar_only_modules_allow_user_exports_named_memory_and_allocator() {
 fn memory_abi_import_offsets_seven_unique_helpers_and_bytes_are_stable_at_all_levels() {
     let hosts = [
         host(0, "echo_string", &[Type::String], Type::String),
-        host(1, "echo_array", &[Type::NumberArray], Type::NumberArray),
+        host(
+            1,
+            "echo_array",
+            &[Type::Array(crate::ast::ArrayElementType::Number)],
+            Type::Array(crate::ast::ArrayElementType::Number),
+        ),
         host(2, "scalar", &[Type::Number], Type::Number),
     ];
     let source = r#"
@@ -168,7 +173,10 @@ fn memory_is_needed_by_signatures_locals_and_unreachable_literals() {
                 .any(|(name, kind, _)| name == "memory" && *kind == ExternalKind::Memory)
         );
     }
-    for ty in [Type::String, Type::NumberArray] {
+    for ty in [
+        Type::String,
+        Type::Array(crate::ast::ArrayElementType::Number),
+    ] {
         let module = decode(
             &compile(&TypedProgram {
                 functions: vec![],

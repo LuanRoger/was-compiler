@@ -423,7 +423,7 @@ fn readonly_target_errors_precede_rhs_errors_and_indexing_remains_typed() {
     assert!(matches!(
         semantic_error("fn main() -> void { for i in 0..1 { i[0] = 1; } }"),
         SemanticError::TypeMismatch {
-            expected: Type::NumberArray,
+            expected: Type::Array(was_compiler::ArrayElementType::Number),
             found: Type::Number,
             ..
         }

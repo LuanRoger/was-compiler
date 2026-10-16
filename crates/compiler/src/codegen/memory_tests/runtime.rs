@@ -103,7 +103,12 @@ fn node_arrays_sum_len_mutation_alias_reassignment_and_fresh_literals() {
     "#;
     run_at_all_levels(
         source,
-        &[host(0, "seen", &[Type::NumberArray], Type::Void)],
+        &[host(
+            0,
+            "seen",
+            &[Type::Array(crate::ast::ArrayElementType::Number)],
+            Type::Void,
+        )],
         r#"
         const handles = [], values = [];
         e = new WebAssembly.Instance(module_, {env: {seen(h) {
@@ -200,7 +205,12 @@ fn node_all_invalid_indices_trap_and_negative_zero_is_valid_for_reads_and_writes
 fn node_host_memory_roundtrips_reentrant_allocator_growth_and_reference_mutation() {
     let hosts = [
         host(0, "text_host", &[Type::String], Type::String),
-        host(1, "array_host", &[Type::NumberArray], Type::NumberArray),
+        host(
+            1,
+            "array_host",
+            &[Type::Array(crate::ast::ArrayElementType::Number)],
+            Type::Array(crate::ast::ArrayElementType::Number),
+        ),
     ];
     run_at_all_levels(
         r#"
@@ -343,9 +353,19 @@ fn node_guest_large_array_growth_and_bounded_allocator_exhaustion() {
 fn node_invalid_exported_and_host_descriptors_trap_before_effects() {
     let hosts = [
         host(0, "provide_string", &[], Type::String),
-        host(1, "provide_array", &[], Type::NumberArray),
+        host(
+            1,
+            "provide_array",
+            &[],
+            Type::Array(crate::ast::ArrayElementType::Number),
+        ),
         host(2, "consume_string", &[Type::String], Type::Void),
-        host(3, "consume_array", &[Type::NumberArray], Type::Void),
+        host(
+            3,
+            "consume_array",
+            &[Type::Array(crate::ast::ArrayElementType::Number)],
+            Type::Void,
+        ),
         host(4, "effect", &[], Type::Number),
     ];
     run_at_all_levels(
@@ -410,7 +430,12 @@ fn node_invalid_exported_and_host_descriptors_trap_before_effects() {
 fn node_memory_expression_order_live_prefixes_and_assignment_bounds_before_rhs() {
     let hosts = [
         host(0, "mark", &[Type::Number], Type::Number),
-        host(1, "base", &[], Type::NumberArray),
+        host(
+            1,
+            "base",
+            &[],
+            Type::Array(crate::ast::ArrayElementType::Number),
+        ),
         host(2, "position", &[], Type::Number),
         host(3, "rhs", &[], Type::Number),
     ];

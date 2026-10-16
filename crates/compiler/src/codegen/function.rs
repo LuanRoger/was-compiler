@@ -126,7 +126,9 @@ impl<'a> Context<'a> {
             .as_ref()
             .expect("memory usage planned before emission");
 
-        memory.first_function.offset(helper.index())
+        memory
+            .first_function
+            .offset(memory.plan.helper_index(helper))
     }
 
     fn remainder(&self) -> FunctionIndex {
@@ -744,7 +746,7 @@ fn validate_parameters(
 
         let helper = match param.ty {
             Type::String => Some(Helper::ValidateString),
-            Type::NumberArray => Some(Helper::ValidateArray),
+            Type::Array(element) => Some(super::array::validator(element)),
             _ => None,
         };
 
@@ -792,7 +794,16 @@ mod tests {
             let mut emitter = BodyEmitter::new(function, &layout).unwrap();
             let result = emitter.scoped(|emitter| {
                 emitter.initialize(inside);
-                assert_eq!(emitter.resolve(inside, Type::NumberArray, span)?.raw(), 1);
+                assert_eq!(
+                    emitter
+                        .resolve(
+                            inside,
+                            Type::Array(crate::ast::ArrayElementType::Number),
+                            span
+                        )?
+                        .raw(),
+                    1
+                );
                 assert_eq!(emitter.temporary(ValType::I32).raw(), 3);
 
                 if fail {
@@ -818,7 +829,11 @@ mod tests {
             }
 
             assert_eq!(
-                emitter.resolve(inside, Type::NumberArray, span),
+                emitter.resolve(
+                    inside,
+                    Type::Array(crate::ast::ArrayElementType::Number),
+                    span
+                ),
                 Err(CodegenError::UninitializedVariable {
                     function: "test".into(),
                     id: inside,
@@ -835,7 +850,11 @@ mod tests {
             emitter.initialize(after);
             assert_eq!(
                 emitter
-                    .resolve(after, Type::NumberArray, span)
+                    .resolve(
+                        after,
+                        Type::Array(crate::ast::ArrayElementType::Number),
+                        span
+                    )
                     .unwrap()
                     .raw(),
                 2
@@ -1114,7 +1133,11 @@ mod tests {
                 assert!(emitter.next_label >= next_label + 2);
                 assert!(emitter.seen_loops.contains(&LoopId(77)));
                 assert!(matches!(
-                    emitter.resolve(inside, Type::NumberArray, span),
+                    emitter.resolve(
+                        inside,
+                        Type::Array(crate::ast::ArrayElementType::Number),
+                        span
+                    ),
                     Err(CodegenError::UninitializedVariable { .. })
                 ));
                 assert_eq!(emitter.label_depth(exit).unwrap().raw(), 1);
@@ -1239,7 +1262,11 @@ mod tests {
             assert!(emitter.loops.is_empty());
             assert_eq!(emitter.context.next_temporary.get(), first_temporary + 1);
             assert!(matches!(
-                emitter.resolve(inside, Type::NumberArray, function.span),
+                emitter.resolve(
+                    inside,
+                    Type::Array(crate::ast::ArrayElementType::Number),
+                    function.span
+                ),
                 Err(CodegenError::UninitializedVariable { .. })
             ));
             let next_label = emitter.next_label;
@@ -1334,7 +1361,11 @@ mod tests {
             assert_eq!(emitter.context.initialized, initialized);
             assert_eq!(emitter.context.next_temporary.get(), first + 2);
             assert!(matches!(
-                emitter.resolve(inside, Type::NumberArray, span),
+                emitter.resolve(
+                    inside,
+                    Type::Array(crate::ast::ArrayElementType::Number),
+                    span
+                ),
                 Err(CodegenError::UninitializedVariable { .. })
             ));
             let next_label = emitter.next_label;

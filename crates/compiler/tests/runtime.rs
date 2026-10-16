@@ -338,8 +338,8 @@ fn node_explicit_memory_roundtrips_and_raw_descriptor_imports() {
             "edit",
             "env",
             "edit",
-            vec![Type::NumberArray],
-            Type::NumberArray,
+            vec![Type::Array(was_compiler::ArrayElementType::Number)],
+            Type::Array(was_compiler::ArrayElementType::Number),
         )
         .unwrap();
     compiler
@@ -352,7 +352,13 @@ fn node_explicit_memory_roundtrips_and_raw_descriptor_imports() {
         )
         .unwrap();
     compiler
-        .register_host_function("large", "env", "large", vec![], Type::NumberArray)
+        .register_host_function(
+            "large",
+            "env",
+            "large",
+            vec![],
+            Type::Array(was_compiler::ArrayElementType::Number),
+        )
         .unwrap();
     let bytes = compile(
         &compiler,
@@ -614,7 +620,7 @@ fn node_abi_descriptor_alignment_ranges_utf8_and_copy_limits() {
         for (const handle of [0, 1, 7, 9, 15]) {
             assert.throws(() => readDescriptor(memory, handle, 1), /descriptor/);
         }
-        assert.throws(() => readDescriptor(memory, 8, 2), /width must be 1 or 8/);
+        assert.throws(() => readDescriptor(memory, 8, 2), /width must be 1, 4 or 8/);
         for (const handle of [0x100000000, -0x80000001, 1.5, NaN]) {
             assert.throws(() => readDescriptor(memory, handle, 1), /32-bit integer/);
         }
@@ -908,8 +914,8 @@ fn node_example_provider_uses_explicit_descriptor_abi() {
             "adjust",
             "env",
             "adjust",
-            vec![Type::NumberArray],
-            Type::NumberArray,
+            vec![Type::Array(was_compiler::ArrayElementType::Number)],
+            Type::Array(was_compiler::ArrayElementType::Number),
         )
         .unwrap();
     let bytes = compile(

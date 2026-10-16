@@ -33,9 +33,11 @@ impl Flow {
             Type::Number => 1,
             Type::Bool => 2,
             Type::String => 4,
-            Type::NumberArray => 8,
+            Type::Array(crate::ast::ArrayElementType::Number) => 8,
             Type::Void => 16,
             Type::Range => 32,
+            Type::Array(crate::ast::ArrayElementType::Bool) => 64,
+            Type::Array(crate::ast::ArrayElementType::String) => 128,
         }
     }
 
@@ -72,9 +74,11 @@ impl Flow {
             Type::Number,
             Type::Bool,
             Type::String,
-            Type::NumberArray,
+            Type::Array(crate::ast::ArrayElementType::Number),
             Type::Void,
             Type::Range,
+            Type::Array(crate::ast::ArrayElementType::Bool),
+            Type::Array(crate::ast::ArrayElementType::String),
         ] {
             if found != expected && types & Self::type_bit(found) != 0 {
                 return Err((expected, found));

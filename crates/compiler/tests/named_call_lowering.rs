@@ -521,7 +521,10 @@ fn skipped_initializers_plan_declaration_preorder_memory_scratch_and_remainder_s
     let TypedExprKind::Call { args, .. } = &mut block.tail.as_mut().unwrap().kind else {
         panic!("call")
     };
-    args[0] = identifier(VariableId(301), Type::NumberArray);
+    args[0] = identifier(
+        VariableId(301),
+        Type::Array(was_compiler::ArrayElementType::Number),
+    );
     sequence(&mut program).bindings[0].value = value;
     let span = program.functions[1].body[0].span;
     program.functions[1].body.insert(

@@ -715,8 +715,11 @@ fn non_identifier_assignment_targets_and_index_bases_are_rejected_before_rhs() {
         TypedExpr {
             kind: TypedExprKind::Index {
                 expr: Box::new(TypedExpr {
-                    kind: TypedExprKind::Array(vec![number()]),
-                    ty: Type::NumberArray.into(),
+                    kind: TypedExprKind::Array(
+                        vec![number()],
+                        crate::ast::ArrayElementType::Number,
+                    ),
+                    ty: Type::Array(crate::ast::ArrayElementType::Number).into(),
                 }),
                 index: Box::new(number_literal("0")),
             },

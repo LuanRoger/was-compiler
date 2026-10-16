@@ -426,7 +426,7 @@ fn normalize_expr(expr: &mut TypedExpr, next_id: &mut usize) {
                 normalize_expr(&mut arm.body, next_id);
             }
         }
-        TypedExprKind::LexicalCall { args: values, .. } | TypedExprKind::Array(values) => {
+        TypedExprKind::LexicalCall { args: values, .. } | TypedExprKind::Array(values, _) => {
             for value in values {
                 normalize_expr(value, next_id);
             }

@@ -19,6 +19,7 @@ fn statement_loop(id: usize) -> LoopContext {
     LoopContext {
         id: LoopId(id),
         kind: LoopKind::Statement,
+        expected: None,
     }
 }
 
@@ -490,7 +491,7 @@ fn inferred_bindings_keep_the_initializer_type_on_reassignment() {
         ("1", Type::Number),
         ("true", Type::Bool),
         ("\"text\"", Type::String),
-        ("[]", Type::NumberArray),
+        ("[]", Type::Array(crate::ast::ArrayElementType::Number)),
     ];
 
     for (initial, expected) in types {
@@ -601,11 +602,11 @@ fn inferred_declarations_preserve_same_scope_duplicate_checks() {
 #[test]
 fn inferred_initializers_still_require_valid_expression_types() {
     for (statement, expected, found) in [
-        ("let value = [true];", Type::Number, Type::Bool),
+        ("let value = [1, true];", Type::Number, Type::Bool),
         ("let value = !1;", Type::Bool, Type::Number),
         (
             "let value = len(\"text\");",
-            Type::NumberArray,
+            Type::Array(crate::ast::ArrayElementType::Number),
             Type::String,
         ),
     ] {
@@ -661,7 +662,11 @@ fn declarations_require_exact_types_without_coercion() {
         ("number", "1", Type::Number),
         ("bool", "true", Type::Bool),
         ("string", "\"text\"", Type::String),
-        ("number[]", "[]", Type::NumberArray),
+        (
+            "number[]",
+            "[]",
+            Type::Array(crate::ast::ArrayElementType::Number),
+        ),
     ];
 
     for (annotation, _, expected) in &types {
@@ -683,7 +688,11 @@ fn assignments_require_the_binding_type() {
         ("number", "1", Type::Number),
         ("bool", "true", Type::Bool),
         ("string", "\"text\"", Type::String),
-        ("number[]", "[]", Type::NumberArray),
+        (
+            "number[]",
+            "[]",
+            Type::Array(crate::ast::ArrayElementType::Number),
+        ),
     ];
 
     for (annotation, initial, expected) in &types {
@@ -733,7 +742,7 @@ fn compound_assignments_require_number_targets_and_rhs_without_coercion() {
         for (initial, found) in [
             ("true", Type::Bool),
             ("\"text\"", Type::String),
-            ("[]", Type::NumberArray),
+            ("[]", Type::Array(crate::ast::ArrayElementType::Number)),
         ] {
             let statement = format!("value {operator} 1;");
             let body = format!("let value = {initial}; {statement}");
@@ -792,13 +801,18 @@ fn compound_assignment_checks_target_base_and_index_before_rhs() {
             let statement = format!("value[missing] {operator} rhs_missing;");
             let body = format!("let value = {initial}; {statement}");
 
-            assert_body_mismatch(&body, &statement, Type::NumberArray, found);
+            assert_body_mismatch(
+                &body,
+                &statement,
+                Type::Array(crate::ast::ArrayElementType::Number),
+                found,
+            );
         }
 
         for (initial, found) in [
             ("true", Type::Bool),
             ("\"text\"", Type::String),
-            ("[]", Type::NumberArray),
+            ("[]", Type::Array(crate::ast::ArrayElementType::Number)),
         ] {
             let statement = format!("value {operator} rhs_missing;");
             let body = format!("let value = {initial}; {statement}");
@@ -1017,15 +1031,31 @@ fn calls_enforce_every_parameter_type_and_argument_position() {
     for (call, expected, found) in [
         ("take(false, true, \"text\", []);", Type::Number, Type::Bool),
         ("take(1, 2, \"text\", []);", Type::Bool, Type::Number),
-        ("take(1, true, [], []);", Type::String, Type::NumberArray),
+        (
+            "take(1, true, [], []);",
+            Type::String,
+            Type::Array(crate::ast::ArrayElementType::Number),
+        ),
         (
             "take(1, true, \"text\", 2);",
-            Type::NumberArray,
+            Type::Array(crate::ast::ArrayElementType::Number),
             Type::Number,
         ),
-        ("len(1);", Type::NumberArray, Type::Number),
-        ("len(true);", Type::NumberArray, Type::Bool),
-        ("len(\"text\");", Type::NumberArray, Type::String),
+        (
+            "len(1);",
+            Type::Array(crate::ast::ArrayElementType::Number),
+            Type::Number,
+        ),
+        (
+            "len(true);",
+            Type::Array(crate::ast::ArrayElementType::Number),
+            Type::Bool,
+        ),
+        (
+            "len(\"text\");",
+            Type::Array(crate::ast::ArrayElementType::Number),
+            Type::String,
+        ),
     ] {
         let source = format!(
             "fn take(n: number, flag: bool, text: string, values: number[]) -> void {{}} fn test() -> void {{ {call} }}"
@@ -1066,7 +1096,7 @@ fn if_and_while_conditions_must_be_bool() {
         for (value, found) in [
             ("1", Type::Number),
             ("\"text\"", Type::String),
-            ("[]", Type::NumberArray),
+            ("[]", Type::Array(crate::ast::ArrayElementType::Number)),
         ] {
             let statement = format!("{keyword} {value} {{}}");
 
@@ -1093,7 +1123,7 @@ fn unary_operators_require_their_exact_operand_types() {
             ("1", Type::Number),
             ("true", Type::Bool),
             ("\"text\"", Type::String),
-            ("[]", Type::NumberArray),
+            ("[]", Type::Array(crate::ast::ArrayElementType::Number)),
         ] {
             if expected == found {
                 continue;
@@ -1112,7 +1142,7 @@ fn binary_operators_accept_only_their_supported_operand_pairs() {
         ("1", Type::Number),
         ("true", Type::Bool),
         ("\"text\"", Type::String),
-        ("[]", Type::NumberArray),
+        ("[]", Type::Array(crate::ast::ArrayElementType::Number)),
         ("noop()", Type::Void),
     ];
 
@@ -1127,7 +1157,10 @@ fn binary_operators_accept_only_their_supported_operand_pairs() {
                         left == right
                             && matches!(
                                 left,
-                                Type::Number | Type::Bool | Type::String | Type::NumberArray
+                                Type::Number
+                                    | Type::Bool
+                                    | Type::String
+                                    | Type::Array(crate::ast::ArrayElementType::Number)
                             )
                     }
                     _ => *left == Type::Number && *right == Type::Number,
@@ -1212,9 +1245,21 @@ fn array_equality_errors_are_checked_in_unreachable_and_skipped_expressions() {
         ] {
             let source = format!("fn test() -> void {{ return; {statement} }}");
             let (operator, left, right) = match expression {
-                "[] == 1" => ("==", Type::NumberArray, Type::Number),
-                "true != []" => ("!=", Type::Bool, Type::NumberArray),
-                _ => ("<", Type::NumberArray, Type::NumberArray),
+                "[] == 1" => (
+                    "==",
+                    Type::Array(crate::ast::ArrayElementType::Number),
+                    Type::Number,
+                ),
+                "true != []" => (
+                    "!=",
+                    Type::Bool,
+                    Type::Array(crate::ast::ArrayElementType::Number),
+                ),
+                _ => (
+                    "<",
+                    Type::Array(crate::ast::ArrayElementType::Number),
+                    Type::Array(crate::ast::ArrayElementType::Number),
+                ),
             };
             assert_error(
                 &source,
@@ -1244,7 +1289,7 @@ fn arrays_require_number_elements_and_empty_arrays_are_number_arrays() {
     for (value, found) in [
         ("true", Type::Bool),
         ("\"text\"", Type::String),
-        ("[]", Type::NumberArray),
+        ("[]", Type::Array(crate::ast::ArrayElementType::Number)),
     ] {
         for array in [format!("[{value}]"), format!("[1, {value}, 2]")] {
             let statement = format!("let values: number[] = {array};");
@@ -1257,7 +1302,7 @@ fn arrays_require_number_elements_and_empty_arrays_are_number_arrays() {
         "let value: number = [];",
         "let value: number = [];",
         Type::Number,
-        Type::NumberArray,
+        Type::Array(crate::ast::ArrayElementType::Number),
     );
 }
 
@@ -1281,14 +1326,19 @@ fn indexing_requires_an_array_base_and_number_index() {
         for statement in ["value[0];", "value[0] = 1;"] {
             let body = format!("let value: {annotation} = {initial}; {statement}");
 
-            assert_body_mismatch(&body, statement, Type::NumberArray, found);
+            assert_body_mismatch(
+                &body,
+                statement,
+                Type::Array(crate::ast::ArrayElementType::Number),
+                found,
+            );
         }
     }
 
     for (index, found) in [
         ("true", Type::Bool),
         ("\"text\"", Type::String),
-        ("[]", Type::NumberArray),
+        ("[]", Type::Array(crate::ast::ArrayElementType::Number)),
     ] {
         for statement in [format!("values[{index}];"), format!("values[{index}] = 1;")] {
             let body = format!("let values: number[] = []; {statement}");
@@ -1324,7 +1374,11 @@ fn returns_require_exact_declared_types() {
         ("number", "1", Type::Number),
         ("bool", "true", Type::Bool),
         ("string", "\"text\"", Type::String),
-        ("number[]", "[]", Type::NumberArray),
+        (
+            "number[]",
+            "[]",
+            Type::Array(crate::ast::ArrayElementType::Number),
+        ),
     ];
 
     for (annotation, _, expected) in &types {
@@ -1411,7 +1465,7 @@ fn void_calls_are_rejected_in_all_typed_value_contexts() {
         (
             "let value: number[] = noop();",
             "let value: number[] = noop();",
-            Type::NumberArray,
+            Type::Array(crate::ast::ArrayElementType::Number),
         ),
         (
             "let value: number = 1; value = noop();",
@@ -1424,7 +1478,11 @@ fn void_calls_are_rejected_in_all_typed_value_contexts() {
             Type::Number,
         ),
         ("take(noop());", "take(noop());", Type::Number),
-        ("len(noop());", "len(noop());", Type::NumberArray),
+        (
+            "len(noop());",
+            "len(noop());",
+            Type::Array(crate::ast::ArrayElementType::Number),
+        ),
         ("if noop() {}", "if noop() {}", Type::Bool),
         ("while noop() {}", "while noop() {}", Type::Bool),
         ("!noop();", "!noop();", Type::Bool),
@@ -1463,7 +1521,10 @@ fn void_calls_are_rejected_in_all_typed_value_contexts() {
         ("number", Type::Number),
         ("bool", Type::Bool),
         ("string", Type::String),
-        ("number[]", Type::NumberArray),
+        (
+            "number[]",
+            Type::Array(crate::ast::ArrayElementType::Number),
+        ),
     ] {
         let source =
             format!("fn noop() -> void {{}} fn test() -> {annotation} {{ return noop(); }}");
@@ -2060,7 +2121,7 @@ fn manually_constructed_index_checks_void_base_and_preserves_statement_span() {
     assert_eq!(
         SemanticAnalyzer::new().analyze(&program).map(|_| ()),
         Err(SemanticError::TypeMismatch {
-            expected: Type::NumberArray,
+            expected: Type::Array(crate::ast::ArrayElementType::Number),
             found: Type::Void,
             span: error_span,
         })
@@ -2222,7 +2283,7 @@ fn eager_never_operands_propagate_transfers_without_hiding_later_errors() {
 
     for expression in [
         "{ return 1; } + false",
-        "[{ return 1; }, false]",
+        "[{ return 1; }, 1, false]",
         "take({ return 1; }, false)",
         "{ return 1; } == noop()",
         "{ return 1; } + missing",
@@ -2522,8 +2583,18 @@ fn value_loop_conflicts_use_first_reachable_type_and_enclosing_loop_span() {
     for (first, second, expected, found) in [
         ("1", "true", Type::Number, Type::Bool),
         ("true", "1", Type::Bool, Type::Number),
-        ("\"s\"", "[1]", Type::String, Type::NumberArray),
-        ("[1]", "\"s\"", Type::NumberArray, Type::String),
+        (
+            "\"s\"",
+            "[1]",
+            Type::String,
+            Type::Array(crate::ast::ArrayElementType::Number),
+        ),
+        (
+            "[1]",
+            "\"s\"",
+            Type::Array(crate::ast::ArrayElementType::Number),
+            Type::String,
+        ),
     ] {
         for body in [
             format!("if true {{ break {first}; }} break {second};"),
@@ -2734,6 +2805,7 @@ fn loop_errors_restore_context_kind_scopes_and_analyzer_reuse() {
     let outer = LoopContext {
         id: LoopId(41),
         kind: LoopKind::Value,
+        expected: None,
     };
 
     for expression in [

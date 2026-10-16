@@ -12,7 +12,7 @@ use super::{
     checked_u32,
     closures::{self, CallablePlan},
     indices::{FunctionIndex, TypeIndex},
-    memory::{self, MemoryPlan},
+    memory::MemoryPlan,
     numeric, range,
 };
 
@@ -203,7 +203,7 @@ impl<'a> Layout<'a> {
                 }
             }
 
-            let helpers = memory::helpers();
+            let helpers = plan.helpers();
 
             first_runtime
                 .checked_add(checked_u32(helpers.len(), "runtime function count")?)
@@ -213,10 +213,11 @@ impl<'a> Layout<'a> {
 
             let mut plans = Vec::with_capacity(helpers.len());
 
-            for (helper, signature) in helpers {
+            for helper in helpers {
+                let signature = helper.signature();
                 plans.push(UserFunctionPlan {
                     type_index: layout.intern(signature, &mut type_indices)?,
-                    function_index: FunctionIndex::new(first_runtime + helper.index()),
+                    function_index: FunctionIndex::new(first_runtime + plan.helper_index(helper)),
                     exported: false,
                 });
             }

@@ -35,7 +35,14 @@ fn forged_memory_roots_operands_and_nested_errors_preserve_statement_spans() {
     wrong_equal.ty = Type::Number.into();
     let cases = [
         (wrong_string, mismatch(Type::String, Type::Bool, span)),
-        (wrong_array, mismatch(Type::NumberArray, Type::Number, span)),
+        (
+            wrong_array,
+            mismatch(
+                Type::Array(crate::ast::ArrayElementType::Number),
+                Type::Number,
+                span,
+            ),
+        ),
         (wrong_index, mismatch(Type::Number, Type::Bool, span)),
         (wrong_len, mismatch(Type::Number, Type::Bool, span)),
         (wrong_equal, mismatch(Type::Bool, Type::Number, span)),
@@ -45,7 +52,11 @@ fn forged_memory_roots_operands_and_nested_errors_preserve_statement_spans() {
         ),
         (
             index(string("bad"), number("0")),
-            mismatch(Type::NumberArray, Type::String, span),
+            mismatch(
+                Type::Array(crate::ast::ArrayElementType::Number),
+                Type::String,
+                span,
+            ),
         ),
         (
             index(array(vec![]), boolean()),
@@ -53,7 +64,11 @@ fn forged_memory_roots_operands_and_nested_errors_preserve_statement_spans() {
         ),
         (
             len(vec![string("bad")]),
-            mismatch(Type::NumberArray, Type::String, span),
+            mismatch(
+                Type::Array(crate::ast::ArrayElementType::Number),
+                Type::String,
+                span,
+            ),
         ),
         (
             equal(string("a"), number("1"), BinaryOp::Equal),
@@ -155,7 +170,14 @@ fn indexed_assignment_checks_identifier_base_target_index_and_rhs_types() {
         ),
         (1, mismatch(Type::Number, Type::Bool, span)),
         (2, mismatch(Type::Number, Type::Bool, span)),
-        (3, mismatch(Type::NumberArray, Type::Bool, span)),
+        (
+            3,
+            mismatch(
+                Type::Array(crate::ast::ArrayElementType::Number),
+                Type::Bool,
+                span,
+            ),
+        ),
     ] {
         let mut program = original.clone();
         let TypedStatementKind::Assignment { target, value } =
@@ -213,7 +235,10 @@ fn memory_local_initializers_remain_checked_in_unreachable_nested_blocks() {
     "#,
         )
         .unwrap();
-    for (position, expected_type) in [(0, Type::String), (1, Type::NumberArray)] {
+    for (position, expected_type) in [
+        (0, Type::String),
+        (1, Type::Array(crate::ast::ArrayElementType::Number)),
+    ] {
         let mut program = original.clone();
         let TypedStatementKind::If { then, .. } = &mut program.functions[0].body[1].kind else {
             unreachable!()
@@ -249,7 +274,7 @@ fn memory_handle_types_are_not_interchangeable_in_assignments_and_host_calls() {
                 id: a.id,
                 name: a.name.clone(),
             },
-            ty: Type::NumberArray.into(),
+            ty: Type::Array(crate::ast::ArrayElementType::Number).into(),
         };
         match &mut program.functions[0].body[0].kind {
             TypedStatementKind::Assignment { value, .. } => *value = replacement,
@@ -263,7 +288,11 @@ fn memory_handle_types_are_not_interchangeable_in_assignments_and_host_calls() {
         }
         assert_eq!(
             compile(&program),
-            Err(mismatch(Type::String, Type::NumberArray, span))
+            Err(mismatch(
+                Type::String,
+                Type::Array(crate::ast::ArrayElementType::Number),
+                span
+            ))
         );
     }
 }

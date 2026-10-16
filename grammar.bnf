@@ -29,12 +29,18 @@
 
 
 <type> ::= "number" <array_type_suffix>?
-         | "bool"
-         | "string"
+         | "bool" <array_type_suffix>?
+         | "string" <array_type_suffix>?
          | "range"
          | "void"
 
 <array_type_suffix> ::= "[" <ws> "]"
+
+# Arrays are fixed-length shared collections with exact scalar element types.
+# Literals infer from normally completing elements; empty/all-Never literals default
+# to number[] unless a known destination supplies an array type. Destinations flow
+# through block/if/match/loop values, not sibling branches, inferred results or
+# pipeline inputs. Nested, range and void arrays remain unsupported.
 
 
 <block> ::= "{" <ws> <statement_list>? <ws> "}"
@@ -147,17 +153,18 @@
                     <ws> <block>
 
 # For is statement-only, including when final in a value block, and accepts only
-# range or number[] iterables with Never compatibility. Analyze/evaluate the iterable
+# range or number[]/bool[]/string[] iterables with Never compatibility. Analyze/evaluate the iterable
 # once in the enclosing context before activating the for or binding its name.
 # Iterable return/divergence and transfers to enclosing loops are preserved.
-# The iteration binding is a read-only number in a scope outside the body; an
+# The iteration binding is a read-only element (number for ranges) outside the body; an
 # inner let may shadow it with a distinct mutable binding. All bodies are checked,
 # including empty iteration and unreachable writes/transfers. For may execute zero
 # times. Continue advances before retesting; bare break exits; value break is invalid.
 # Arrays capture handle and u32 length once after full validation, including empty
 # arrays; unsigned index iteration loads each current element through checked
 # ArrayAddress. Alias mutations are visible; source reassignment does not replace
-# the captured handle. There is no element snapshot or parser/AST shape change.
+# the captured handle. Consumed boolean bytes/string handles are validated before
+# binding, capture promotion and body effects. There is no element snapshot.
 # for is reserved for source and host-language names, not host module/field names.
 
 <loop_statement> ::= "loop" <ws> <block> ( <ws> ";" )?

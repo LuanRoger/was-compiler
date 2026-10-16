@@ -280,6 +280,7 @@ enum MatchContext {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExprContext {
+    Expected(Type),
     Value,
     Discard,
 }
@@ -294,6 +295,7 @@ enum LoopKind {
 struct LoopContext {
     id: LoopId,
     kind: LoopKind,
+    expected: Option<Type>,
 }
 
 #[derive(Default)]
@@ -309,6 +311,7 @@ pub struct SemanticAnalyzer {
     next_variable_id: usize,
     loops: Vec<LoopContext>,
     next_loop_id: usize,
+    result_expected: Option<Type>,
 }
 
 impl SemanticAnalyzer {
@@ -344,7 +347,7 @@ impl SemanticAnalyzer {
             "len".into(),
             FunctionSignature {
                 reference: FunctionRef::Builtin(BuiltinFunction::Len),
-                params: vec![Type::NumberArray],
+                params: vec![Type::Array(crate::ast::ArrayElementType::Number)],
                 param_names: vec![],
                 defaults: vec![],
                 contracts: vec![],
@@ -467,6 +470,7 @@ impl SemanticAnalyzer {
         context: ReturnContext,
     ) -> Result<TypedFunction, SemanticError> {
         self.owner = Some(BindingOwner::Function(id));
+        self.result_expected = function.return_type;
         self.next_variable_id = 0;
         self.next_loop_id = 0;
         self.loops.clear();
@@ -612,7 +616,7 @@ impl SemanticAnalyzer {
                     self.check_variable_type(name, *ty, span)?;
                 }
 
-                let (value, value_flow) = self.analyze_expr(value, span, return_type)?;
+                let (value, value_flow) = self.analyze_expected(value, span, return_type, *ty)?;
 
                 flow = value_flow;
 
@@ -653,16 +657,19 @@ impl SemanticAnalyzer {
             StatementKind::Assignment { target, value } => {
                 let (target, target_flow) =
                     self.analyze_assignment_target(target, span, return_type)?;
-                let (value, value_flow) = self.analyze_expr(value, span, return_type)?;
-
-                // An indexed place may diverge while computing its index, but its
-                // storage type is still number and its RHS must still be checked.
+                // A divergent index erases completion, not the destination's
+                // element type; the replacement still needs exact checking.
                 let target_type = match target.ty {
                     ExprResult::Value(ty) => ty,
-                    ExprResult::Never => Type::Number,
+                    ExprResult::Never => match &target.kind {
+                        TypedExprKind::Index { expr, .. } => Self::array_element(expr).value_type(),
+                        _ => Type::Number,
+                    },
                     ExprResult::Void => unreachable!("checked places have a storage type"),
                 };
 
+                let (value, value_flow) =
+                    self.analyze_expected(value, span, return_type, Some(target_type))?;
                 self.expect_type(target_type, value.ty, span)?;
                 flow = target_flow.then(value_flow);
 
@@ -673,6 +680,13 @@ impl SemanticAnalyzer {
                 let (target, target_flow) =
                     self.analyze_assignment_target(target, span, return_type)?;
 
+                if let TypedExprKind::Index { expr, .. } = &target.kind {
+                    self.expect_type(
+                        Type::Number,
+                        Self::array_element(expr).value_type().into(),
+                        span,
+                    )?;
+                }
                 self.expect_type(Type::Number, target.ty, span)?;
 
                 if !matches!(
@@ -742,6 +756,7 @@ impl SemanticAnalyzer {
                 self.loops.push(LoopContext {
                     id,
                     kind: LoopKind::Statement,
+                    expected: None,
                 });
 
                 let result = (|| {
@@ -776,15 +791,22 @@ impl SemanticAnalyzer {
                 // resolve before the iteration binding exists.
                 let (iterable, iterable_flow) = self.analyze_expr(iterable, span, return_type)?;
 
-                if iterable.ty != ExprResult::Value(Type::NumberArray) {
-                    self.expect_type(Type::Range, iterable.ty, span)?;
-                }
+                let element_type = match iterable.array_element_type() {
+                    Some(element) => {
+                        self.expect_type(Type::Array(element), iterable.ty, span)?;
+                        element.value_type()
+                    }
+                    _ => {
+                        self.expect_type(Type::Range, iterable.ty, span)?;
+                        Type::Number
+                    }
+                };
                 self.scopes.push(HashMap::new());
 
                 let result = (|| {
                     let variable = self.declare_variable(
                         name,
-                        Type::Number,
+                        element_type,
                         BindingMutability::ReadOnly,
                         span,
                     )?;
@@ -804,6 +826,7 @@ impl SemanticAnalyzer {
                     id,
                     variable,
                     name: name.clone(),
+                    element_type,
                     iterable: Box::new(iterable),
                     body,
                 }
@@ -845,7 +868,8 @@ impl SemanticAnalyzer {
                     return Err(SemanticError::BreakValueNotAllowed { span });
                 }
 
-                let (value, value_flow) = self.analyze_expr(value, span, return_type)?;
+                let (value, value_flow) =
+                    self.analyze_expected(value, span, return_type, context.expected)?;
 
                 flow = match value.ty {
                     ExprResult::Value(ty) => value_flow.then(Flow::value_break(ty)),
@@ -886,7 +910,8 @@ impl SemanticAnalyzer {
                         return Err(SemanticError::UnexpectedReturnValue { span });
                     }
                     Some(expr) => {
-                        let (expr, expr_flow) = self.analyze_expr(expr, span, return_type)?;
+                        let (expr, expr_flow) =
+                            self.analyze_expected(expr, span, return_type, self.result_expected)?;
                         let completion = match return_type {
                             ReturnContext::Known(ty) => {
                                 self.expect_type(ty, expr.ty, span)?;
@@ -939,7 +964,11 @@ impl SemanticAnalyzer {
         let id = LoopId(self.next_loop_id);
 
         self.next_loop_id += 1;
-        self.loops.push(LoopContext { id, kind });
+        self.loops.push(LoopContext {
+            id,
+            kind,
+            expected: None,
+        });
 
         let result = self.analyze_scoped_block(body, return_type);
 
@@ -947,6 +976,28 @@ impl SemanticAnalyzer {
 
         let (body, flow) = result?;
 
+        Ok((id, body, flow))
+    }
+
+    fn analyze_value_loop_body(
+        &mut self,
+        body: &Block,
+        return_type: ReturnContext,
+        context: ExprContext,
+    ) -> Result<(LoopId, TypedBlock, Flow), SemanticError> {
+        let id = LoopId(self.next_loop_id);
+        self.next_loop_id += 1;
+        self.loops.push(LoopContext {
+            id,
+            kind: LoopKind::Value,
+            expected: match context {
+                ExprContext::Expected(ty) => Some(ty),
+                _ => None,
+            },
+        });
+        let result = self.analyze_scoped_block(body, return_type);
+        self.loops.pop();
+        let (body, flow) = result?;
         Ok((id, body, flow))
     }
 
@@ -1112,6 +1163,29 @@ impl SemanticAnalyzer {
         Ok((scrutinee, typed_arms, ty, flow))
     }
 
+    fn array_element(expr: &TypedExpr) -> crate::ast::ArrayElementType {
+        match (&expr.kind, expr.ty) {
+            (_, ExprResult::Value(Type::Array(element))) => element,
+            (TypedExprKind::Array(_, element), _) => *element,
+            _ => crate::ast::ArrayElementType::Number,
+        }
+    }
+
+    fn analyze_expected(
+        &mut self,
+        expr: &Expr,
+        span: Span,
+        return_type: ReturnContext,
+        expected: Option<Type>,
+    ) -> Result<(TypedExpr, Flow), SemanticError> {
+        self.analyze_expr_in_context(
+            expr,
+            span,
+            return_type,
+            expected.map_or(ExprContext::Value, ExprContext::Expected),
+        )
+    }
+
     fn analyze_expr(
         &mut self,
         expr: &Expr,
@@ -1148,7 +1222,7 @@ impl SemanticAnalyzer {
 
             Expr::Loop { body } => {
                 let (id, body, body_flow) =
-                    self.analyze_loop_body(body, return_type, LoopKind::Value)?;
+                    self.analyze_value_loop_body(body, return_type, context)?;
                 let ty = body_flow.break_type().map_err(|(expected, found)| {
                     SemanticError::TypeMismatch {
                         expected,
@@ -1322,21 +1396,42 @@ impl SemanticAnalyzer {
             Expr::Array(elements) => {
                 let mut values = Vec::with_capacity(elements.len());
 
+                let mut element_type = match context {
+                    ExprContext::Expected(Type::Array(element)) => Some(element),
+                    _ => None,
+                };
                 for element in elements {
                     let (value, value_flow) = self.analyze_expr(element, span, return_type)?;
-
-                    self.expect_type(Type::Number, value.ty, span)?;
+                    if let Some(expected) = element_type {
+                        self.expect_type(expected.value_type(), value.ty, span)?;
+                    } else if let ExprResult::Value(ty) = value.ty {
+                        element_type = Some(match ty {
+                            Type::Number => crate::ast::ArrayElementType::Number,
+                            Type::Bool => crate::ast::ArrayElementType::Bool,
+                            Type::String => crate::ast::ArrayElementType::String,
+                            _ => {
+                                self.expect_type(Type::Number, value.ty, span)?;
+                                unreachable!()
+                            }
+                        });
+                    } else {
+                        self.expect_type(Type::Number, value.ty, span)?;
+                    }
                     flow = flow.then(value_flow);
                     values.push(value);
                 }
-
-                (TypedExprKind::Array(values), Type::NumberArray.into())
+                let element_type = element_type.unwrap_or(crate::ast::ArrayElementType::Number);
+                (
+                    TypedExprKind::Array(values, element_type),
+                    Type::Array(element_type).into(),
+                )
             }
 
             Expr::Index { expr, index } => {
                 let (expr, expr_flow) = self.analyze_expr(expr, span, return_type)?;
 
-                self.expect_type(Type::NumberArray, expr.ty, span)?;
+                let element_type = Self::array_element(&expr);
+                self.expect_type(Type::Array(element_type), expr.ty, span)?;
 
                 let (index, index_flow) = self.analyze_expr(index, span, return_type)?;
 
@@ -1348,7 +1443,7 @@ impl SemanticAnalyzer {
                         expr: Box::new(expr),
                         index: Box::new(index),
                     },
-                    Type::Number.into(),
+                    element_type.value_type().into(),
                 )
             }
         };
@@ -1404,9 +1499,17 @@ impl SemanticAnalyzer {
             // Expression analysis may introduce scoped bindings, so release the
             // signature borrow before analyzing each argument.
             let expected = self.functions[name].params[index];
-            let (arg, arg_flow) = self.analyze_expr(&arg.value, span, return_type)?;
+            let builtin_len = reference == FunctionRef::Builtin(BuiltinFunction::Len);
+            let (arg, arg_flow) = self.analyze_expected(
+                &arg.value,
+                span,
+                return_type,
+                if builtin_len { None } else { Some(expected) },
+            )?;
 
-            self.expect_type(expected, arg.ty, span)?;
+            if !(builtin_len && matches!(arg.ty, ExprResult::Value(Type::Array(_)))) {
+                self.expect_type(expected, arg.ty, span)?;
+            }
             flow = flow.then(arg_flow);
             arguments.push(arg);
         }
@@ -1471,7 +1574,7 @@ impl SemanticAnalyzer {
 
                 if matches!(
                     operand_type,
-                    Type::Number | Type::Bool | Type::String | Type::NumberArray
+                    Type::Number | Type::Bool | Type::String | Type::Array(_)
                 ) && Self::accepts_operand(left, operand_type)
                     && Self::accepts_operand(right, operand_type)
                 {

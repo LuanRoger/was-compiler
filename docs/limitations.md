@@ -6,6 +6,13 @@ promises**. This document does not propose code optimization.
 
 ## Status and scope
 
+#37 implements `bool[]` and `string[]` alongside `number[]`, including CLI/browser
+adapters and Node marshaling. [Final release gates passed](typed-arrays-validation-2026-10-15.txt)
+after the accessor fix: 1,251 workspace tests passed with none ignored, plus 25
+browser smoke groups and the required build/Clippy gates. See [typed-array
+contracts, Rust migration and release evidence](typed-arrays.md). Earlier release
+records below retain their historical scope.
+
 M0–M9, including CLI/runtime integration, numeric-array equality, and floating-point
 remainder, are implemented, as are WP1–WP4: compound assignments, while
 transfers, tail-valued block/if expressions, and statement/value loops. WP5
@@ -94,7 +101,7 @@ annotations, placeholders and closure pipeline stages are rejected. Closures may
 call ordinary named functions with their existing defaults and contracts.
 
 A closure may capture ancestor parameters and ordinary lets of every
-concrete type (`number`, `bool`, `string`, `number[]`, `range`). Captures preserve
+concrete type (`number`, `bool`, `string`, `number[]`, `bool[]`, `string[]`, `range`). Captures preserve
 original bindings and observe reassignment from either side, including ordinary
 array indexed mutation and array-binding reassignment. #32 forwards original cells
 through every intermediate helper and original live environments for earlier
@@ -167,8 +174,13 @@ produces an `Invalid` token spanning the opening slash through EOF, then `Eof`;
 existing parser errors report it, not a new diagnostic stage.
 
 Local `let` annotations are optional: `let name = initializer;` infers the
-initializer's concrete nonvoid type (`number`, `bool`, `string`, `number[]`, or `range`),
-including `number[]` for `[]`. `let name: type = initializer;` remains supported
+initializer's concrete nonvoid type (`number`, `bool`, `string`, `number[]`,
+`bool[]`, `string[]`, or `range`), including the numeric fallback for unconstrained
+`[]`. Known destinations/formals/explicit named results provide array-literal
+context; siblings, callers and later pipeline stages do not. Omitted/anonymous
+results retain independent inference across checks. See
+[contextual typing](typed-arrays.md#contextual-literal-typing-and-stable-inference).
+`let name: type = initializer;` remains supported
 with exact type checking. The initializer is analyzed before binding the name,
 so a same-named reference requires an outer binding; nested shadowing is allowed.
 The binding's type is then fixed. An inferred void call initializer is rejected
@@ -294,11 +306,12 @@ functions; default export-all fails rather than silently omitting them. There is
 no public range marshaling or allocation-free representation.
 
 `for name in iterable { body }` is a void statement, never a value expression.
-Only `range` or `number[]` iterables (with existing Never compatibility) are accepted.
+Only `range`, `number[]`, `bool[]` or `string[]` iterables (with existing Never
+compatibility) are accepted.
 Evaluate the iterable once in the enclosing context before
 activating the loop/binding: break/continue there targets the outer nearest loop,
-or is invalid without one, and return/divergence is preserved. Its `number` binding
-is read-only for ordinary/compound writes; a distinct inner shadowing let remains
+or is invalid without one, and return/divergence is preserved. Its scalar element
+binding (`number` for ranges) is read-only for ordinary/compound writes; a distinct inner shadowing let remains
 mutable. For permits bare breaks and forbids value breaks even when unreachable;
 continue exits a body latch to advance once before retesting. A returning body
 alone cannot establish definite return because the range or array may be empty.
@@ -312,12 +325,13 @@ writes and transfer rules; `crates/compiler/tests/for_lowering.rs` covers forged
 scratch/cache/latch contracts; `crates/compiler/tests/for_loops.rs` covers deterministic layout,
 imports/exports and bounded Node effects, exact yields/exhaustion, record validation,
 and caching at all optimization levels. Array iteration (issue #5) changes no parser
-or AST shapes: after full `ValidateArray`, even when empty, cache handle and unsigned
-`u32` length once. Use unsigned index tests and load each element through existing
-checked `ArrayAddress` then `f64` load on its iteration, without snapshotting or
-caching a raw payload pointer. Alias mutations remain visible; source reassignment
-does not replace the captured handle. Continue uses the index-advancement latch.
-No ABI or helper-order change is introduced; array-only iteration needs no range
+or AST shapes; #37 subsequently adds typed `For.element_type`. After complete
+typed outer-storage validation (without scanning elements), even when empty,
+cache handle and unsigned `u32` length once. Use unsigned index tests and typed
+checked live loads/consumed-value validation before binding/capture promotion/body
+effects, without snapshotting or caching a raw payload pointer. Alias mutations
+remain visible; source reassignment does not replace the captured handle. Continue uses the index-advancement latch.
+Numeric-only ABI/helper ordering is preserved; array-only iteration needs no range
 helpers. `crates/compiler/tests/array_for_loops.rs` is the array-for suite. CLI/browser support uses
 the same core. Issue #6 adds adapter/interaction coverage in `crates/cli/tests/cli.rs` and
 `tests/browser.cjs`, with actionable private-range host errors and checks across
@@ -377,10 +391,10 @@ and callable pipeline stages remain deferred.
 
 | Restriction now | Practical effect | Current alternative | Possible future choice and tradeoff |
 | --- | --- | --- | --- |
-| Only `number`, `bool`, `string`, `number[]`, `range`, and `void` exist. Parameters require annotations; omitted results infer through acyclic chains/diamonds. Recursive components require explicit results on every member, including across annotated barriers; Never-only value-return syntax needs an annotation. Every `let` requires an initializer. No parameter inference, whole-program type unification, promotions, implicit coercions, or source `i32` type. | Local inference does not change the `f64` numeric model or allow later assignments of another type. A boolean cannot stand in for a number, and a numeric value cannot serve as a condition; `void` is not a variable/parameter type. | Use inferred or explicitly annotated locals and explicit helper functions, branches, or registered host conversions with matching signatures. | Explicit conversions or broader inference require separate type-system and error-ordering decisions; neither is implied by local initializer inference. |
+| Only `number`, `bool`, `string`, `number[]`, `bool[]`, `string[]`, `range`, and `void` exist. Parameters require annotations; omitted results infer through acyclic chains/diamonds. Recursive components require explicit results on every member, including across annotated barriers; Never-only value-return syntax needs an annotation. Every `let` requires an initializer. No parameter inference, whole-program type unification, promotions, implicit coercions, or source `i32` type. | Local inference does not change the `f64` numeric model or allow later assignments of another type. A boolean cannot stand in for a number, and a numeric value cannot serve as a condition; `void` is not a variable/parameter type. | Use inferred or explicitly annotated locals and explicit helper functions, branches, or registered host conversions with matching signatures. | Explicit conversions or broader inference require separate type-system and error-ordering decisions; neither is implied by local initializer inference. |
 | No source modules/import declarations, structs, generics, or first-class functions. Local callables support direct positional lexical calls, shared ancestor parameter/let captures and earlier live callable contexts; ordinary calls resolve named user functions, registered hosts, or built-in `len`. | The source program is one collection of functions; host registration is an embedding/CLI responsibility. | Put related functions in one source unit and supply external capabilities through host functions. Numeric-array conventions can model simple records, but have no field/type safety. | Modules or dedicated aggregate/function types need name-resolution, type-system, and ABI decisions. Host-side modeling avoids those changes but keeps application-specific conventions outside the language. |
-| No labels or `foreach`. Transfers target the nearest active while/for/loop; only value loops allow value breaks. Range/array for is statement-only with a read-only numeric binding. Nonvoid functions must return or explicitly diverge, never fall through. | Loops cannot transfer across function boundaries. A range or array may be empty, so its body alone does not guarantee return. A no-exit syntactic loop is Never; arbitrary calls or possible traps do not prove divergence. | Use range/array for, statement/value `loop`, numeric-index while plus `len(array)`, and explicit returns. Shadow an iteration binding with a distinct inner let when a mutable local is needed. | Labels need their own target-resolution contract; implementing WP5 does not add labeled transfers. |
-| Array indexing in source starts from an identifier; there is no general postfix chaining. | `make_values()[0]` and `[1, 2][0]` are not supported source forms. | Assign the result/literal to an inferred or annotated `number[]` local, then index that local. | General postfix parsing is a grammar feature and needs explicit assignment-target rules. |
+| No labels or `foreach`. Transfers target the nearest active while/for/loop; only value loops allow value breaks. Range/array for is statement-only with a read-only scalar element binding (`number` for ranges). Nonvoid functions must return or explicitly diverge, never fall through. | Loops cannot transfer across function boundaries. A range or array may be empty, so its body alone does not guarantee return. A no-exit syntactic loop is Never; arbitrary calls or possible traps do not prove divergence. | Use range/array for, statement/value `loop`, numeric-index while plus `len(array)`, and explicit returns. Shadow an iteration binding with a distinct inner let when a mutable local is needed. | Labels need their own target-resolution contract; implementing WP5 does not add labeled transfers. |
+| Array indexing in source starts from an identifier; there is no general postfix chaining. | `make_values()[0]` and `[1, 2][0]` are not supported source forms. | Assign the result/literal to an inferred or annotated array local, then index that local. | General postfix parsing is a grammar feature and needs explicit assignment-target rules. |
 | Identifiers are ASCII letters/underscore followed by ASCII letters/digits/underscore. | Unicode identifiers are unsupported. | Use ASCII identifiers. | Define a Unicode identifier policy with normalization/confusable-name decisions. |
 | Numeric literals contain digits, optionally a dot with digits on both sides. No exponent notation, `.5`, or `1.`. A leading minus is an operator. | `1e3`, `.5`, and `1.` cannot be used as number literals. | Write `1000`, `0.5`, and `1.0`; use unary `-` for negative values. | Broader literal syntax needs matching lexer and backend validation so forged typed literals do not bypass the grammar. |
 | Source parsing requires at least one function, although empty function bodies are valid. | An empty source file is not an empty module. The lower-level typed-AST API can represent an empty program. | Use `fn main() -> void {}` for a minimal source program. | Allowing empty source is a deliberate parser/API behavior change, not a test-harness refactor. |
@@ -397,8 +411,8 @@ and [memory tests](../crates/compiler/src/codegen/memory_tests.rs).
 | All numbers and numeric-array elements use IEEE-754 `f64`. | Decimal fractions can round; integers outside the safe range `-(2^53 - 1)` through `2^53 - 1` are not reliably distinguishable. Finite literals can underflow to zero; overflowing literals are rejected. Arithmetic/host values can still produce NaN, infinities, and signed zero. Division by zero is floating-point behavior, not an integer-style exception. | Use tolerance-based comparisons where appropriate and validate application ranges at boundaries. Keep exact large integers/decimals in the host, e.g. as strings with host operations; merely using a JavaScript number does not add precision. | Separate integer/decimal types or a host-backed exact-number representation would require overflow, conversion, representation, and ABI policies. |
 | `number % number` implements truncating floating remainder (JavaScript `%`/`fmod`), not mathematical modulo or nearest-quotient IEEE remainder. WebAssembly has no `f64.rem`; an optional guest helper implements it. | Operands execute once, left-to-right. For finite operands and a nonzero divisor, the result has the dividend's sign, including signed zero, and magnitude below the divisor's magnitude. A NaN operand, infinite dividend, or zero divisor yields NaN; a finite dividend with an infinite divisor is unchanged. | Use source `%` directly with no implicit host import or memory runtime. An explicitly registered synchronous host function is still an option for a different numeric contract, not a required workaround. | Mathematical modulo or nearest-quotient remainder would need separately specified semantics; they must not silently replace `%`. |
 | Strings are immutable UTF-8 values with literals, parameter/local/return use, and byte-content `==`/`!=`. No escape processing, concatenation, indexing, string `len`, normalization, or case folding. | Backslash sequences such as `\n` remain literal characters; a quote ends the literal. Visually identical differently normalized Unicode strings can compare unequal. | Use actual Unicode characters where possible and host functions for quoted/control-character construction, concatenation, text length, and normalization. Construct host results according to the memory ABI. | Add selected operations only after defining byte, code-point, or grapheme semantics. Escape parsing is a lexical feature; normalization changes equality expectations and may require additional runtime support. |
-| Arrays contain only numbers, have fixed lengths, and are mutable references. No resize/push operations. Assignment/arguments/returns copy handles, not elements; `==`/`!=` compare contents. | Two guest variables can alias the same storage. Every evaluated array literal allocates new storage, even in loops and recursive calls. | Pass an existing array explicitly when sharing is intended. For an independent or resized result, a trusted host can create a new descriptor/payload. | Dynamic arrays require a capacity/growth/aliasing policy; generalized element types require new layouts and type rules. Neither is implied by the current descriptor ABI. |
-| Numeric-array equality requires equal lengths and exact elementwise `f64` equality, not identity, byte equality, or a tolerance. `!=` is its complement. | Signed zeros compare equal; any compared NaN makes equality false, even for an array compared to itself. Comparisons read current contents after both operands are evaluated once, left-to-right, so RHS mutations are visible. Matching-length comparison takes O(n) time and O(1) auxiliary space; both descriptors are validated before early exits. | Use `==`/`!=` for exact content comparisons. Implement an explicit loop or host function for tolerance-based comparisons and a chosen NaN policy. | Approximate equality or other element types require explicit semantics. A pointer shortcut is invalid with NaN and must not be introduced as a behavior-preserving refactor. |
+| Arrays contain exactly one supported scalar type (number, bool or string), have fixed lengths, and are mutable references. No nested arrays, `range[]` or `void[]`. No resize/push operations. Assignment/arguments/returns copy handles, not elements; `==`/`!=` compare contents. | Two guest variables can alias the same storage. Every evaluated array literal allocates new storage, even in loops and recursive calls. | Pass an existing array explicitly when sharing is intended. For an independent or resized result, a trusted host can create a new descriptor/payload. | Growable lists require a capacity/growth/aliasing policy; further element types and nested collections need separately specified layouts and type rules. None is implied by the untagged descriptor ABI. |
+| Numeric-array equality requires equal lengths and exact elementwise `f64` equality, not identity, byte equality, or a tolerance. `!=` is its complement. | Signed zeros compare equal; any compared NaN makes equality false, even for an array compared to itself. Comparisons read current contents after both operands are evaluated once, left-to-right, so RHS mutations are visible. Matching-length comparison takes O(n) time and O(1) auxiliary space; both descriptors are validated before early exits. | Use `==`/`!=` for exact content comparisons. Implement an explicit loop or host function for tolerance-based comparisons and a chosen NaN policy. | Approximate equality requires explicit semantics; bool arrays compare canonical values and string arrays compare string contents with lazy consumed checks. A pointer shortcut is invalid with NaN and must not be introduced as a behavior-preserving refactor. |
 | Array indices must be finite, integral, nonnegative, and less than `len(array)`. Negative zero selects element zero. | Fractions, NaN, infinities, negative values, and out-of-range accesses trap instead of being rounded/truncated. Indexed assignment checks its target/bounds before evaluating the RHS. | Produce indices with bounded integral counters. Use explicit checks or host validation for externally supplied indices; do not rely on an implicit cast. | A checked-result API or language exceptions could make failures recoverable, but would change signatures/control flow and need a structured error contract. |
 | Allocation is a growable, eight-byte-aligned bump allocator. No free, garbage collection, or reference counting. Values live until the instance is discarded. | Repeated allocation consumes memory even when values are no longer reachable. Memory grows in 65,536-byte pages to a hard maximum of 65,535 pages, subject to tighter engine limits; overflow or failed growth traps. | Bound work/allocation in the embedding and discard/recreate an instance between independent jobs. Handles cannot survive that reset or cross instances. Do not manually reset the heap while live handles may exist. | Explicit arenas with a lifetime contract, ownership/freeing, or tracing GC offer different application models. Each needs alias/liveness rules; choosing one is runtime feature work. |
 | No compiler-configurable memory quota, execution fuel, or recursion limit. Guest loops and recursive calls execute synchronously. | Nontermination and stack/resource exhaustion depend on the engine and embedding. A same-thread JavaScript timer cannot interrupt a running synchronous Wasm call. | Use an engine with resource controls or run work in a terminable worker/process. Bound normal input sizes and recursion explicitly; limits in test harnesses are not guest execution controls. | Add runtime quotas or a cancellation/fuel contract if required. Instrumented checks change generated behavior/output and must be scoped as a separate feature. |
@@ -407,7 +421,7 @@ and [memory tests](../crates/compiler/src/codegen/memory_tests.rs).
 ### Floating remainder is not a naive arithmetic rewrite
 
 Source `%` now implements truncating remainder directly. The optional guest
-`(f64, f64) -> f64` helper is appended after users and any seven memory helpers
+`(f64, f64) -> f64` helper is appended after users and required memory helpers
 only when `%` occurs anywhere in the typed AST, including unexported bodies,
 unreachable statements, and runtime-skipped operands. It adds no implicit host
 import and requires no Memory/Global/Data sections. Output without `%` is unchanged.
@@ -440,13 +454,18 @@ Evidence: [host.rs](../crates/compiler/src/host.rs), [abi.rs](../crates/compiler
   Grant host capabilities deliberately; providers run with their embedding's
   privileges.
 - `number` crosses the raw boundary as `f64`; `bool` as `i32` (host-call boundaries
-  normalize nonzero values to `1`); `string` and `number[]` as distinct language
+  normalize nonzero values to `1`); `string`, `number[]`, `bool[]` and `string[]` as distinct language
   types represented by `i32` descriptor handles. Raw Wasm signatures cannot
   distinguish these `i32` meanings. Descriptors carry no runtime type tag.
 - Handles are instance-local. Hosts must keep published descriptor metadata
   unchanged, preserve valid UTF-8 and immutable string bytes, and use the
   instance's exported `__alloc`/`memory` to construct results. Trusted raw-ABI
   hosts may mutate array elements. Recreate memory views after possible growth.
+- Array entry/length checks validate complete descriptor/payload ranges and
+  type-specific alignment without scans. Consumed bool bytes other than 0/1 trap;
+  consumed string-array handles receive structural string checks. Equality/iteration
+  may leave later invalid elements unvisited; ordinary replacement never consumes
+  the old value. This differs from scalar host boolean normalization.
 - Guest checks validate descriptor alignment/ranges and array alignment, not
   UTF-8, ownership, string immutability, or the host's honesty. Exported memory
   gives the host direct access; bounds checks do not isolate a malicious host.
@@ -487,7 +506,7 @@ compiler-to-runner path, failures, raw calls, and explicit ABI conversion.
 | Raw Node calls/imports | `instantiate(bytes, imports)` returns `{ instance, call }`. Export calls and CommonJS provider callbacks use raw `f64` numbers and `i32` booleans/descriptor handles; no automatic string/array marshaling or language interface is supplied. | The application must know its signatures and provide every import. Providers are trusted executable code, not sandboxed guest source. |
 | Explicit conversion | `createAbi(() => instance)` offers `encode(type, value)` and `decode(type, value)`. Strings/arrays are copied only when the application explicitly converts them. | Pass encoded handles to raw calls and return encoded handles from hosts. Mutating a decoded native array does not mutate guest storage; use direct memory access for shared mutation or zero-copy access. |
 | Artifact format | The Node runner needs binary Wasm, not WAT. There is no WASI `_start` or automatic guest start function. | Explicitly invoke an exported user function after instantiation. WAT is for inspection or must be assembled externally; a WASI entrypoint would be separate packaging/runtime work. |
-| Explicit-copy limits | `createAbi` limits each payload copy to 64 MiB. Its numeric-array encoder accepts plain JavaScript arrays of numbers, not typed arrays, and its string decoder rejects invalid UTF-8. | Use direct memory access for a different application-defined policy. Copy limits are not a guest heap quota or execution budget; guest descriptor checks alone do not validate UTF-8. |
+| Explicit-copy limits | Standalone string/numeric-array copies retain their 64 MiB payload limits. #37's implemented adapter limits each bool/string-array encode/decode to 64 MiB aggregate logical bytes (`N` or `4*N + per-occurrence UTF-8`). Encoding captures the initial length/scalars once and validates/accounts/copies the same snapshot; getter side effects are not rolled back. Its numeric-array encoder accepts plain JavaScript arrays of numbers, not typed arrays, and its string decoder rejects invalid UTF-8. | Use direct memory access for a different application-defined policy. Copy limits are not a guest heap quota or execution budget; guest descriptor checks alone do not validate UTF-8. |
 | Export collisions | Memory-backed modules require `memory` and `__alloc`, so user exports cannot collide with them. Scalar-only modules may export functions with those names; the Node runtime does not reserve names. | Leave conflicting functions unselected or use different public names. Hiding a function does not remove its body; callable ABI helpers remain accessible through the raw runtime. |
 | Runner invocation | `--args` accepts a JSON array of numeric raw arguments and defaults to `[]`; `--entry` defaults to `main`; `--imports` loads a CommonJS provider. Native strings/nested arrays are not marshaled. JSON has no NaN or infinity literals. Runner failures, including invalid options, exit `1`; successful `void` calls print no result. | Use programmatic raw calls for special numbers or explicit string/array allocation. Descriptor arguments must already be valid handles in the instance. Promise results are not awaited. |
 

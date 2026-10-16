@@ -137,14 +137,20 @@ fn expression_and_block_results_cover_every_concrete_type_and_void() {
         ("1", Type::Number),
         ("true", Type::Bool),
         ("\"é\"", Type::String),
-        ("[1, 2]", Type::NumberArray),
+        (
+            "[1, 2]",
+            Type::Array(was_compiler::ArrayElementType::Number),
+        ),
         ("1..3", Type::Range),
         ("{}", Type::Void),
         ("{ loop {} }", Type::Void),
         ("{ return; }", Type::Void),
         ("{ if true { return 1; } 2 }", Type::Number),
         ("{ if true { return true; } false }", Type::Bool),
-        ("loop { break [1]; }", Type::NumberArray),
+        (
+            "loop { break [1]; }",
+            Type::Array(was_compiler::ArrayElementType::Number),
+        ),
     ] {
         let source = format!("fn main() {{ let f = () => {body}; }}");
         let program = Compiler::new()
@@ -279,8 +285,14 @@ fn captured_compounds_keep_numeric_types_and_original_binding_provenance() {
     };
 
     for op in ["+=", "-=", "*=", "/=", "%="] {
-        for (initial, target, ty) in [("8", "x", Type::Number), ("[8]", "x[0]", Type::NumberArray)]
-        {
+        for (initial, target, ty) in [
+            ("8", "x", Type::Number),
+            (
+                "[8]",
+                "x[0]",
+                Type::Array(was_compiler::ArrayElementType::Number),
+            ),
+        ] {
             let source = format!(
                 "fn main() {{ let x = {initial}; {target} {op} 2; let update = () => {{ {target} {op} 3; }}; {target} {op} 4; update(); }}"
             );
@@ -424,7 +436,7 @@ fn nested_iteration_convergence_preserves_original_capture_and_dependency_proven
             TypedCapture {
                 owner: function,
                 variable: VariableId(1),
-                ty: Type::NumberArray,
+                ty: Type::Array(was_compiler::ArrayElementType::Number),
                 mutability: CaptureMutability::Mutable,
             },
             range_capture.clone(),
@@ -859,7 +871,11 @@ fn nested_capture_types_shadowing_and_skipped_places_preserve_original_owners() 
         ("1", "2", Type::Number),
         ("true", "false", Type::Bool),
         ("\"first\"", "\"second\"", Type::String),
-        ("[1]", "[2]", Type::NumberArray),
+        (
+            "[1]",
+            "[2]",
+            Type::Array(was_compiler::ArrayElementType::Number),
+        ),
         ("1..2", "3..4", Type::Range),
     ] {
         let source = format!(
@@ -968,7 +984,11 @@ fn captured_locals_retain_concrete_types_and_indexed_places_use_original_array_b
         ("1", "2", Type::Number),
         ("true", "false", Type::Bool),
         ("\"first\"", "\"second\"", Type::String),
-        ("[1]", "[2]", Type::NumberArray),
+        (
+            "[1]",
+            "[2]",
+            Type::Array(was_compiler::ArrayElementType::Number),
+        ),
         ("1..2", "3..4", Type::Range),
     ] {
         let source = format!(
@@ -1096,7 +1116,7 @@ fn captures_preserve_all_concrete_types_original_identity_and_declaration_order(
             (
                 BindingOwner::Function(FunctionId(0)),
                 VariableId(3),
-                Type::NumberArray,
+                Type::Array(was_compiler::ArrayElementType::Number),
                 CaptureMutability::Mutable
             ),
             (

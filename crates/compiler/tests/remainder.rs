@@ -456,7 +456,7 @@ fn value(ty: Type) -> TypedExpr {
         Type::Number => TypedExprKind::Number("1".into()),
         Type::Bool | Type::Void => TypedExprKind::Bool(false),
         Type::String => TypedExprKind::String("text".into()),
-        Type::NumberArray => TypedExprKind::Array(vec![]),
+        Type::Array(element) => TypedExprKind::Array(vec![], element),
         Type::Range => TypedExprKind::Range {
             start: Box::new(number("0")),
             end: Box::new(number("1")),
@@ -559,7 +559,12 @@ fn assert_forged_error(expr: TypedExpr, expected: CodegenError, span: Span) {
 #[test]
 fn forged_remainder_result_and_each_operand_must_be_number_even_when_unreachable_or_skipped() {
     let span = Span::new(31, 67);
-    for found in [Type::Bool, Type::String, Type::NumberArray, Type::Void] {
+    for found in [
+        Type::Bool,
+        Type::String,
+        Type::Array(was_compiler::ArrayElementType::Number),
+        Type::Void,
+    ] {
         for expr in [
             binary(number("1"), BinaryOp::Remainder, number("2"), found),
             remainder(value(found), number("2")),
@@ -582,7 +587,11 @@ fn forged_remainder_result_and_each_operand_must_be_number_even_when_unreachable
 #[test]
 fn forged_remainder_validates_nested_operand_kinds_and_reports_left_to_right_errors() {
     let span = Span::new(42, 78);
-    for found in [Type::Bool, Type::String, Type::NumberArray] {
+    for found in [
+        Type::Bool,
+        Type::String,
+        Type::Array(was_compiler::ArrayElementType::Number),
+    ] {
         let mut wrong_kind = value(found);
         wrong_kind.ty = Type::Number.into();
         for expr in [
@@ -962,7 +971,11 @@ fn node_remainder_array_elements_index_assignments_calls_and_content_equality_wi
         source,
         &[
             ("mark", vec![Type::Number], Type::Number),
-            ("wrap", vec![Type::NumberArray], Type::NumberArray),
+            (
+                "wrap",
+                vec![Type::Array(was_compiler::ArrayElementType::Number)],
+                Type::Array(was_compiler::ArrayElementType::Number),
+            ),
         ],
         r#"
         const events = [];

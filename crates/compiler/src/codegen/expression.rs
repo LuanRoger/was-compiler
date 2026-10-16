@@ -4,10 +4,10 @@ use crate::{
     tokens::Span,
     typed_ast::{ExprResult, TypedExpr, TypedExprKind, TypedValueBlock},
 };
-use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
+use wasm_encoder::{BlockType, Instruction, ValType};
 
 use super::{
-    CodegenError, abi, call, control_flow, expect_operand, expect_result,
+    CodegenError, call, control_flow, expect_operand, expect_result,
     function::{BodyEmitter, LoopKind},
     match_,
     memory::Helper,
@@ -33,7 +33,7 @@ fn eager_result(ty: Type, operands: &[&TypedExpr]) -> ExprResult {
 pub(super) fn wasm_result(result: ExprResult) -> Option<ValType> {
     match result {
         ExprResult::Value(Type::Number) => Some(ValType::F64),
-        ExprResult::Value(Type::Bool | Type::String | Type::NumberArray | Type::Range) => {
+        ExprResult::Value(Type::Bool | Type::String | Type::Array(_) | Type::Range) => {
             Some(ValType::I32)
         }
         ExprResult::Value(Type::Void) | ExprResult::Void | ExprResult::Never => None,
@@ -168,11 +168,14 @@ pub(super) fn emit(
                 }
                 if *op == BinaryOp::In {
                     body.call(body.range_helper(range::Helper::Contains));
-                } else if matches!(operand_type, Type::String | Type::NumberArray) {
+                } else if matches!(operand_type, Type::String | Type::Array(_)) {
                     body.call(body.helper(if operand_type == Type::String {
                         Helper::StringEqual
                     } else {
-                        Helper::ArrayEqual
+                        let Type::Array(element) = operand_type else {
+                            unreachable!()
+                        };
+                        super::array::equality(element)
                     }));
                     if *op == BinaryOp::NotEqual {
                         body.instruction(&Instruction::I32Eqz);
@@ -215,19 +218,19 @@ pub(super) fn emit(
             (Flow::FALLTHROUGH, Type::String.into())
         }
 
-        TypedExprKind::Array(elements) => {
+        TypedExprKind::Array(elements, element_type) => {
             let predicted = if elements
                 .iter()
                 .any(|element| element.ty == ExprResult::Never)
             {
                 ExprResult::Never
             } else {
-                Type::NumberArray.into()
+                Type::Array(*element_type).into()
             };
 
             expect_result(function, predicted, expr.ty, span)?;
-            let flow = values::emit_array(elements, body, span)?;
-            (flow, result(flow, Type::NumberArray))
+            let flow = values::emit_array(elements, *element_type, body, span)?;
+            (flow, result(flow, Type::Array(*element_type)))
         }
 
         TypedExprKind::Range {
@@ -254,12 +257,10 @@ pub(super) fn emit(
         TypedExprKind::Index { expr: base, index } => {
             values::expect_index_types(base, index, expr.ty, body, span)?;
             let flow = values::emit_address(base, index, body, span)?;
-            body.instruction(&Instruction::F64Load(MemArg {
-                offset: 0,
-                align: abi::NUMBER_ELEMENT_ALIGN_LOG2,
-                memory_index: 0,
-            }));
-            (flow, result(flow, Type::Number))
+            let element = super::array::element(base);
+            body.instruction(&super::array::load(element, 0));
+            super::array::consume(element, body);
+            (flow, result(flow, element.value_type()))
         }
 
         TypedExprKind::Loop { id, body: block } => {

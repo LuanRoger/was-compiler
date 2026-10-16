@@ -1255,8 +1255,8 @@ async function main() {
             ['candidate', 'env', '', [], 'void'],
             ['candidate', 'env', 'run', ['void'], 'void'],
             ['candidate', 'env', 'run', ['unknown'], 'void'],
-            ['candidate', 'env', 'run', ['bool[]'], 'void'],
-            ['candidate', 'env', 'run', ['string[]'], 'void'],
+            ['candidate', 'env', 'run', ['bool[][]'], 'void'],
+            ['candidate', 'env', 'run', ['string[][]'], 'void'],
             ['candidate', 'env', 'run', [], 'unknown'],
         ]) {
             fails(() => compiler.registerHostFunction(...args));
@@ -1451,7 +1451,7 @@ async function main() {
     });
 
     test('range host parameters, results, and reserved names are rejected atomically', compiler => {
-        const privateRange = /^host registration error: Host function 'candidate' uses unsupported ABI type Range; range values are private and cannot cross host imports; use number, bool, string, number\[\] parameters\/results or void results$/;
+        const privateRange = /^host registration error: Host function 'candidate' uses unsupported ABI type Range; range values are private and cannot cross host imports; use number, bool, string, number\[\], bool\[\], string\[\] parameters\/results or void results$/;
         for (const [params, result] of [[['range'], 'void'], [[], 'range'], [['number', 'range'], 'number']]) {
             fails(() => compiler.registerHostFunction('candidate', 'env', 'run', params, result), privateRange);
         }

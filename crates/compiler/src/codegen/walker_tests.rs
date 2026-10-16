@@ -118,10 +118,13 @@ fn fixture() -> TypedBlock {
                     func: FunctionRef::Host(HostFunctionId(0)),
                     name: "call".into(),
                     args: vec![
-                        expr(TypedExprKind::Array(vec![
-                            expr(TypedExprKind::String("first".into())),
-                            expr(TypedExprKind::Number("second".into())),
-                        ])),
+                        expr(TypedExprKind::Array(
+                            vec![
+                                expr(TypedExprKind::String("first".into())),
+                                expr(TypedExprKind::Number("second".into())),
+                            ],
+                            crate::ast::ArrayElementType::Number,
+                        )),
                         expr(TypedExprKind::Bool(false)),
                     ],
                 }),
@@ -146,7 +149,10 @@ fn fixture() -> TypedBlock {
                         cond: Box::new(expr(TypedExprKind::Bool(true))),
                         body: vec![statement(
                             6,
-                            TypedStatementKind::Expression(expr(TypedExprKind::Array(vec![]))),
+                            TypedStatementKind::Expression(expr(TypedExprKind::Array(
+                                vec![],
+                                crate::ast::ArrayElementType::Number,
+                            ))),
                         )],
                     },
                 )]),
@@ -212,7 +218,7 @@ impl Visitor<'_> for Recorder {
             TypedExprKind::Call { .. } => "call".into(),
             TypedExprKind::LexicalCall { .. } => "lexical-call".into(),
             TypedExprKind::NormalizedCall(_) => "normalized-call".into(),
-            TypedExprKind::Array(_) => "array".into(),
+            TypedExprKind::Array(_, _) => "array".into(),
             TypedExprKind::Index { .. } => "index".into(),
             TypedExprKind::Block(_) => "value-block".into(),
             TypedExprKind::If { .. } => "value-if".into(),

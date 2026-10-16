@@ -73,7 +73,7 @@ The compiler emits valid modules containing registered function imports,
 parameters and locals of every nonvoid language type, variable reads and
 assignments (including numeric compound updates), expression statements, returns,
 user/host function calls, `if`/`else`, and `while` / range/array `for` with
-`break;` / `continue;`. Strings, numeric arrays, checked array access/assignment, and built-in
+`break;` / `continue;`. Strings, `number[]`/`bool[]`/`string[]`, checked array access/assignment, and built-in
 `len` are supported. Empty `void` functions and bare `return;` statements work too.
 Calls can be forward, nested, self-recursive, or mutually recursive; arguments
 are evaluated left-to-right in written order. User functions also accept named
@@ -189,6 +189,46 @@ including rebuilt-browser and full ignored runtime coverage for #30, before #31.
 [#31 validation passed](docs/local-callable-interface.md#issue-31-validation-2026-10-14). WP12 placeholders and
 WP13 optimization are separately scoped.
 
+<a id="typed-arrays-37-core-implemented-release-validation-pending"></a>
+
+### Typed arrays (#37; implemented, release gates passed)
+
+The compiler core supports fixed-length mutable `number[]`, `bool[]` and
+`string[]`, including typed indexing/replacement, `len`, content equality,
+iteration, calls/results and shared captures. Each literal allocates fresh storage;
+assignment and passing share handles. String-array equality compares string
+contents, not handles. Compounds remain numeric-only.
+
+```text
+fn empty() -> string[] { return []; }
+fn main() -> bool {
+    let flags: bool[] = [];
+    flags = [true, false];
+    flags[1] = true;
+    let texts = ["hello", "world"];
+    for text in texts { if text == "world" { return flags[1]; } }
+    return false;
+}
+```
+
+Annotations, destinations, mapped call formals and explicit named-function results
+can type empty literals through block/if/match/loop values. Unconstrained `[]`
+remains `number[]`; branches, other returns and callers do not reinterpret it.
+Omitted/anonymous results remain independently inferred, and pipeline inputs are
+not typed backward from stages. Mixed/nested arrays, `range[]` and `void[]` are
+unsupported. Defaults/contracts keep their whitelist (no literals or indexing).
+
+[#37 contracts, Rust migration and release evidence](docs/typed-arrays.md) describe
+`Type::Array(ArrayElementType::{Number,Bool,String})`, typed-tree changes and lazy
+consumed-element validation. Core, CLI/browser adapters and Node marshaling are
+implemented; [final release gates passed](docs/typed-arrays-validation-2026-10-15.txt)
+after the accessor-snapshot fix: 1,251 workspace tests passed with none ignored,
+25 browser smoke groups passed, and native/browser Clippy, portable core and
+rebuilt-browser checks passed. M4 [comparison tables](docs/benchmarks/m4-typed-arrays/comparison.md)
+and [optimization handoff](docs/benchmarks/m4-typed-arrays/handoff.md) retain their
+historical pre-fix runtime hash; final hashes are recorded separately. Earlier
+extension release evidence remains historical.
+
 ### Local callables and shared captures (WP11; release gates passed)
 
 ```text
@@ -209,7 +249,7 @@ positional, once-only and left-to-right. Ordinary named/default calls and contra
 inside closure bodies retain their existing behavior.
 
 Closures may share ancestor parameters and ordinary lets of type
-`number`, `bool`, `string`, `number[]` or `range`. Reassignment from either side is
+`number`, `bool`, `string`, `number[]`, `bool[]`, `string[]` or `range`. Reassignment from either side is
 visible to the other; ordinary indexed array writes retain alias semantics. #32
 forwards each original binding through every intermediate helper, without copying
 its value or allocating another cell. Earlier context-requiring callable dependencies
@@ -291,10 +331,11 @@ covers complete WP10 support.
 
 Local declarations support both `let name = initializer;` and the existing
 `let name: type = initializer;`. Without an annotation, the initializer determines
-the local's concrete type: `number`, `bool`, `string`, `number[]`, or `range`. This works for
-all value-producing expressions, including calls, blocks, and `if`; `[]` infers
-`number[]` because numeric arrays are the only array type. Explicit annotations
-still require an exact match.
+the local's concrete type: `number`, `bool`, `string`, `number[]`, `bool[]`,
+`string[]`, or `range`. This works for value-producing expressions, including
+calls, blocks, and `if`; unconstrained `[]` retains the `number[]` fallback.
+An explicit array annotation supplies literal context but still requires exact
+types, without coercions. See [contextual typing](docs/typed-arrays.md#contextual-literal-typing-and-stable-inference).
 
 ```text
 fn main() -> number {
@@ -397,7 +438,7 @@ and its magnitude is less than the finite nonzero divisor's magnitude.
 Wasm has no `f64.rem`, so `%` calls an optional guest `(f64, f64) -> f64` helper.
 It uses exact binary scaled subtraction rather than `a - trunc(a / b) * b`,
 requires no implicit host import or Memory/Global/Data sections, and is appended
-after all user functions and any seven memory helpers. It is included only when
+after all user functions and any required memory helpers. It is included only when
 `%` or `%=` occurs anywhere in the typed AST, including unexported functions,
 unreachable statements, and runtime-skipped code. Programs without either retain the same
 output. The browser compiler uses the same pipeline and remainder semantics.
@@ -694,9 +735,10 @@ fn main() -> number {
 ```
 
 This yields `0`, `2`, `4`, `6` and returns `10`. `for name in iterable { body }`
-accepts `range` or `number[]` with Never compatibility. The iterable evaluates once
-in the enclosing context **before** activating the new loop or introducing its read-only `number`
-binding. Break/continue inside that expression targets the outer nearest loop,
+accepts `range`, `number[]`, `bool[]` or `string[]` with Never compatibility.
+The iterable evaluates once in the enclosing context **before** activating the
+new loop or introducing its read-only scalar element binding (`number` for ranges).
+Break/continue inside that expression targets the outer nearest loop,
 or is invalid without one; return/divergence is preserved. The body may introduce
 an inner shadowing `let` that is mutable; assigning or compound-updating the
 iteration binding itself is rejected.
@@ -737,7 +779,8 @@ This returns `24`, observing the changed second element of the original array.
 `For { id, variable, name, iterable: Box<TypedExpr>, body }`; public consumers must
 update constructors and exhaustive matches. Read-only checks derive from For
 provenance, without new public mutable-binding metadata. Issue #5 changes no
-parser or raw/typed AST shape.
+parser or raw/typed AST shape. Subsequently #37 adds `element_type: Type` to
+this typed `For`; see the [Rust migration](docs/typed-arrays.md#public-rust-migration).
 
 **WP5 implementation is complete and all release gates passed.** The CLI
 and browser support construction, internal range calls, membership, and both

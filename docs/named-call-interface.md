@@ -46,6 +46,33 @@ subset evidence. WP12 remains deferred. WP13 requires separate
 authorization; later packages
 reuse the approved interfaces only after their ordered integration/release gates.
 
+### Typed-array interaction (#37)
+
+#37 generalizes arrays to `number[]`, `bool[]` and `string[]` across core,
+adapters and explicit Node marshaling. [Final release gates passed](typed-arrays-validation-2026-10-15.txt)
+after the accessor fix (1,251 workspace tests, none ignored; 25 browser smoke
+groups). See [the array contracts and Rust migration](typed-arrays.md). Earlier WP
+release records retain their historical scope.
+
+Map named arguments before selecting their formal's expected type; positional
+and named written literals can therefore use a `bool[]`/`string[]` formal as
+context for `[]`, including through value-block/if/match/loop paths. Preserve
+structural-error precedence, written evaluation order, hygienic earlier-formal
+default reads and caller transfer contexts. Concrete call results are checked,
+not specialized backward. Omitted named and anonymous results remain independently
+inferred across checking passes; sibling returns/branches and callers cannot
+reinterpret their empty literals.
+
+Pipeline input analysis remains independent and precedes stage lookup/binding:
+`[] |> take_flags` is not contextually boolean, even if formal 0 is `bool[]`.
+Later stages do not type earlier inputs/results backward. Written stage arguments
+receive their own mapped remaining formal expectations.
+
+Defaults/contracts generalize array-reference reads, equality and `len` without
+widening their whitelist: array literals/indexing remain rejected, including
+skipped expressions. Defaults can share earlier array handles, never copy them
+implicitly. Raw exports remain full-arity and carry no defaults/type metadata.
+
 ### Public AST migration
 
 - Raw calls now use `Vec<ast::CallArgument>`, not `Vec<Expr>`. Wrap positional

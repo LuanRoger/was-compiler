@@ -358,15 +358,20 @@ fn hidden_skipped_and_unreachable_loop_bodies_and_transfers_are_all_checked() {
 fn transfers_preserve_planning_of_unreachable_locals_temporaries_strings_and_helpers() {
     let span = Span::new(12, 34);
     let array = TypedExpr {
-        kind: TypedExprKind::Array(vec![number()]),
-        ty: Type::NumberArray.into(),
+        kind: TypedExprKind::Array(vec![number()], crate::ast::ArrayElementType::Number),
+        ty: Type::Array(crate::ast::ArrayElementType::Number).into(),
     };
     let string = TypedExpr {
         kind: TypedExprKind::String("after".into()),
         ty: Type::String.into(),
     };
     let following = vec![
-        declaration(99, Type::NumberArray, array, span),
+        declaration(
+            99,
+            Type::Array(crate::ast::ArrayElementType::Number),
+            array,
+            span,
+        ),
         TypedStatement {
             kind: TypedStatementKind::Expression(string),
             span,

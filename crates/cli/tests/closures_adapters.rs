@@ -415,7 +415,7 @@ fn cli_capture_lifetime_survives_recursion_reentry_trap_and_memory_growth() {
             "retain",
             "env",
             "retain",
-            vec![Type::NumberArray],
+            vec![Type::Array(was_compiler::ArrayElementType::Number)],
             Type::Void,
         )
         .unwrap();

@@ -1577,8 +1577,8 @@ fn lexical_calls_require_declaration_time_scope_and_canonical_exact_dependencies
 #[test]
 fn nested_helpers_plan_locals_and_scratch_without_polluting_the_creator() {
     let array = TypedExpr {
-        kind: TypedExprKind::Array(vec![number("3")]),
-        ty: Type::NumberArray.into(),
+        kind: TypedExprKind::Array(vec![number("3")], was_compiler::ArrayElementType::Number),
+        ty: Type::Array(was_compiler::ArrayElementType::Number).into(),
     };
     let nested = closure(
         1,
@@ -1587,7 +1587,7 @@ fn nested_helpers_plan_locals_and_scratch_without_polluting_the_creator() {
             vec![statement(TypedStatementKind::Let {
                 id: VariableId(0),
                 name: "array".into(),
-                ty: Type::NumberArray,
+                ty: Type::Array(was_compiler::ArrayElementType::Number),
                 value: array,
             })],
             Some(number("9")),
@@ -1739,7 +1739,7 @@ fn unreachable_closure_tails_are_checked_against_the_signature() {
 fn closure_signatures_validate_unused_handle_parameters_before_the_body() {
     for (ty, expected_calls) in [
         (Type::String, vec![2]),
-        (Type::NumberArray, vec![3]),
+        (Type::Array(was_compiler::ArrayElementType::Number), vec![3]),
         (Type::Range, vec![9]),
     ] {
         let mut declaration = closure(
@@ -2820,7 +2820,7 @@ fn ancestor_forwarding_preserves_every_concrete_type_through_three_intermediates
         Type::Number,
         Type::Bool,
         Type::String,
-        Type::NumberArray,
+        Type::Array(was_compiler::ArrayElementType::Number),
         Type::Range,
     ] {
         let owner = BindingOwner::Function(FunctionId(0));
@@ -3824,7 +3824,7 @@ fn captured_compounds_reject_every_nonnumeric_rhs_category_and_check_divergent_i
         for ty in [
             Type::Bool,
             Type::String,
-            Type::NumberArray,
+            Type::Array(was_compiler::ArrayElementType::Number),
             Type::Range,
             Type::Void,
         ] {

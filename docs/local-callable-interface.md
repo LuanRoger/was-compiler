@@ -70,6 +70,36 @@ results, calls and transfers through existing checked lowering. Context-free hel
 have only explicit parameters and allocate no callable environment. Ordinary body
 operations and handle signatures may still require memory.
 
+## Typed-array interaction (#37)
+
+#37 adds `bool[]` and `string[]` to the existing shared-binding/callable contracts,
+including adapters/runtime. [Final #37 release gates passed](typed-arrays-validation-2026-10-15.txt)
+after the accessor fix (1,251 workspace tests, none ignored; 25 browser smoke
+groups). #35's record remains evidence for the earlier WP11 surface, not #37.
+See [typed-array contracts and Rust migration](typed-arrays.md).
+
+Array captures share the original handle/binding and mutable storage, including
+nested forwarding and earlier live callable contexts. Typed indexing and ordinary
+replacement use the original static element type; only numeric elements support
+compounds. Iteration yields a read-only `bool` or `string` (or existing `number`)
+and validates the consumed element before binding/capture promotion/body effects.
+A captured string iteration value retains its yielded immutable string handle;
+later replacement of the source array slot does not replace that scalar binding.
+Alias mutations to future unvisited slots remain visible to iteration.
+
+The private uniform eight-byte capture-cell/environment layout is unchanged;
+one-byte boolean payloads and four-byte string-array slots do not imply packed
+capture storage. Preserve fresh per-yield cells, original read-only provenance,
+transitive forwarding, invocation-local recursion/reentry contexts, monotonic
+allocation and completed effects after traps. Refresh host views after growth.
+
+Anonymous results remain independently inferred with no new result annotation
+syntax: `let empty = () => [];` infers `number[]`, not a later caller's expected
+array type. Explicit callable parameter types do supply call-argument literal
+context. Public typed literals now carry `ArrayElementType`, and typed `For` adds
+`element_type: Type`, independently checked against the iterable even for forged,
+unreachable or skipped input. See [the public migration](typed-arrays.md#public-rust-migration).
+
 ## Backend implementation ownership
 
 `crates/compiler/src/codegen/closures.rs` is a private child module of

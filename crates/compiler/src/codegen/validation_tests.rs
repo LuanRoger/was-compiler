@@ -469,7 +469,10 @@ fn empty_program_and_import_only_memory_modules_are_checked_without_user_bodies(
 fn checked_boundary_matches_the_existing_independent_abi_fixture() {
     let mut compiler = Compiler::with_options(CompilerOptions::default());
     for (name, ty) in [
-        ("echo_array", Type::NumberArray),
+        (
+            "echo_array",
+            Type::Array(crate::ast::ArrayElementType::Number),
+        ),
         ("echo_string", Type::String),
         ("echo_bool", Type::Bool),
     ] {

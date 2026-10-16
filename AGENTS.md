@@ -31,6 +31,7 @@ execution engine. Host registration declares imports; it does not install callba
 | --- | --- |
 | [Compilation roadmap](docs/compilation-roadmap.md) | Architecture, milestones, acceptance criteria |
 | [Memory ABI](docs/memory-abi.md) | Authoritative descriptor, allocation, ownership, and host contract |
+| [Typed arrays #37](docs/typed-arrays.md) | Contextual typing, Rust migration, consumed validation, adapter copy contract and final release evidence |
 | [Limitations](docs/limitations.md) | Implemented restrictions versus possible alternatives |
 | [Runtime integration](docs/runtime-integration.md) | CLI, raw execution, imports, explicit marshaling |
 | [Browser guide](docs/browser.md) | Compiler-in-Wasm API, packaging, playground integration |
@@ -178,7 +179,14 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   [named-call interface](docs/named-call-interface.md) for origins, ownership,
   diagnostic staging, whitelist, and earlier-formal read rules.
 
-- Types: `number`, `bool`, `string`, `number[]`, `range`, and `void`. Parameters
+- #37 is implemented for `number[]`, `bool[]` and `string[]`, including CLI/browser
+  adapters and Node marshaling. [Final release gates passed](docs/typed-arrays-validation-2026-10-15.txt)
+  after the accessor-snapshot fix (1,251 workspace tests, none ignored; 25 browser
+  smoke groups). Before changing array typing,
+  element lowering, iteration metadata or marshaling, read
+  [the contracts and Rust migration](docs/typed-arrays.md). Earlier WP release
+  records do not validate #37.
+- Types: `number`, `bool`, `string`, `number[]`, `bool[]`, `string[]`, `range`, and `void`. Parameters
   require explicit types. Omitted function results infer concrete types from
   reachable explicit returns, or void without value-return syntax. Recursive
   components require all results annotated, even across annotated barriers.
@@ -188,8 +196,11 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   Before changing result inference, read [the #14 contract](docs/result-inference-development.md#issue-14-acyclic-chains-and-diamonds)
   for graph separation, diagnostic staging, and concrete/source-order boundaries. Locals accept `let name = initializer;` or
   `let name: type = initializer;`; every declaration requires an initializer.
-  Value-producing expressions infer concrete existing types; `[]` infers `number[]`
-  because only numeric arrays exist. An inferred `Never` initializer is rejected;
+  Value-producing expressions infer concrete existing types; unconstrained `[]`
+  retains the `number[]` fallback. Known array destinations/formals/explicit named
+  results supply literal context through value paths; siblings, callers and later
+  pipeline stages do not. Omitted/anonymous results stay independently inferred.
+    An inferred `Never` initializer is rejected;
   an explicitly typed divergent initializer is accepted. No coercions are added.
 - Local inference adds no source `i32` type, promotions, implicit coercions,
   parameter inference, or whole-program type unification. `number` remains `f64`.
@@ -201,7 +212,7 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   Statement-only `+= -= *= /= %=` accept `number` variables and numeric-array elements, not whole arrays.
 - Expressions support literals, parentheses, unary `-`/`!`, arithmetic
   `+ - * / %`, numeric comparisons, boolean equality and short-circuit `&&`/`||`,
-  string equality, numeric-array equality, indexing, and built-in `len(array)`.
+  string equality, same-type array content equality, typed indexing, and built-in `len(array)`.
   Tail-valued blocks and `if`/`else if` expressions support all concrete result
   types. Value-context if requires else and exact branch joins, allowing `Never`.
   Statement-if may omit else and discards branch tails. WP9 adds scoped match
@@ -213,14 +224,15 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   values work with locals/assignment, internal signatures, blocks/if/value loops,
   and exact/Never joins; equality is rejected. `number in range` yields `bool` at
   comparison precedence with existing left associativity; `in` is reserved.
-  Reserved `for name in iterable { body }` accepts `range` or `number[]` with
-  Never compatibility and introduces a read-only `number` binding; an inner
+  Reserved `for name in iterable { body }` accepts `range` or any supported array
+  with Never compatibility and introduces a read-only scalar element binding
+  (`number` for ranges); an inner
   shadowing `let` remains mutable. Issue #6 completes adapter/interaction implementation;
   all WP5 release gates passed, with exact evidence in
   [extension plan §5](docs/was_language_extensions_plan.md#5-documentation-and-validation-workflow).
   Before changing ranges or for, read extension spec §§5–6 and the
   [private record contract](docs/memory-abi.md#private-range-record).
-- Strings are immutable raw UTF-8 values. Numeric arrays have fixed lengths and
+- Strings are immutable raw UTF-8 values. All supported arrays have fixed lengths and
   mutable shared storage; every evaluated array literal allocates fresh storage.
 - `//` line comments and non-nesting `/* ... */` block comments are supported
   between tokens anywhere whitespace can appear; delimiters inside strings remain text.
@@ -230,12 +242,40 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   escapes, exponent literals,
   `.5`, `1.`, string concatenation/indexing/`len`, or general postfix
   chaining. Source indexing starts from an identifier.
-- No other array element types, modules, first-class functions, generics, free, or garbage
+- No nested arrays, `range[]`, `void[]`, other array element types, modules,
+  first-class functions, generics, free, or garbage
   collection. Consult the limitations document before claiming support.
 - Source parsing requires at least one function; the lower-level typed API can
   represent an empty program. An empty `void` body is valid.
 
 ## Compatibility contracts
+
+<a id="typed-arrays-37-core-implemented-release-validation-pending"></a>
+
+### Typed arrays (#37; implemented, release gates passed)
+
+- Public Rust types use root-exported `Type::Array(ArrayElementType::{Number,Bool,String})`;
+  `Type::NumberArray` is removed without an alias. Typed literals use
+  `Array(Vec<TypedExpr>, ArrayElementType)` even when Never; typed `For` adds
+  `element_type: Type`, independently checked against its iterable.
+- Keep shared statically selected checked operations in private `codegen/array.rs`:
+  number slots width/alignment 8, bool 1, string-array handles 4. String payloads
+  remain UTF-8 bytes (width 1, byte length), not string-array slots.
+- Validate complete outer storage without scans. Consumed bool bytes must be 0/1;
+  consumed string handles receive structural validation. Equality checks both
+  outer storages then consumes left/right pairs until mismatch; iteration checks
+  each yielded value before binding/capture promotion. Length does not consume.
+- Replacement retains its checked pre-RHS destination without consuming the old
+  value; compounds remain numeric-only. Preserve literal allocation-before-effects,
+  alias visibility, untagged descriptors, capture lifetimes and no trap rollback.
+- Node new-array copies require plain JS arrays, mutation isolation, view refresh
+  after growth and checked 64 MiB aggregate accounting (`N` bool bytes;
+  `4*N + per-occurrence UTF-8` string-array bytes). Standalone limits stay unchanged.
+  Encoding captures initial length/each scalar once and validates/accounts/copies
+  that snapshot, before guest access/allocation, preventing accessor TOCTOU.
+  Use [#37 release evidence](docs/typed-arrays.md#release-validation), not earlier
+  WP records. M4 measurements retain their pre-fix runtime hash; final production
+  hashes are separate in the release record. Benchmarks do not authorize WP13.
 
 ### Local callables and shared captures (WP11; release gates passed)
 
@@ -520,15 +560,16 @@ refactors; specify and test any intentional behavior change explicitly.
   typed AST. Construction-only bytes and existing helper indices remain unchanged;
   membership alone does not require the floating remainder helper.
 
-### Range and numeric-array statement for loops
+### Range and typed-array statement for loops
 
 - Raw statements add `For { name, iterable, body }`; typed statements add
-  `For { id, variable, name, iterable: Box<TypedExpr>, body }`. IDs participate in
+  `For { id, variable, name, element_type: Type, iterable: Box<TypedExpr>, body }`.
+  The scalar element metadata is independently checked. IDs participate in
   existing per-function loop/binding checks. For is a void statement, never a value
   expression; its body is a strict statement vector. Bare breaks are permitted,
   value breaks are rejected even when unreachable.
-- Accept only `range` or `number[]` iterables with Never compatibility. Issue #5
-  reuses the existing parser and raw/typed For shapes.
+- Accept `range`, `number[]`, `bool[]` or `string[]` iterables with Never compatibility.
+  Issue #5 reused the existing shapes; #37 adds typed scalar element metadata.
 - Evaluate the iterable once in the enclosing context before activating the
   loop or binding. Iterable break/continue targets the outer nearest loop, or is
   invalid without one; preserve return/divergence without inventing fallthrough.
@@ -538,12 +579,13 @@ refactors; specify and test any intentional behavior change explicitly.
 - Iteration bindings are read-only for ordinary and compound assignment. Reconstruct
   checked-lowering write restrictions from For provenance, not new public mutable
   metadata. Distinct inner shadowing lets retain ordinary mutable behavior.
-- Array iteration caches its handle and `u32` length once after full `ValidateArray`,
-  even for empty arrays. Use unsigned index tests and load each element through
-  existing checked `ArrayAddress` then `f64` load on its iteration, never snapshot
+- Array iteration caches its handle and `u32` length once after complete typed
+  outer-storage validation, even for empty arrays (no element scan). Use unsigned
+  index tests and typed checked addressing/loads with consumed-value validation
+  before binding/capture promotion/body effects, never snapshot
   elements or cache a raw payload pointer. Alias mutations remain visible; source
   reassignment does not change the captured handle. Continue exits the body latch
-  before index advancement/retest. ABI/helper order is unchanged; array-only for
+  before index advancement/retest. Legacy numeric helper order is unchanged; array-only for
   requires no range helpers.
 - For ranges, validate the consumed record and cache `i64` current/end/step and
   `i32` inclusivity scratch. Test signed endpoints before exact `f64` conversion/yield (zero is +0).
@@ -624,7 +666,7 @@ refactors; specify and test any intentional behavior change explicitly.
 
 ### Numbers and equality
 
-- `number` and array elements are IEEE-754 `f64`, even for integer-looking literals.
+- `number` and numeric-array elements are IEEE-754 `f64`, even for integer-looking literals.
   Overflowing literals are errors; underflow is allowed. Arithmetic can produce
   NaN, infinities, and signed zero. Do not assume finite results or exact integers.
 - `%` is truncating floating remainder, matching JavaScript `%`/`fmod`, not
@@ -633,12 +675,14 @@ refactors; specify and test any intentional behavior change explicitly.
   host import or memory. Never replace it with `a - trunc(a / b) * b`.
 - Remainder preserves the dividend's signed zero; NaN operands, an infinite
   dividend, or a zero divisor produce NaN. Finite `%` infinite returns the dividend.
-- Array equality compares lengths and exact elementwise `f64` values: `+0 == -0`,
+- Numeric-array equality compares lengths and exact elementwise `f64` values: `+0 == -0`,
   but NaN is unequal even when comparing an array handle to itself. No pointer or
   byte-equality shortcut. `!=` is the complement of `==`.
 - Evaluate both array operands before reading compared elements; RHS mutations
   must be visible. Validate **both complete descriptors before early exits**.
-  String equality compares UTF-8 bytes, without normalization or case folding.
+  String and string-array element equality compare UTF-8 bytes, without normalization
+  or case folding. Bool arrays compare canonical values. Only consumed bool/string
+  elements are checked, with no scans or whole-array identity shortcut.
 
 ### Memory and host ABI
 
@@ -648,7 +692,8 @@ refactors; specify and test any intentional behavior change explicitly.
   being distinct language types. Normalize host boolean boundaries to `0`/`1`.
 - A descriptor is eight bytes, eight-byte aligned, with little-endian `u32` data
   pointer at offset `0` and length at offset `4`. String length counts bytes;
-  array length counts eight-byte `f64` elements with eight-byte-aligned payloads.
+  array length counts elements: `number[]` width/alignment 8, `bool[]` 1,
+  `string[]` 4. Descriptors are untagged; static/explicit host types select layout.
   Addresses below `8` are invalid. Valid host payloads need not be contiguous with
   their descriptors. Handles are instance-local and assignments can alias arrays.
 - The bump allocator rounds to eight-byte alignment and reserves at least eight
@@ -656,7 +701,9 @@ refactors; specify and test any intentional behavior change explicitly.
   of 65,535 pages; use widened unsigned range checks and explicit overflow checks.
 - Preserve memory helper order: `Alloc`, `ValidateString`, `ValidateArray`,
   `ArrayAddress`, `ArrayLen`, `StringEqual`, `ArrayEqual`. The optional remainder
-  helper follows user functions and any memory helpers. Scalar-only programs must
+  helper follows user functions and any memory helpers. New typed-array helper
+  groups are deterministic and leave old-type-only helper bytes/indices unchanged.
+  Scalar-only programs must
   not gain memory/global/data sections just to support `%`.
 - Indices must be finite, integral, nonnegative, and in bounds; negative zero
   addresses element zero. Invalid indices/descriptors and allocation failure trap.

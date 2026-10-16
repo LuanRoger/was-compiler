@@ -427,7 +427,7 @@ fn calls_require_exact_argument_types_at_first_and_higher_positions() {
                 Type::Bool,
                 Type::Void,
                 Type::String,
-                Type::NumberArray,
+                Type::Array(crate::ast::ArrayElementType::Number),
             ] {
                 if expected == found {
                     continue;
@@ -612,7 +612,7 @@ fn nested_builtin_argument_types_are_checked_before_emission_in_all_statement_co
             }),
             Err(CodegenError::TypeMismatch {
                 function: "bad".to_owned(),
-                expected: Type::NumberArray,
+                expected: Type::Array(crate::ast::ArrayElementType::Number),
                 found: Type::Number,
                 span,
             }),

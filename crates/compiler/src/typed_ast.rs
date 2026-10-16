@@ -101,6 +101,36 @@ impl ExprResult {
     }
 }
 
+impl TypedExpr {
+    /// Static array storage survives divergent literal and value paths.
+    pub(crate) fn array_element_type(&self) -> Option<crate::ast::ArrayElementType> {
+        if let ExprResult::Value(Type::Array(element)) = self.ty {
+            return Some(element);
+        }
+        if self.ty != ExprResult::Never {
+            return None;
+        }
+        match &self.kind {
+            TypedExprKind::Array(_, element) => Some(*element),
+            TypedExprKind::Block(block) => block.tail.as_deref().and_then(Self::array_element_type),
+            TypedExprKind::If { then, else_, .. } => then
+                .tail
+                .as_deref()
+                .and_then(Self::array_element_type)
+                .or_else(|| {
+                    else_
+                        .as_ref()
+                        .and_then(|b| b.tail.as_deref())
+                        .and_then(Self::array_element_type)
+                }),
+            TypedExprKind::Match { arms, .. } => {
+                arms.iter().find_map(|a| a.body.array_element_type())
+            }
+            _ => None,
+        }
+    }
+}
+
 impl PartialEq<Type> for ExprResult {
     fn eq(&self, other: &Type) -> bool {
         *self == Self::from(*other)
@@ -185,7 +215,8 @@ pub enum TypedExprKind {
         arms: Vec<TypedMatchArm>,
     },
 
-    Array(Vec<TypedExpr>),
+    /// Storage type remains explicit when an element diverges and the result is Never.
+    Array(Vec<TypedExpr>, crate::ast::ArrayElementType),
 
     Index {
         expr: Box<TypedExpr>,
@@ -282,6 +313,8 @@ pub enum TypedStatementKind {
         id: LoopId,
         variable: VariableId,
         name: String,
+        /// Scalar yield type; checked lowering verifies it against the iterable.
+        element_type: Type,
         iterable: Box<TypedExpr>,
         body: TypedBlock,
     },

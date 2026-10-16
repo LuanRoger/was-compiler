@@ -1,0 +1,2 @@
+# Preserve raw command output and its recorded hashes, including final blank lines.
+*.txt whitespace=-blank-at-eof

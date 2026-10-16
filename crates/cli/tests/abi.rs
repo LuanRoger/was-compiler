@@ -19,7 +19,10 @@ fn compiler(level: OptimizationLevel) -> Compiler {
     });
 
     for (name, ty) in [
-        ("echo_array", Type::NumberArray),
+        (
+            "echo_array",
+            Type::Array(was_compiler::ArrayElementType::Number),
+        ),
         ("echo_string", Type::String),
         ("echo_bool", Type::Bool),
     ] {

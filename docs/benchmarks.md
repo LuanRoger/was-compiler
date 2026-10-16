@@ -69,3 +69,255 @@ The initial [2026-10-15 baseline](benchmarks/2026-10-15-workspace.txt) records a
 harness were uncommitted atop the recorded Git revision. The small sample-size run
 is an initial measurement record, not an optimizer comparison or a stable
 performance budget; visible sample spread warrants repeated measurements.
+
+## Issue #37 M0: guest allocation, capacity, and execution baseline
+
+M0 is measurement-only, before typed-array production changes. It adds no
+production exports, dependencies, manifest entries, compiler transformations, or
+marshaling API. The original 45 compiler benchmarks and their timing boundaries
+above are unchanged; guest execution is **not** included in those timings.
+
+### Workloads and confirmed seams
+
+The deterministic source generator is
+[`tests/support/memory_corpus.rs`](../tests/support/memory_corpus.rs), with the
+Node harness in
+[`tests/support/memory_measure.cjs`](../tests/support/memory_measure.cjs).
+The auto-discovered
+[`memory_benchmarks` integration target](../crates/compiler/tests/memory_benchmarks.rs)
+uses issue #37's approved public source analysis/compilation and execution seams.
+It checks valid Wasm, source/typed compilation equivalence, deterministic bytes,
+all four optimization levels, decoded export/memory contracts, and no imports or
+start effects. Execution checks independent, worked result/allocation expectations.
+No private compiler instrumentation or testing-only production abstraction is used.
+
+Seventeen bounded cases cover:
+
+- `construct_{0,1,7,8,9}`: 128 fresh literals, including empty arrays and lengths
+  around an eight-element boundary. Numeric payloads remain eight bytes per element.
+- `page_crossing`: 8,192 fresh one-element arrays, consuming two pages of aligned
+  allocation and crossing from one to three pages of capacity on a fresh instance.
+- `alias_index_replace`: shared handles, indexed reads, replacement and length,
+  repeated 128 times after one construction.
+- `iteration_live_alias`: 128 array traversals; a write during traversal changes
+  the later yielded element, rather than a snapshot.
+- `equality_{length,early,late,equal}`: 128 comparisons of separately allocated
+  arrays, exercising length, first-element, last-element and no-mismatch exits.
+- `string_{7_equal,8_early,9_late}`: 128 UTF-8 content comparisons, with payload
+  byte lengths around eight-byte alignment. Literals are static/interned: their
+  storage contributes to module/initial-memory size, not runtime bump consumption.
+- `capture_shared`: shared scalar and array captures, alias visibility, 128 calls.
+- `capture_iteration`: 128 traversals of four elements; fresh read-only iteration
+  cells/environments, 512 helper calls in total.
+
+A separate raw-allocator check requests 0, 1, 7, 8, and 9 bytes and independently
+expects reservations of 8, 8, 8, 8, and 16 bytes. These are baseline expectations,
+not production constants imported back into tests. Each workload is bounded in
+source; the existing subprocess helper also applies a 60-second child deadline.
+That deadline is not guest fuel or process-tree cancellation.
+
+### Measurement isolation and commands
+
+Run from the repository root with cached dependencies and Node.js 24+ on PATH:
+
+```sh
+cargo test --offline -p was-compiler --test memory_benchmarks
+cargo test --offline -p was-compiler --test memory_benchmarks memory_workloads_execute_with_independent_results_and_allocation_checks -- --ignored --exact
+cargo test --offline -p was-compiler --test memory_benchmarks record_memory_markers -- --ignored --exact --nocapture --test-threads=1
+cargo test --offline -p was-compiler --test memory_benchmarks record_memory_capacity -- --ignored --exact --nocapture --test-threads=1
+cargo test --offline -p was-compiler --test memory_benchmarks record_memory_guest_timing -- --ignored --exact --nocapture --test-threads=1
+```
+
+The three recording commands deliberately use separate Node processes/modes:
+
+| Mode | Observation | Excluded / interpretation |
+| --- | --- | --- |
+| `marker` | `after - before - 8` using existing ABI `__alloc(0)` around one `main()` | Subtracts the first marker's minimum reservation; second marker's address precedes its reservation. Aligned consumption includes padding, cells and environments, not live bytes. No page/timing measurements. |
+| `capacity` | Initial/final `memory.buffer.byteLength / 65536`, one call on a fresh unmarked instance | Capacity only, not live bytes, allocator consumption, process RSS, or static-data bytes in use. No markers or timing. |
+| `timing` | 8 warmup calls, then 20 samples of 4 calls; fresh unmarked instance per sample, shared compiled module | `hrtime.bigint()` around guest-call batch only. Includes JS/Wasm call, loop/checksum and guest growth overhead. Excludes source generation/compilation, module compilation, instantiation, warmup, assertions, hashes, reporting, host marshaling and process startup. No markers or page observations. |
+
+The verification mode combines marker/capacity correctness checks only on **distinct**
+instances; it does not report timings. Recording tests are ignored by default,
+consistent with existing Node/runtime policy. Default Cargo success is not evidence
+that they executed. For the entire focused suite, use `-- --include-ignored
+--test-threads=1`. Timings are nanoseconds **per main call**, not per inner operation;
+most calls perform 128 operations, while page crossing performs 8,192 allocations.
+Warmup is finite, not a promise of settled V8 tiering. Fresh sample heaps include
+first-touch/growth behavior; allocation state never accumulates across samples.
+
+Run the unchanged compiler timing baseline separately, not concurrently:
+
+```sh
+cargo bench --offline -p was-compiler --bench compiler -- --sample-count 100 --sample-size 1 --timer os --color never
+```
+
+### Recorded M0 baseline — 2026-10-15
+
+Full evidence (commands and exit codes included):
+
+- [Environment, revision/status, Rust/Cargo/Node and file SHA-256 hashes](benchmarks/2026-10-15-m0-environment.txt).
+- [Marker consumption, source/module sizes and per-workload SHA-256 hashes](benchmarks/2026-10-15-m0-markers.txt).
+- [Unmarked initial/final memory pages](benchmarks/2026-10-15-m0-capacity.txt).
+- [Guest timing run 1, all raw samples](benchmarks/2026-10-15-m0-guest-1.txt)
+  and [run 2](benchmarks/2026-10-15-m0-guest-2.txt).
+- [Separate unchanged compiler harness, all 45 timings](benchmarks/2026-10-15-m0-compiler.txt).
+- [Validation command output](benchmarks/2026-10-15-m0-validation.txt).
+
+Revision: `e720e2b0330ae140bc0d2436358858d44ab1114f` with uncommitted M0 files
+and the user's pre-existing glossary/design/spec/ADR edits. Those user files were
+not changed. The metadata snapshot precedes creation of these evidence files and
+this documentation update. Source/module hashes identify exact generated workloads;
+harness/corpus/test hashes identify the uncommitted measurement implementation.
+
+Machine: Windows `10.0.26300`, x64, Intel Core Ultra 5 125H, 18 logical CPUs,
+16,730,726,400 bytes physical memory; rustc/Cargo 1.98.0, LLVM 22.1.8,
+Node 24.12.0 / V8 13.6.233.17-node.37. Rust integration caller uses the debug
+profile; Wasm output uses default compiler options and is invariant across levels.
+The separate native compiler timings use the optimized bench profile. Runs were
+sequential; power, thermal state and background activity were not controlled.
+These small samples are baseline evidence, **not** a speedup claim or threshold.
+
+| Workload | Module bytes | Aligned bump bytes/call | Pages before → after | Guest median ns/call, run 1 / 2 |
+| --- | ---: | ---: | --- | ---: |
+| construct_0 | 776 | 1,024 | 1 → 1 | 1,950 / 2,237.5 |
+| construct_1 | 790 | 2,048 | 1 → 1 | 2,300 / 2,362.5 |
+| construct_7 | 876 | 8,192 | 1 → 1 | 3,712.5 / 3,537.5 |
+| construct_8 | 890 | 9,216 | 1 → 1 | 4,137.5 / 3,825 |
+| construct_9 | 904 | 10,240 | 1 → 1 | 5,325 / 5,100 |
+| page_crossing | 803 | 131,072 | 1 → 3 | 84,637.5 / 91,662.5 |
+| alias_index_replace | 884 | 32 | 1 → 1 | 6,425 / 5,925 |
+| iteration_live_alias | 943 | 40 | 1 → 1 | 14,012.5 / 11,575 |
+| equality_length | 947 | 88 | 1 → 1 | 2,362.5 / 1,950 |
+| equality_early | 1,046 | 144 | 1 → 1 | 2,625 / 2,200 |
+| equality_late | 1,046 | 144 | 1 → 1 | 4,250 / 6,100 |
+| equality_equal | 1,046 | 144 | 1 → 1 | 4,425 / 4,000 |
+| string_7_equal | 786 | 0 | 1 → 1 | 3,675 / 3,600 |
+| string_8_early | 803 | 0 | 1 → 1 | 2,237.5 / 1,962.5 |
+| string_9_late | 812 | 0 | 1 → 1 | 3,750 / 3,100 |
+| capture_shared | 946 | 48 | 1 → 1 | 3,675 / 3,375 |
+| capture_iteration | 929 | 8,232 | 1 → 1 | 13,075 / 13,900 |
+
+M0 does not implement new array types, alter allocation/checking, or authorize M1.
+Boolean/string-array measurements belong to their later implementation milestones.
+No reclaimed/live-byte, RSS, browser execution, dynamic-string construction, host
+marshaling, or performance-budget claims are made by this synthetic baseline.
+
+## Issue #37 M4: comparative measurements and optimization handoff
+
+The M4 measurement portion is recorded in
+[`m4-typed-arrays/`](benchmarks/m4-typed-arrays). This does **not** claim the
+parent's full rebuilt-browser/ignored-runtime release gates. No production,
+existing test, M0 input/evidence, dependency, or Cargo manifest was changed by
+this measurement task.
+
+### Reproduction and isolation
+
+Run from the repository root, offline with cached Rust dependencies, Node.js 24+
+(and Python for the optional stdlib-only recorder). Choose a **new, empty** output
+directory; the recorder refuses to overwrite evidence:
+
+```sh
+python tests/support/record_memory_m4.py docs/benchmarks/NEW-M4-RUN
+```
+
+The [recorder](../tests/support/record_memory_m4.py) checks original M0
+corpus/harness/test/compiler-benchmark hashes against M0's metadata; records the
+current dirty tree, toolchains and production file hashes; runs the unchanged M0
+numeric marker/capacity/timing modes and new matched typed-array modes in separate
+processes; repeats guest and unchanged compiler timings twice; then checks that
+production, measurement inputs and historical evidence stayed unchanged. Each
+command has a 120-second subprocess bound; each Rust→Node call retains the
+existing support helper's 60-second deadline. It generates comparisons without
+fetching anything, changing working-tree sources, or adding profiling exports.
+
+Direct commands (all exact invocations are also in the raw records):
+
+```sh
+# Original M0 target and timing contract, unchanged; repeat timing command twice.
+cargo test --offline -p was-compiler --test memory_benchmarks record_memory_markers -- --ignored --exact --nocapture --test-threads=1
+cargo test --offline -p was-compiler --test memory_benchmarks record_memory_capacity -- --ignored --exact --nocapture --test-threads=1
+cargo test --offline -p was-compiler --test memory_benchmarks record_memory_guest_timing -- --ignored --exact --nocapture --test-threads=1
+
+# New matched number/bool/string controls, separate from M0; repeat timing twice.
+cargo test --offline -p was-compiler --test typed_array_measurements record_typed_array_markers -- --ignored --exact --nocapture --test-threads=1
+cargo test --offline -p was-compiler --test typed_array_measurements record_typed_array_capacity -- --ignored --exact --nocapture --test-threads=1
+cargo test --offline -p was-compiler --test typed_array_measurements record_typed_array_guest_timing -- --ignored --exact --nocapture --test-threads=1
+
+# Original compiler harness, separately and sequentially; repeat twice.
+cargo bench --offline -p was-compiler --bench compiler -- --sample-count 100 --sample-size 1 --timer os --color never
+```
+
+New workload/support files:
+[`typed_array_measure_corpus.rs`](../tests/support/typed_array_measure_corpus.rs),
+[`typed_array_measure.cjs`](../tests/support/typed_array_measure.cjs), and the
+[`typed_array_measurements` integration target](../crates/compiler/tests/typed_array_measurements.rs).
+They add 48 cases: matched number/bool/string construction at lengths 0/1/2/3/7/8/9,
+eight-element page crossings, alias/index/replacement, live iteration, equality
+length/early/late/equal exits, shared captures and read-only iteration captures.
+There are 128 inner repetitions, except 8,192 page-crossing constructions.
+
+The new harness follows M0's timing protocol: 8 warmup calls, 20 samples of 4
+calls, fresh unmarked instance per sample and shared compiled module. Timer scope
+includes JS loop/checksum, JS/Wasm calls and guest work/growth, but excludes
+compilation, instantiation, warmup, checks, hashing, reporting and marshaling.
+Marker and page modes remain independent. Descriptor-byte fixtures separately
+confirm widths/alignment/UTF-8/shared handles, without adding a function to measured
+modules. Validation uses public source/typed compilation, encoded contracts and
+actual execution, never private profiling interfaces.
+
+### Evidence and interpretation
+
+- [Environment, current production/input hashes and preserved M0 hashes](benchmarks/m4-typed-arrays/environment.json).
+- [Input/production stability across measurements](benchmarks/m4-typed-arrays/stability.json).
+- [Full comparison tables](benchmarks/m4-typed-arrays/comparison.md) and
+  [machine-readable comparison](benchmarks/m4-typed-arrays/comparison.json).
+- Numeric [markers](benchmarks/m4-typed-arrays/numeric-markers.txt),
+  [capacity](benchmarks/m4-typed-arrays/numeric-capacity.txt),
+  [guest run 1](benchmarks/m4-typed-arrays/numeric-guest-1.txt) and
+  [run 2](benchmarks/m4-typed-arrays/numeric-guest-2.txt).
+- New typed [markers](benchmarks/m4-typed-arrays/typed-markers.txt),
+  [capacity](benchmarks/m4-typed-arrays/typed-capacity.txt),
+  [guest run 1](benchmarks/m4-typed-arrays/typed-guest-1.txt) and
+  [run 2](benchmarks/m4-typed-arrays/typed-guest-2.txt).
+- Unchanged compiler harness [run 1](benchmarks/m4-typed-arrays/compiler-1.txt) and
+  [run 2](benchmarks/m4-typed-arrays/compiler-2.txt), all 45 timing cases each.
+- [Validation output](benchmarks/m4-typed-arrays/validation.txt) and
+  [final source/M0 hash, link and syntax checks](benchmarks/m4-typed-arrays/final-checks.json).
+
+All **17/17 M0 source and module SHA-256 hashes match**. Allocation consumption,
+module sizes, results and pages match too. The separate compiler corpus retains
+all nine source/module size pairs; its historical evidence contains sizes, not
+module hashes. Same machine/runtime/toolchain versions are recorded, but CPU
+power/thermal/background activity and V8 tiering were uncontrolled. Most numeric
+guest medians are higher despite identical emitted bytes; current compiler runs
+also vary substantially. No attributable speedup or implementation regression is
+established. Only one historical M0 compiler run exists, so a repeated historical
+compiler distribution cannot be reconstructed.
+
+Matched eight-element construction (128 allocations/call) consumes **9,216 /
+2,048 / 5,120 aligned bytes** for number/bool/string arrays. The larger page case
+consumes **589,824 / 131,072 / 327,680 bytes**, with capacity **1→10 / 1→3 / 1→6
+pages**. This is **element-width savings**, not a numeric optimization or
+reclamation: descriptors and minimum/alignment policy are unchanged; string
+payloads here are static/interned, not per-occurrence host-encoded copies. Empty
+arrays still consume 1,024 bytes per call in every matched type. Iteration captures
+still consume 8,232 / 8,208 / 8,216 bytes: 8,192 bytes of uniform cells/environments
+plus the initial array. The allocator remains monotonic, not reclaiming storage.
+
+### Ranked follow-up handoff
+
+The [detailed handoff](benchmarks/m4-typed-arrays/handoff.md) records measured
+motivation and separate aliasing, lifetime, host-effect and trap-order proof
+obligations for each candidate, ranked as:
+
+1. Proven non-escaping loop-local literal scalar replacement/allocation avoidance.
+2. Non-escaping capture cell/environment specialization.
+3. Proven redundant structural-check / checked-loop specialization.
+4. New-type helper reachability specialization for module footprint.
+
+These are proposals, **not authorization**. Each needs explicit separate WP13
+approval, an optimizer/parity agreement, correctness/forged-input/effect tests,
+and controlled repeated measurements. Allocation removal can alter observable
+allocator positions, memory capacity and OOM/effect order; those are contract
+questions, not incidental cleanup. No heap rewind, reclamation, general legacy
+helper pruning or unchecked consumed-value fast path is authorized here.

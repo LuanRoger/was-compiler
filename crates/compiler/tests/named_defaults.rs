@@ -344,12 +344,27 @@ fn defaults_reuse_exact_existing_expression_types_at_declaration_origins() {
         ("number", "true", Type::Number, Type::Bool),
         ("bool", "1", Type::Bool, Type::Number),
         ("string", "1", Type::String, Type::Number),
-        ("number[]", "1", Type::NumberArray, Type::Number),
+        (
+            "number[]",
+            "1",
+            Type::Array(was_compiler::ArrayElementType::Number),
+            Type::Number,
+        ),
         ("range", "1", Type::Range, Type::Number),
         ("number", "-true", Type::Number, Type::Bool),
         ("bool", "!1", Type::Bool, Type::Number),
-        ("number", "len(1)", Type::NumberArray, Type::Number),
-        ("number", "len(\"é\")", Type::NumberArray, Type::String),
+        (
+            "number",
+            "len(1)",
+            Type::Array(was_compiler::ArrayElementType::Number),
+            Type::Number,
+        ),
+        (
+            "number",
+            "len(\"é\")",
+            Type::Array(was_compiler::ArrayElementType::Number),
+            Type::String,
+        ),
     ] {
         let source = format!("fn f(value: {ty} = {expression}) -> void {{}}");
         assert_eq!(

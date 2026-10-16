@@ -96,8 +96,9 @@ constructing a compiler. The interface is synchronous after initialization:
 | `setOptimizationLevel(level)` | Select an integer from `0` through `3` (O0–O3); default is `0`. |
 | `free()` | Release the compiler object. Do not use it afterward. |
 
-Host parameter/result types are spelled `number`, `bool`, `string`, and
-`number[]`; `void` is allowed only as a result. An empty parameter array declares
+Host parameter/result spellings are `number`, `bool`, `string`, `number[]`,
+`bool[]` and `string[]`; `void` is allowed only as a result. #37 browser integration
+is implemented with [release gates passed](#typed-arrays-37). An empty parameter array declares
 a zero-argument host function. A host parameter/result spelled `range` throws an
 actionable host-registration `Error`: ranges are private to guest functions; use
 supported host types instead. Registration uses core validation and preserves its
@@ -129,7 +130,7 @@ finite dividend and finite nonzero divisor, the remainder's magnitude is less
 than the divisor's.
 The emitted guest module uses an optional `(f64, f64) -> f64` helper, not a
 JavaScript callback: `%` needs no host registration, import, or guest memory.
-The helper follows user functions and any seven memory helpers only when `%`
+The helper follows user functions and required memory helpers only when `%`
 occurs anywhere in the typed AST, even in unexported, unreachable, or
 runtime-skipped code. Output without `%` is unchanged. See
 [M9](compilation-roadmap.md#m9--floating-point-remainder--implemented) for the exact
@@ -152,24 +153,27 @@ the shared diagnostic and suggest `setExports(["main"])` or `exportNone()` using
 JavaScript API names. Exported scalar membership results use raw `i32` `0`/`1`.
 
 The core pipeline also supports statement `for name in iterable { body }` over
-`range` or `number[]` with Never compatibility, without a new JavaScript API, host
-callback, or helper. `for` is reserved for source/host-language names, not host
-module/field names. The iterable evaluates once in the enclosing context before
+`range`, `number[]`, `bool[]` or `string[]` with Never compatibility, without a new
+iteration JavaScript API or host callback; #37 browser release validation passed.
+`for` is reserved for source/host-language names, not host module/field names. The iterable evaluates once in the enclosing context before
 activating the new loop/binding; iterable break/continue targets the outer nearest
-loop, and return/divergence is preserved. The body's `number` binding is read-only;
+loop, and return/divergence is preserved. The body's scalar element binding
+(`number` for ranges) is read-only;
 a distinct inner shadowing let remains mutable. Bare breaks are permitted, value
 breaks are rejected even when unreachable, and continue advances before retesting.
 For is a void statement, not a value expression. For ranges, cached `i64` fields and signed
 endpoint checks precede exact `f64` conversion/yield (zero is +0); advancement
 outside the safe domain exhausts normally before conversion, without a trap.
 
-For arrays, full `ValidateArray` precedes caching the handle and unsigned `u32`
-length once, even when empty. Unsigned index iteration loads each current element
-through existing checked `ArrayAddress` then `f64` load, without an element snapshot
-or cached raw payload pointer. Alias mutations remain visible; source reassignment
-does not replace the captured handle. Continue exits the body latch before index
-advancement/retest. ABI/helper order is unchanged, and array-only iteration needs
-no range helpers. Issue #5 changes no parser or AST shapes.
+For arrays, complete typed outer-storage validation (without scanning elements)
+precedes caching the handle and unsigned `u32` length once, even when empty.
+Unsigned index iteration uses typed checked loads and validates each consumed
+bool byte/string handle before binding/capture promotion/body effects, without
+an element snapshot or cached raw payload pointer. Alias mutations remain visible;
+source reassignment does not replace the captured handle. Continue exits the body latch before index
+advancement/retest. Old-type-only ABI/helper order is unchanged, and array-only
+iteration needs no range helpers. Issue #5 changed no parser or AST shapes;
+#37 subsequently adds typed `For.element_type`.
 
 The browser adapter uses this shared core for both iterable types. **WP5
 implementation is complete and all release gates passed.** See
@@ -197,6 +201,43 @@ is optional and retained for explicit copy ownership. The generated compiler
 wrapper and its Wasm memory are **not** the generated program's runtime or
 memory. Do not use the compiler's memory to read program strings/arrays, and do
 not pass compiler glue imports to the emitted module.
+
+## Typed arrays (#37)
+
+Core and browser host declarations support `number[]`, `bool[]` and `string[]`.
+[Final #37 release gates passed](typed-arrays-validation-2026-10-15.txt), including
+a current-source offline/no-install `pkg/` rebuild, 25 browser smoke groups,
+the browser typed-array adapter test, the full workspace run (1,251 passed, none
+ignored) and browser-target Clippy. Rebuild `pkg/` after future source changes;
+earlier browser/WP evidence does not validate stale bindings. See
+[contracts, Rust migration and release evidence](typed-arrays.md).
+
+Known array destinations, mapped formals and explicit named-function results type
+literals through value paths; unconstrained `[]` remains numeric. Omitted/anonymous
+results remain independently inferred, and pipeline inputs receive no backward
+context from stages. Calls with concrete results are checked, not specialized.
+Typed indexing/replacement, length, same-type content equality and read-only
+scalar iteration compose with shared captures; compounds remain numeric-only.
+There are no nested arrays, `range[]`, `void[]`, or new string operations.
+
+Generated programs still expose raw `i32` descriptor handles, not native arrays.
+Descriptors are untagged. Boolean payloads use width 1 and strict consumed bytes
+0/1; string-array slots use width 4 and consumed string-handle checks. Strings
+remain UTF-8 bytes with byte lengths/width 1. Entry/length checks validate complete
+outer storage without element scans; equality/iteration check only consumed
+values. UTF-8 validity and string immutability remain host obligations. See
+[the memory ABI](memory-abi.md#typed-array-element-consumption-37).
+
+Browser compilation does not supply runtime marshaling. Applications explicitly
+construct/read descriptors in the **generated program's** memory and refresh views
+after growth. The optional Node copy adapter's separate #37 contract requires
+plain JS arrays, copy isolation and a checked 64 MiB aggregate logical-copy budget
+(`N` bool bytes; `4*N + per-occurrence UTF-8` string-array bytes), without changing
+standalone string/numeric limits; see [runtime integration](runtime-integration.md#typed-array-host-integration-37).
+Encoding snapshots new-array input length/scalars once so getters cannot change
+the values or count between validation/accounting and copying. The final full
+run includes both accessor regressions. This is not an added browser API or an
+automatic demo decoder.
 
 ## Named arguments and defaults (WP6)
 

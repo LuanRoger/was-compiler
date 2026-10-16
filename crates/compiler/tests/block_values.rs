@@ -178,7 +178,12 @@ fn analyzed_value_and_never_joins_keep_concrete_storage_and_region_spans() {
         ("number", Type::Number, "1", "2"),
         ("bool", Type::Bool, "true", "false"),
         ("string", Type::String, "\"a\"", "\"b\""),
-        ("number[]", Type::NumberArray, "[]", "[2]"),
+        (
+            "number[]",
+            Type::Array(was_compiler::ArrayElementType::Number),
+            "[]",
+            "[2]",
+        ),
     ] {
         for initializer in [
             format!("if flag {{ {first} }} else {{ {second} }}"),
@@ -415,7 +420,7 @@ fn hidden_and_abrupt_source_children_still_receive_scope_type_and_return_checks(
         "return; { missing };",
         "{ return; } + false;",
         "take({ return; }, false);",
-        "[{ return; }, false];",
+        "[{ return; }, 1, false];",
     ] {
         let source = format!(
             "fn hidden() -> void {{ {body} }} fn take(a: number, b: number) -> void {{}} fn main() -> void {{}}"

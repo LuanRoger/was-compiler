@@ -68,10 +68,10 @@ fn scalar_handle_and_void_regions_use_mvp_results_and_only_values_are_dropped() 
             ValType::I32,
         ),
         (
-            Type::NumberArray,
+            Type::Array(crate::ast::ArrayElementType::Number),
             TypedExpr {
-                kind: TypedExprKind::Array(vec![]),
-                ty: Type::NumberArray.into(),
+                kind: TypedExprKind::Array(vec![], crate::ast::ArrayElementType::Number),
+                ty: Type::Array(crate::ast::ArrayElementType::Number).into(),
             },
             ValType::I32,
         ),
@@ -154,10 +154,10 @@ fn divergent_arms_join_each_concrete_type_without_artificial_result_locals() {
             ValType::I32,
         ),
         (
-            Type::NumberArray,
+            Type::Array(crate::ast::ArrayElementType::Number),
             TypedExpr {
-                kind: TypedExprKind::Array(vec![]),
-                ty: Type::NumberArray.into(),
+                kind: TypedExprKind::Array(vec![], crate::ast::ArrayElementType::Number),
+                ty: Type::Array(crate::ast::ArrayElementType::Number).into(),
             },
             ValType::I32,
         ),
@@ -179,7 +179,10 @@ fn divergent_arms_join_each_concrete_type_without_artificial_result_locals() {
             program.functions[0].return_type = Type::Number;
             let module = decode(&compile(&program).unwrap());
             assert!(module.bodies[0].contains(&DecodedInstruction::If(BlockType::Type(wasm_type))));
-            assert_eq!(module.locals[0].len(), usize::from(ty == Type::NumberArray));
+            assert_eq!(
+                module.locals[0].len(),
+                usize::from(ty == Type::Array(crate::ast::ArrayElementType::Number))
+            );
             assert_eq!(
                 module.bodies[0]
                     .iter()
@@ -198,14 +201,17 @@ fn eager_expressions_propagate_never_without_stopping_static_lowering() {
     let mut negate = unary(UnaryOp::Negate, never());
     negate.ty = ExprResult::Never;
     let array = TypedExpr {
-        kind: TypedExprKind::Array(vec![never(), number()]),
+        kind: TypedExprKind::Array(
+            vec![never(), number()],
+            crate::ast::ArrayElementType::Number,
+        ),
         ty: ExprResult::Never,
     };
     let index = TypedExpr {
         kind: TypedExprKind::Index {
             expr: Box::new(TypedExpr {
-                kind: TypedExprKind::Array(vec![]),
-                ty: Type::NumberArray.into(),
+                kind: TypedExprKind::Array(vec![], crate::ast::ArrayElementType::Number),
+                ty: Type::Array(crate::ast::ArrayElementType::Number).into(),
             }),
             index: Box::new(never()),
         },
@@ -503,7 +509,10 @@ fn hidden_skipped_and_unreachable_value_children_are_not_pruned() {
 fn eager_never_does_not_mask_later_argument_array_index_or_equality_type_errors() {
     let abrupt = || block(vec![returned(None, span())], None, ExprResult::Never);
     let array = TypedExpr {
-        kind: TypedExprKind::Array(vec![abrupt(), boolean()]),
+        kind: TypedExprKind::Array(
+            vec![abrupt(), boolean()],
+            crate::ast::ArrayElementType::Number,
+        ),
         ty: ExprResult::Never,
     };
     let index = TypedExpr {

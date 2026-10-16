@@ -181,7 +181,7 @@ fn cli_and_core_keep_incompatible_incomplete_and_never_only_result_origins() {
         (
             "if b { return \"é\"; } return [];",
             Type::String,
-            Type::NumberArray,
+            Type::Array(was_compiler::ArrayElementType::Number),
         ),
     ] {
         let function = format!("fn choose(b: bool = true) {{ {body} }}");

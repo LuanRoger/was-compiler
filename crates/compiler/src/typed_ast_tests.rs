@@ -208,12 +208,12 @@ fn inferred_declarations_resolve_every_initializer_to_a_concrete_type() {
         Type::Bool,
         Type::String,
         Type::Bool,
-        Type::NumberArray,
-        Type::NumberArray,
+        Type::Array(crate::ast::ArrayElementType::Number),
+        Type::Array(crate::ast::ArrayElementType::Number),
         Type::Number,
         Type::Number,
         Type::Number,
-        Type::NumberArray,
+        Type::Array(crate::ast::ArrayElementType::Number),
     ];
     let body = &typed.functions[0].body;
 
@@ -271,26 +271,38 @@ fn inferred_shadow_initializers_resolve_outer_ids_and_restore_bindings() {
         &then[0],
         1,
         "value",
-        Type::NumberArray,
-        identifier(0, "value", Type::NumberArray),
+        Type::Array(crate::ast::ArrayElementType::Number),
+        identifier(
+            0,
+            "value",
+            Type::Array(crate::ast::ArrayElementType::Number),
+        ),
     );
     assert_let(
         &then[1],
         2,
         "size",
         Type::Number,
-        len(identifier(1, "value", Type::NumberArray)),
+        len(identifier(
+            1,
+            "value",
+            Type::Array(crate::ast::ArrayElementType::Number),
+        )),
     );
     assert_let(
         &body[1],
         3,
         "copy",
-        Type::NumberArray,
-        identifier(0, "value", Type::NumberArray),
+        Type::Array(crate::ast::ArrayElementType::Number),
+        identifier(
+            0,
+            "value",
+            Type::Array(crate::ast::ArrayElementType::Number),
+        ),
     );
     assert_eq!(
         returned(&body[2]),
-        &identifier(3, "copy", Type::NumberArray)
+        &identifier(3, "copy", Type::Array(crate::ast::ArrayElementType::Number))
     );
     assert_block_spans(&ast.functions[0].body, body);
 }
@@ -316,24 +328,27 @@ fn nested_arithmetic_arrays_calls_and_indices_have_types_at_every_node() {
         &body[0],
         2,
         "elements",
-        Type::NumberArray,
+        Type::Array(crate::ast::ArrayElementType::Number),
         expr(
-            ExprKind::Array(vec![
-                number("1"),
-                unary(UnaryOp::Negate, number("2"), Type::Number),
-                call(
-                    FunctionRef::User(FunctionId(0)),
-                    "make",
-                    vec![binary(
-                        identifier(1, "index", Type::Number),
-                        BinaryOp::Add,
-                        number("3"),
+            ExprKind::Array(
+                vec![
+                    number("1"),
+                    unary(UnaryOp::Negate, number("2"), Type::Number),
+                    call(
+                        FunctionRef::User(FunctionId(0)),
+                        "make",
+                        vec![binary(
+                            identifier(1, "index", Type::Number),
+                            BinaryOp::Add,
+                            number("3"),
+                            Type::Number,
+                        )],
                         Type::Number,
-                    )],
-                    Type::Number,
-                ),
-            ]),
-            Type::NumberArray,
+                    ),
+                ],
+                crate::ast::ArrayElementType::Number,
+            ),
+            Type::Array(crate::ast::ArrayElementType::Number),
         ),
     );
     assert_eq!(
@@ -343,7 +358,11 @@ fn nested_arithmetic_arrays_calls_and_indices_have_types_at_every_node() {
             binary(
                 expr(
                     ExprKind::Index {
-                        expr: Box::new(identifier(0, "values", Type::NumberArray)),
+                        expr: Box::new(identifier(
+                            0,
+                            "values",
+                            Type::Array(crate::ast::ArrayElementType::Number)
+                        )),
                         index: Box::new(binary(
                             identifier(1, "index", Type::Number),
                             BinaryOp::Add,
@@ -354,7 +373,11 @@ fn nested_arithmetic_arrays_calls_and_indices_have_types_at_every_node() {
                     Type::Number,
                 ),
                 BinaryOp::Add,
-                len(identifier(2, "elements", Type::NumberArray)),
+                len(identifier(
+                    2,
+                    "elements",
+                    Type::Array(crate::ast::ArrayElementType::Number)
+                )),
                 Type::Number,
             ),
             Type::Number,
@@ -423,8 +446,11 @@ fn array_equality_preserves_array_operands_and_bool_results_at_every_node() {
     let body = &typed.functions[1].body;
     let array = |values: &[&str]| {
         expr(
-            ExprKind::Array(values.iter().map(|value| number(value)).collect()),
-            Type::NumberArray,
+            ExprKind::Array(
+                values.iter().map(|value| number(value)).collect(),
+                crate::ast::ArrayElementType::Number,
+            ),
+            Type::Array(crate::ast::ArrayElementType::Number),
         )
     };
 
@@ -464,11 +490,19 @@ fn array_equality_preserves_array_operands_and_bool_results_at_every_node() {
                         call(
                             FunctionRef::User(FunctionId(0)),
                             "identity",
-                            vec![identifier(0, "left", Type::NumberArray)],
-                            Type::NumberArray,
+                            vec![identifier(
+                                0,
+                                "left",
+                                Type::Array(crate::ast::ArrayElementType::Number)
+                            )],
+                            Type::Array(crate::ast::ArrayElementType::Number),
                         ),
                         BinaryOp::NotEqual,
-                        identifier(1, "right", Type::NumberArray),
+                        identifier(
+                            1,
+                            "right",
+                            Type::Array(crate::ast::ArrayElementType::Number)
+                        ),
                         Type::Bool,
                     ),
                     Type::Bool,
@@ -495,23 +529,39 @@ fn builtin_len_is_resolved_separately_and_empty_arrays_are_typed() {
     assert_eq!(typed.functions.len(), 2);
     assert_eq!(typed.functions[0].id, FunctionId(0));
     assert_eq!(typed.functions[1].id, FunctionId(1));
-    assert_eq!(typed.functions[0].return_type, Type::NumberArray);
+    assert_eq!(
+        typed.functions[0].return_type,
+        Type::Array(crate::ast::ArrayElementType::Number)
+    );
     assert_eq!(
         typed.functions[0].body[0].kind,
-        StmtKind::Expression(len(expr(ExprKind::Array(Vec::new()), Type::NumberArray)))
+        StmtKind::Expression(len(expr(
+            ExprKind::Array(Vec::new(), crate::ast::ArrayElementType::Number),
+            Type::Array(crate::ast::ArrayElementType::Number)
+        )))
     );
     assert_eq!(
         returned(&typed.functions[0].body[1]),
-        &identifier(0, "values", Type::NumberArray)
+        &identifier(
+            0,
+            "values",
+            Type::Array(crate::ast::ArrayElementType::Number)
+        )
     );
     assert_eq!(
         returned(&typed.functions[1].body[0]),
         &len(expr(
-            ExprKind::Array(vec![
-                len(expr(ExprKind::Array(Vec::new()), Type::NumberArray)),
-                number("1"),
-            ]),
-            Type::NumberArray,
+            ExprKind::Array(
+                vec![
+                    len(expr(
+                        ExprKind::Array(Vec::new(), crate::ast::ArrayElementType::Number),
+                        Type::Array(crate::ast::ArrayElementType::Number)
+                    )),
+                    number("1"),
+                ],
+                crate::ast::ArrayElementType::Number
+            ),
+            Type::Array(crate::ast::ArrayElementType::Number),
         ))
     );
 }
@@ -888,12 +938,20 @@ fn assignments_control_flow_void_calls_and_bare_returns_are_lowered() {
         &body[0],
         expr(
             ExprKind::Index {
-                expr: Box::new(identifier(0, "values", Type::NumberArray)),
+                expr: Box::new(identifier(
+                    0,
+                    "values",
+                    Type::Array(crate::ast::ArrayElementType::Number),
+                )),
                 index: Box::new(identifier(1, "index", Type::Number)),
             },
             Type::Number,
         ),
-        len(identifier(0, "values", Type::NumberArray)),
+        len(identifier(
+            0,
+            "values",
+            Type::Array(crate::ast::ArrayElementType::Number),
+        )),
     );
     assert_assignment(
         &body[1],
@@ -935,8 +993,15 @@ fn assignments_control_flow_void_calls_and_bare_returns_are_lowered() {
     assert_eq!(else_.len(), 1);
     assert_assignment(
         &else_[0],
-        identifier(0, "values", Type::NumberArray),
-        expr(ExprKind::Array(Vec::new()), Type::NumberArray),
+        identifier(
+            0,
+            "values",
+            Type::Array(crate::ast::ArrayElementType::Number),
+        ),
+        expr(
+            ExprKind::Array(Vec::new(), crate::ast::ArrayElementType::Number),
+            Type::Array(crate::ast::ArrayElementType::Number),
+        ),
     );
 
     let StmtKind::While {
@@ -1018,7 +1083,11 @@ fn compound_assignments_preserve_all_operators_typed_places_calls_and_spans() {
             StmtKind::CompoundAssignment {
                 target: expr(
                     ExprKind::Index {
-                        expr: Box::new(identifier(0, "values", Type::NumberArray)),
+                        expr: Box::new(identifier(
+                            0,
+                            "values",
+                            Type::Array(crate::ast::ArrayElementType::Number)
+                        )),
                         index: Box::new(call(
                             FunctionRef::User(FunctionId(0)),
                             "index",
@@ -1273,7 +1342,7 @@ fn expression_results_keep_identity_separate_from_never_compatibility() {
         Type::Number,
         Type::Bool,
         Type::String,
-        Type::NumberArray,
+        Type::Array(crate::ast::ArrayElementType::Number),
         Type::Void,
     ] {
         let result = ExprResult::from(ty);
@@ -1437,7 +1506,7 @@ fn value_loop_results_distinguish_concrete_values_and_never_rhs_breaks() {
         (
             "number[]",
             "break [1];",
-            ExprResult::Value(Type::NumberArray),
+            ExprResult::Value(Type::Array(crate::ast::ArrayElementType::Number)),
         ),
         ("number", "", ExprResult::Never),
         ("number", "continue; break false;", ExprResult::Never),

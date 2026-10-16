@@ -44,7 +44,7 @@ pub struct HostFunctions {
 // External eligibility is independent of the backend's internal representation.
 pub(crate) fn supports_external_value(ty: Type) -> bool {
     match ty {
-        Type::Number | Type::Bool | Type::String | Type::NumberArray => true,
+        Type::Number | Type::Bool | Type::String | Type::Array(_) => true,
         Type::Void | Type::Range => false,
     }
 }
@@ -275,13 +275,18 @@ mod tests {
     #[test]
     fn external_signatures_accept_all_current_values_and_void_results() {
         let mut functions = HostFunctions::new();
-        let params = vec![Type::Number, Type::Bool, Type::String, Type::NumberArray];
+        let params = vec![
+            Type::Number,
+            Type::Bool,
+            Type::String,
+            Type::Array(crate::ast::ArrayElementType::Number),
+        ];
 
         for (index, return_type) in [
             Type::Number,
             Type::Bool,
             Type::String,
-            Type::NumberArray,
+            Type::Array(crate::ast::ArrayElementType::Number),
             Type::Void,
         ]
         .into_iter()
@@ -328,7 +333,13 @@ mod tests {
     fn memory_backed_host_signatures_preserve_language_types() {
         let mut functions = HostFunctions::new();
 
-        for (index, ty) in [Type::String, Type::NumberArray].into_iter().enumerate() {
+        for (index, ty) in [
+            Type::String,
+            Type::Array(crate::ast::ArrayElementType::Number),
+        ]
+        .into_iter()
+        .enumerate()
+        {
             let name = format!("echo{index}");
 
             assert_eq!(

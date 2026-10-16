@@ -153,9 +153,11 @@ impl Visitor<'_> for LocalVisitor<'_> {
     fn enter_statement(&mut self, statement: &TypedStatement) -> ControlFlow<CodegenError> {
         let (id, ty, kind) = match &statement.kind {
             TypedStatementKind::Let { id, ty, .. } => (*id, *ty, BindingKind::Mutable),
-            TypedStatementKind::For { variable, .. } => {
-                (*variable, Type::Number, BindingKind::Iteration)
-            }
+            TypedStatementKind::For {
+                variable,
+                element_type,
+                ..
+            } => (*variable, *element_type, BindingKind::Iteration),
             _ => return ControlFlow::Continue(()),
         };
 
@@ -224,7 +226,7 @@ mod tests {
             Type::Bool,
             Type::Number,
             Type::String,
-            Type::NumberArray,
+            Type::Array(crate::ast::ArrayElementType::Number),
             Type::Bool,
             Type::Number,
         ]

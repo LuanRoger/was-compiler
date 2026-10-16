@@ -133,7 +133,7 @@ fn inferred_defaulted_signatures_match_explicit_bytes_for_every_concrete_type() 
             "return y;",
             "number[]",
             "f([1])",
-            Type::NumberArray,
+            Type::Array(was_compiler::ArrayElementType::Number),
         ),
         (
             "x: range, y: range = x",
@@ -375,7 +375,7 @@ fn run(source: &str, assertions: &str) {
             "corrupt",
             "env",
             "corrupt",
-            vec![Type::NumberArray],
+            vec![Type::Array(was_compiler::ArrayElementType::Number)],
             Type::Number,
         )
         .unwrap();
