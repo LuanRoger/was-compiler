@@ -5,6 +5,12 @@ and local closures. Proposed extensions remain distinct from implemented languag
 
 ## Language
 
+**Number**:
+The language's single numeric type, with IEEE-754 binary64 semantics, including
+fractional values, signed zero, infinities, and NaN. Integer-valued numbers do not
+form a separate language type.
+_Avoid_: Inferred integer type, integer-looking type
+
 **Array**:
 A fixed-length, mutable collection whose elements share one type. Assignment and
 parameter passing share the collection rather than copying its elements.
