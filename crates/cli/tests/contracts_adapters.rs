@@ -212,13 +212,17 @@ fn cli_contract_bytes_and_wat_match_native_at_every_level_and_export_selection()
     let scratch = Scratch::new();
     fs::write(scratch.0.join("program.was"), SOURCE).unwrap();
     let mut compiler = compiler();
-    let baseline = compiler.compile_source(SOURCE).unwrap();
+
     for (flag, level) in LEVELS {
         compiler.set_optimization_level(level);
         compiler.set_exports(ExportOptions::Only(
             SELECTED.iter().map(|n| (*n).into()).collect(),
         ));
-        assert_eq!(compiler.compile_source(SOURCE).unwrap(), baseline);
+        let program = compiler.analyze(SOURCE).unwrap();
+        assert_eq!(
+            compiler.compile_source(SOURCE).unwrap(),
+            compiler.compile(&program).unwrap()
+        );
         for names in [SELECTED, &["main"][..], &[][..]] {
             compiler.set_exports(ExportOptions::Only(
                 names.iter().map(|n| (*n).into()).collect(),

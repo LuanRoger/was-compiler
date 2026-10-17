@@ -28,7 +28,7 @@ fn compiler(selected: &[&str]) -> Compiler {
 
 fn run(source: &str, selected: &[&str], assertions: &str) {
     let mut compiler = compiler(selected);
-    let mut baseline = None;
+    let baseline_program = compiler.analyze(source).unwrap();
     for level in LEVELS {
         compiler.set_optimization_level(level);
         let bytes = compiler
@@ -37,11 +37,8 @@ fn run(source: &str, selected: &[&str], assertions: &str) {
         let program = compiler.analyze(source).unwrap();
         assert_eq!(compiler.compile(&program).unwrap(), bytes);
         Validator::new().validate_all(&bytes).unwrap();
-        if let Some(expected) = &baseline {
-            assert_eq!(&bytes, expected, "{level:?}");
-        } else {
-            baseline = Some(bytes.clone());
-        }
+        assert_eq!(program, baseline_program, "{level:?}");
+        assert_eq!(compiler.compile_source(source).unwrap(), bytes);
         let function_indices = Parser::new(0)
             .parse_all(&bytes)
             .filter_map(|payload| match payload.unwrap() {

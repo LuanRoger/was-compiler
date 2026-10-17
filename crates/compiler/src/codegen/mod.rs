@@ -26,6 +26,7 @@ mod numeric;
 mod place;
 mod pure;
 mod range;
+mod representation;
 mod statement;
 mod temporaries;
 mod validation;
@@ -318,7 +319,17 @@ pub fn compile_with_exports(
     program: &TypedProgram,
     exports: &ExportOptions,
 ) -> Result<Vec<u8>, CodegenError> {
-    let validated = validation::ValidatedProgram::new(program, exports)?;
+    compile_with_policy(program, exports, representation::NumericPolicy::Baseline)
+}
+
+pub(crate) use representation::NumericPolicy;
+
+pub(crate) fn compile_with_policy(
+    program: &TypedProgram,
+    exports: &ExportOptions,
+    policy: NumericPolicy,
+) -> Result<Vec<u8>, CodegenError> {
+    let validated = validation::ValidatedProgram::with_policy(program, exports, policy)?;
 
     Ok(assemble(&validated))
 }

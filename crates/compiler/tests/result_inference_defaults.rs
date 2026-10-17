@@ -73,11 +73,22 @@ fn inferred_caller_to_annotated_named_default_target_decodes_full_arity_and_loca
         ]
     );
     assert_eq!(sequence.bindings[2].span, span(source, "a + 1"));
+    let mut enabled_bytes = None;
     for level in LEVELS {
         let mut compiler = Compiler::new();
         compiler.set_optimization_level(level);
         let bytes = compiler.compile_source(source).unwrap();
         Validator::new().validate_all(&bytes).unwrap();
+        assert_eq!(compiler.compile_source(source).unwrap(), bytes);
+        assert_eq!(compiler.compile(&program).unwrap(), bytes);
+        assert_eq!(compiler.analyze(source).unwrap(), program);
+        if level != OptimizationLevel::None {
+            if let Some(expected) = &enabled_bytes {
+                assert_eq!(&bytes, expected);
+            } else {
+                enabled_bytes = Some(bytes.clone());
+            }
+        }
         let mut signatures = Vec::new();
         let mut bodies = Vec::new();
         for payload in Parser::new(0).parse_all(&bytes) {
@@ -106,13 +117,38 @@ fn inferred_caller_to_annotated_named_default_target_decodes_full_arity_and_loca
             .into_iter()
             .map(Result::unwrap)
             .collect();
-        assert!(matches!(ops.as_slice(), [
-            Operator::F64Const { value: nine }, Operator::LocalSet { local_index: 0 },
-            Operator::F64Const { value: three }, Operator::LocalSet { local_index: 1 },
-            Operator::LocalGet { local_index: 1 }, Operator::F64Const { value: one }, Operator::F64Add, Operator::LocalSet { local_index: 2 },
-            Operator::LocalGet { local_index: 1 }, Operator::LocalGet { local_index: 2 }, Operator::LocalGet { local_index: 0 },
-            Operator::Call { function_index: 0 }, Operator::Return, Operator::End,
-        ] if nine.bits() == 9f64.to_bits() && three.bits() == 3f64.to_bits() && one.bits() == 1f64.to_bits()));
+        if level == OptimizationLevel::None {
+            assert!(matches!(ops.as_slice(), [
+                Operator::F64Const { value: nine }, Operator::LocalSet { local_index: 0 },
+                Operator::F64Const { value: three }, Operator::LocalSet { local_index: 1 },
+                Operator::LocalGet { local_index: 1 }, Operator::F64Const { value: one }, Operator::F64Add, Operator::LocalSet { local_index: 2 },
+                Operator::LocalGet { local_index: 1 }, Operator::LocalGet { local_index: 2 }, Operator::LocalGet { local_index: 0 },
+                Operator::Call { function_index: 0 }, Operator::Return, Operator::End,
+            ] if nine.bits() == 9f64.to_bits() && three.bits() == 3f64.to_bits() && one.bits() == 1f64.to_bits()));
+        } else {
+            assert!(matches!(
+                ops.as_slice(),
+                [
+                    Operator::I32Const { value: 9 },
+                    Operator::F64ConvertI32S,
+                    Operator::LocalSet { local_index: 0 },
+                    Operator::I32Const { value: 3 },
+                    Operator::F64ConvertI32S,
+                    Operator::LocalSet { local_index: 1 },
+                    Operator::LocalGet { local_index: 1 },
+                    Operator::I32Const { value: 1 },
+                    Operator::F64ConvertI32S,
+                    Operator::F64Add,
+                    Operator::LocalSet { local_index: 2 },
+                    Operator::LocalGet { local_index: 1 },
+                    Operator::LocalGet { local_index: 2 },
+                    Operator::LocalGet { local_index: 0 },
+                    Operator::Call { function_index: 0 },
+                    Operator::Return,
+                    Operator::End,
+                ]
+            ));
+        }
     }
 }
 
@@ -165,17 +201,14 @@ fn inferred_defaulted_signatures_match_explicit_bytes_for_every_concrete_type() 
         });
         let program = compiler.analyze(&inferred).unwrap();
         assert_eq!(program.functions[0].return_type, expected);
-        let mut baseline = None;
         for level in LEVELS {
             compiler.set_optimization_level(level);
             let bytes = compiler.compile_source(&inferred).unwrap();
             Validator::new().validate_all(&bytes).unwrap();
             assert_eq!(bytes, compiler.compile_source(&explicit).unwrap());
             assert_eq!(bytes, compiler.compile(&program).unwrap());
-            if let Some(previous) = &baseline {
-                assert_eq!(&bytes, previous);
-            }
-            baseline = Some(bytes);
+            assert_eq!(compiler.compile_source(&inferred).unwrap(), bytes);
+            assert_eq!(compiler.analyze(&inferred).unwrap(), program);
         }
     }
 }
@@ -380,15 +413,14 @@ fn run(source: &str, assertions: &str) {
         )
         .unwrap();
     compiler.set_exports(ExportOptions::Only(vec!["main".into()]));
-    let mut baseline = None;
+    let program = compiler.analyze(source).unwrap();
     for level in LEVELS {
         compiler.set_optimization_level(level);
         let bytes = compiler.compile_source(source).unwrap();
         Validator::new().validate_all(&bytes).unwrap();
-        if let Some(previous) = &baseline {
-            assert_eq!(&bytes, previous);
-        }
-        baseline = Some(bytes.clone());
+        assert_eq!(compiler.compile_source(source).unwrap(), bytes);
+        assert_eq!(compiler.compile(&program).unwrap(), bytes);
+        assert_eq!(compiler.analyze(source).unwrap(), program);
         let script = format!(
             r#"
             const assert = require("node:assert/strict");

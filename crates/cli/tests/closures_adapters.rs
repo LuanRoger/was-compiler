@@ -279,7 +279,7 @@ fn cli_closure_wasm_and_wat_match_library_at_all_levels_and_export_selections() 
             native.set_exports(ExportOptions::Only(
                 names.iter().map(|name| (*name).into()).collect(),
             ));
-            let mut baseline = None;
+
             for (flag, level) in LEVELS {
                 native.set_optimization_level(level);
                 let program = native.analyze(source).unwrap();
@@ -287,11 +287,7 @@ fn cli_closure_wasm_and_wat_match_library_at_all_levels_and_export_selections() 
                 assert_eq!(native.compile_source(source).unwrap(), bytes);
                 assert_eq!(native.compile(&program).unwrap(), bytes);
                 Validator::new().validate_all(&bytes).unwrap();
-                if let Some(expected) = &baseline {
-                    assert_eq!(&bytes, expected);
-                } else {
-                    baseline = Some(bytes.clone());
-                }
+
                 for (emit, destination) in [("wasm", "out.wasm"), ("wat", "out.wat")] {
                     let mut args = vec![
                         "program.was",

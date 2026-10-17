@@ -491,8 +491,8 @@ fn cli_descriptor_chains_keep_source_order_full_arity_snapshot_and_private_expor
         .unwrap();
     for (flag, level) in LEVELS {
         compiler.set_optimization_level(level);
-        assert_eq!(compiler.compile(&program).unwrap(), baseline);
-        assert_ne!(compiler.compile_source(ABI_SOURCE).unwrap(), baseline);
+        let expected_bytes = compiler.compile(&program).unwrap();
+        assert_ne!(compiler.compile_source(ABI_SOURCE).unwrap(), expected_bytes);
         let output = scratch.cli(&abi_args(flag));
         assert!(
             output.status.success(),
@@ -503,7 +503,7 @@ fn cli_descriptor_chains_keep_source_order_full_arity_snapshot_and_private_expor
         assert!(output.stderr.is_empty());
         let bytes = fs::read(scratch.0.join("program.wasm")).unwrap();
         Validator::new().validate_all(&bytes).unwrap();
-        assert_eq!(bytes, baseline);
+        assert_eq!(bytes, expected_bytes);
         let expected = CodegenError::RangeExport {
             function: "private".into(),
         };
@@ -525,7 +525,10 @@ fn cli_descriptor_chains_keep_source_order_full_arity_snapshot_and_private_expor
                 diagnostic::render("program.was", ABI_SOURCE, &wrapped)
             )
         );
-        assert_eq!(fs::read(scratch.0.join("program.wasm")).unwrap(), baseline);
+        assert_eq!(
+            fs::read(scratch.0.join("program.wasm")).unwrap(),
+            expected_bytes
+        );
         compiler.set_exports(ExportOptions::None);
         Validator::new()
             .validate_all(&compiler.compile(&program).unwrap())
@@ -533,10 +536,17 @@ fn cli_descriptor_chains_keep_source_order_full_arity_snapshot_and_private_expor
         args.push("--no-exports");
         let output = scratch.cli(&args);
         assert!(output.status.success());
+        let no_exports = compiler.compile(&program).unwrap();
         assert_eq!(
             fs::read(scratch.0.join("program.wasm")).unwrap(),
-            codegen::compile_with_exports(&program, &ExportOptions::None).unwrap()
+            no_exports
         );
+        if level == OptimizationLevel::None {
+            assert_eq!(
+                no_exports,
+                codegen::compile_with_exports(&program, &ExportOptions::None).unwrap()
+            );
+        }
         compiler.set_exports(ExportOptions::Only(
             SELECTED.iter().map(|name| (*name).into()).collect(),
         ));

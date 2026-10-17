@@ -75,6 +75,10 @@ fn memory_abi_import_offsets_seven_unique_helpers_and_bytes_are_stable_at_all_le
         fn same(a: string, b: string) -> bool { return a == b; }
         fn literal() -> number[] { return [scalar(1), 2]; }
     "#;
+    let baseline_bytes = compiler(OptimizationLevel::None, &hosts)
+        .compile_source(source)
+        .unwrap();
+    let baseline = decode(&baseline_bytes);
     let mut snapshot = None;
     for level in LEVELS {
         let compiler = compiler(level, &hosts);
@@ -147,7 +151,55 @@ fn memory_abi_import_offsets_seven_unique_helpers_and_bytes_are_stable_at_all_le
         }
         assert_eq!(module.memories, vec![(1, Some(65535), false, false)]);
         assert_eq!(module.globals, vec![(ValType::I32, true, 8)]);
-        if let Some(expected) = &snapshot {
+        assert_eq!(module.sections, baseline.sections);
+        assert_eq!(module.signatures, baseline.signatures);
+        assert_eq!(module.imports, baseline.imports);
+        assert_eq!(module.functions, baseline.functions);
+        assert_eq!(module.exports, baseline.exports);
+        assert_eq!(module.calls, baseline.calls);
+        assert_eq!(module.data, baseline.data);
+        assert_eq!(module.bodies[..5], baseline.bodies[..5]);
+        assert_eq!(module.bodies[6..], baseline.bodies[6..]);
+        let mut literal = vec![
+            "I32Const { value: 24 }",
+            "Call { function_index: 9 }",
+            "LocalSet { local_index: 0 }",
+            "LocalGet { local_index: 0 }",
+            "LocalGet { local_index: 0 }",
+            "I32Const { value: 8 }",
+            "I32Add",
+            "I32Store { memarg: MemArg { align: 2, max_align: 2, offset: 0, memory: 0 } }",
+            "LocalGet { local_index: 0 }",
+            "I32Const { value: 2 }",
+            "I32Store { memarg: MemArg { align: 2, max_align: 2, offset: 4, memory: 0 } }",
+            "LocalGet { local_index: 0 }",
+        ];
+        if level == OptimizationLevel::None {
+            literal.push("F64Const { value: Ieee64(4607182418800017408) }");
+        } else {
+            literal.extend(["I32Const { value: 1 }", "F64ConvertI32S"]);
+        }
+        literal.extend([
+            "Call { function_index: 2 }",
+            "F64Store { memarg: MemArg { align: 3, max_align: 3, offset: 8, memory: 0 } }",
+            "LocalGet { local_index: 0 }",
+        ]);
+        if level == OptimizationLevel::None {
+            literal.push("F64Const { value: Ieee64(4611686018427387904) }");
+        } else {
+            literal.extend(["I32Const { value: 2 }", "F64ConvertI32S"]);
+        }
+        literal.extend([
+            "F64Store { memarg: MemArg { align: 3, max_align: 3, offset: 16, memory: 0 } }",
+            "LocalGet { local_index: 0 }",
+            "Return",
+            "End",
+        ]);
+        assert_eq!(module.bodies[5], literal);
+        if level == OptimizationLevel::None {
+            assert_eq!(bytes, baseline_bytes);
+            assert_eq!(bytes, compile(&compiler.analyze(source).unwrap()).unwrap());
+        } else if let Some(expected) = &snapshot {
             assert_eq!(&bytes, expected, "level {level:?}");
         } else {
             snapshot = Some(bytes);

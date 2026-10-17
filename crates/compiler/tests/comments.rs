@@ -8,7 +8,7 @@ use was_compiler::{
 use wasmparser::Validator;
 
 #[test]
-fn comments_between_every_token_preserve_emitter_golden_at_all_levels() {
+fn comments_between_every_token_preserve_emission_at_all_levels() {
     let source = include_str!("../../../tests/fixtures/emitter/control.was");
     let golden = include_bytes!("../../../tests/fixtures/emitter/control.wasm");
     let mut commented = String::new();
@@ -46,10 +46,14 @@ fn comments_between_every_token_preserve_emitter_golden_at_all_levels() {
         let wasm = compiler.compile(&program).unwrap();
 
         Validator::new().validate_all(&wasm).unwrap();
-        assert_eq!(wasm, golden, "typed compilation at {level:?}");
+        if level == OptimizationLevel::None {
+            assert_eq!(wasm, golden, "baseline typed compilation");
+        }
+        assert_eq!(wasm, compiler.compile_source(source).unwrap());
+        assert_eq!(wasm, compiler.compile(&program).unwrap());
         assert_eq!(
             compiler.compile_source(&commented).unwrap(),
-            golden,
+            wasm,
             "source compilation at {level:?}"
         );
     }

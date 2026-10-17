@@ -39,6 +39,7 @@ struct DecodedModule {
     functions: Vec<u32>,
     exports: Vec<(String, ExternalKind, u32)>,
     calls: Vec<Vec<u32>>,
+    bodies: Vec<Vec<String>>,
 }
 
 fn decode(bytes: &[u8]) -> DecodedModule {
@@ -91,14 +92,18 @@ fn decode(bytes: &[u8]) -> DecodedModule {
             Payload::CodeSectionEntry(body) => {
                 let mut operators = body.get_operators_reader().expect("operators");
                 let mut calls = Vec::new();
+                let mut instructions = Vec::new();
 
                 while !operators.eof() {
-                    if let Operator::Call { function_index } = operators.read().expect("operator") {
-                        calls.push(function_index);
+                    let operator = operators.read().expect("operator");
+                    if let Operator::Call { function_index } = &operator {
+                        calls.push(*function_index);
                     }
+                    instructions.push(format!("{operator:?}"));
                 }
 
                 module.calls.push(calls);
+                module.bodies.push(instructions);
             }
             _ => {}
         }
@@ -186,8 +191,30 @@ fn legacy_compile_and_default_layout_keep_all_exports() {
                 compile_with_exports(&program, &ExportOptions::All).unwrap(),
                 expected
             );
-            assert_eq!(compiler.compile(&program).unwrap(), expected);
-            assert_eq!(compiler.compile_source(source).unwrap(), expected);
+            let bytes = compiler.compile(&program).unwrap();
+            assert_eq!(compiler.compile_source(source).unwrap(), bytes);
+            if level == OptimizationLevel::None {
+                assert_eq!(bytes, expected);
+            } else {
+                let module = decode(&bytes);
+                let baseline = decode(&expected);
+                assert_eq!(module.exports, baseline.exports);
+                assert_eq!(module.imports, baseline.imports);
+                assert_eq!(module.functions, baseline.functions);
+                assert_eq!(module.calls, baseline.calls);
+                assert_eq!(
+                    module
+                        .sections
+                        .iter()
+                        .filter(|(id, _)| *id != 10)
+                        .collect::<Vec<_>>(),
+                    baseline
+                        .sections
+                        .iter()
+                        .filter(|(id, _)| *id != 10)
+                        .collect::<Vec<_>>()
+                );
+            }
             assert!(default_layout.users.iter().all(|plan| plan.exported));
             assert_eq!(default_layout.signatures, explicit_layout.signatures);
             assert_eq!(
@@ -204,7 +231,8 @@ fn assert_selection_only_changes_exports(source: &str, memory: bool) {
         let mut compiler = compiler(level);
         let program = compiler.analyze(source).unwrap();
         let original = program.clone();
-        let baseline = decode(&compile(&program).unwrap());
+        let baseline = decode(&compiler.compile(&program).unwrap());
+        let direct_baseline = decode(&compile(&program).unwrap());
         let hosts = compiler.host_functions().clone();
         let options = *compiler.options();
         let runtime = if memory { runtime_exports(6) } else { vec![] };
@@ -256,7 +284,10 @@ fn assert_selection_only_changes_exports(source: &str, memory: bool) {
             assert_eq!(module.imports, baseline.imports);
             assert_eq!(module.functions, baseline.functions);
             assert_eq!(module.calls, baseline.calls);
-            assert_eq!(bytes, direct);
+            assert_eq!(decode(&direct).sections, direct_baseline.sections);
+            if level == OptimizationLevel::None {
+                assert_eq!(bytes, direct);
+            }
             assert_eq!(compiler.compile(&program).unwrap(), bytes);
             assert_eq!(compiler.compile_source(source).unwrap(), bytes);
             assert_eq!(compiler.exports(), &selection_snapshot);
@@ -352,7 +383,7 @@ fn unexported_unused_reference_functions_still_require_memory() {
             optimization_level: level,
         });
         let program = compiler.analyze(source).unwrap();
-        let baseline = decode(&compile(&program).unwrap());
+        let baseline = decode(&compiler.compile(&program).unwrap());
 
         for selection in [only(&["main"]), ExportOptions::None, only(&[])] {
             compiler.set_exports(selection.clone());
@@ -443,7 +474,7 @@ fn scalar_reserved_names_remain_valid_selected_user_exports() {
             optimization_level: level,
         });
         let program = compiler.analyze(source).unwrap();
-        let baseline = decode(&compile(&program).unwrap());
+        let baseline = decode(&compiler.compile(&program).unwrap());
 
         for (selection, expected) in [
             (
@@ -686,7 +717,13 @@ fn export_and_level_changes_preserve_options_registration_and_typed_import_snaps
 
     compiler.set_exports(only(&["main"]));
 
-    let expected = compiler.compile(&program).unwrap();
+    let enabled_expected = compiler.compile(&program).unwrap();
+    compiler.set_optimization_level(OptimizationLevel::None);
+    let baseline_expected = compiler.compile(&program).unwrap();
+    assert_eq!(
+        baseline_expected,
+        compile_with_exports(&program, &only(&["main"])).unwrap()
+    );
 
     compiler
         .register_host_function("later", "extra", "later", vec![Type::String], Type::Void)
@@ -710,8 +747,13 @@ fn export_and_level_changes_preserve_options_registration_and_typed_import_snaps
             assert_eq!(program, original);
         }
 
-        assert_eq!(compiler.compile(&program).unwrap(), expected);
-        assert_ne!(compiler.compile_source(SCALAR_SOURCE).unwrap(), expected);
+        let expected = if level == OptimizationLevel::None {
+            &baseline_expected
+        } else {
+            &enabled_expected
+        };
+        assert_eq!(&compiler.compile(&program).unwrap(), expected);
+        assert_ne!(&compiler.compile_source(SCALAR_SOURCE).unwrap(), expected);
     }
 
     assert_eq!(
@@ -743,7 +785,63 @@ fn run_node(bytes: &[u8], script: &str) {
     );
 }
 
-fn run_at_all_levels(source: &str, selection: ExportOptions, script: &str) {
+fn check_scalar_runtime_helper(module: &DecodedModule, level: OptimizationLevel) {
+    let mut expected = vec!["LocalGet { local_index: 0 }"];
+    if level == OptimizationLevel::None {
+        expected.push("F64Const { value: Ieee64(4611686018427387904) }");
+    } else {
+        expected.extend(["I32Const { value: 2 }", "F64ConvertI32S"]);
+    }
+    expected.extend(["F64Mul", "Return", "End"]);
+    assert_eq!(module.bodies[2], expected);
+}
+
+fn check_memory_runtime_helper(module: &DecodedModule, level: OptimizationLevel) {
+    let mut expected = vec![
+        "I32Const { value: 24 }",
+        "Call { function_index: 6 }",
+        "LocalSet { local_index: 1 }",
+        "LocalGet { local_index: 1 }",
+        "LocalGet { local_index: 1 }",
+        "I32Const { value: 8 }",
+        "I32Add",
+        "I32Store { memarg: MemArg { align: 2, max_align: 2, offset: 0, memory: 0 } }",
+        "LocalGet { local_index: 1 }",
+        "I32Const { value: 2 }",
+        "I32Store { memarg: MemArg { align: 2, max_align: 2, offset: 4, memory: 0 } }",
+        "LocalGet { local_index: 1 }",
+        "LocalGet { local_index: 0 }",
+    ];
+    if level == OptimizationLevel::None {
+        expected.push("F64Const { value: Ieee64(4611686018427387904) }");
+    } else {
+        expected.extend(["I32Const { value: 2 }", "F64ConvertI32S"]);
+    }
+    expected.extend([
+        "F64Mul",
+        "F64Store { memarg: MemArg { align: 3, max_align: 3, offset: 8, memory: 0 } }",
+        "LocalGet { local_index: 1 }",
+    ]);
+    if level == OptimizationLevel::None {
+        expected.push("F64Const { value: Ieee64(4613937818241073152) }");
+    } else {
+        expected.extend(["I32Const { value: 3 }", "F64ConvertI32S"]);
+    }
+    expected.extend([
+        "F64Store { memarg: MemArg { align: 3, max_align: 3, offset: 16, memory: 0 } }",
+        "LocalGet { local_index: 1 }",
+        "Return",
+        "End",
+    ]);
+    assert_eq!(module.bodies[2], expected);
+}
+
+fn run_at_all_levels(
+    source: &str,
+    selection: ExportOptions,
+    script: &str,
+    check: impl Fn(&DecodedModule, OptimizationLevel),
+) {
     let mut snapshot = None;
 
     for level in LEVELS {
@@ -755,9 +853,13 @@ fn run_at_all_levels(source: &str, selection: ExportOptions, script: &str) {
         let original = program.clone();
         let bytes = compiler.compile(&program).unwrap();
 
-        decode(&bytes);
+        let module = decode(&bytes);
+        check(&module, level);
+        assert_eq!(compiler.compile(&program).unwrap(), bytes);
 
-        if let Some(expected) = &snapshot {
+        if level == OptimizationLevel::None {
+            assert_eq!(compile_with_exports(&program, &selection).unwrap(), bytes);
+        } else if let Some(expected) = &snapshot {
             assert_eq!(&bytes, expected, "level {level:?}");
         } else {
             snapshot = Some(bytes.clone());
@@ -798,6 +900,7 @@ fn node_selected_scalar_exports_call_forward_unexported_helpers_and_imports() {
         assert.equal(e.unused, undefined);
         assert.equal(calls, 2);
         "#,
+        check_scalar_runtime_helper,
     );
 }
 
@@ -829,6 +932,7 @@ fn node_selected_memory_exports_call_forward_helpers_with_unchanged_runtime_indi
         assert.equal(new DataView(e.memory.buffer).getFloat64(pointer, true), 123);
         assert.equal(e.main(2), 11);
         "#,
+        check_memory_runtime_helper,
     );
 }
 
@@ -861,6 +965,7 @@ fn node_none_and_empty_only_export_runtime_memory_and_working_allocator() {
             assert(e.memory.buffer.byteLength > before);
             assert.equal(new DataView(e.memory.buffer).getFloat64(first, true), 42);
             "#,
+            check_memory_runtime_helper,
         );
     }
 }
@@ -881,6 +986,7 @@ fn node_none_and_empty_only_scalar_modules_keep_imports_but_no_exports() {
             }}).exports;
             assert.deepEqual(Object.keys(e), []);
             "#,
+            check_scalar_runtime_helper,
         );
     }
 }
@@ -914,5 +1020,26 @@ fn node_unexported_reserved_source_names_remain_callable_in_memory_modules() {
         assert.equal(e.main(), 35);
         assert.equal(e.hidden, undefined);
         "#,
+        |module, level| {
+            for (index, baseline, enabled) in [
+                (
+                    1,
+                    "F64Const { value: Ieee64(4621819117588971520) }",
+                    "I32Const { value: 10 }",
+                ),
+                (
+                    2,
+                    "F64Const { value: Ieee64(4626322717216342016) }",
+                    "I32Const { value: 20 }",
+                ),
+            ] {
+                let expected = if level == OptimizationLevel::None {
+                    vec![baseline, "Return", "End"]
+                } else {
+                    vec![enabled, "F64ConvertI32S", "Return", "End"]
+                };
+                assert_eq!(module.bodies[index], expected);
+            }
+        },
     );
 }

@@ -1,0 +1,21 @@
+{
+  "utc": "2026-10-17T11:59:24.862133+00:00",
+  "command": [
+    "docs/benchmarks/integer-add-sub-39/record_matched.py",
+    "docs/benchmarks/integer-add-sub-39/collection-1"
+  ],
+  "cwd": "C:\\Users\\luanr\\Documents\\Jobs\\rust\\was-compiler",
+  "python": "3.13.14 (tags/v3.13.14:fd17997, Jun 10 2026, 13:03:48) [MSC v.1944 64 bit (AMD64)]",
+  "notes": "Matched experimental #39 observations, not release validation. Locals remain f64; eligible exact-i32 literals/add-sub trees may specialize. Power, thermals, background activity and settled V8 tiering are not controlled. Guest timing includes JS/Wasm calls and effects bookkeeping. Compiler reports contain Divan aggregates (100 samples, one compilation per sample), not raw samples.",
+  "environment": {
+    "NUMBER_OF_PROCESSORS": "18",
+    "PATH": "C:\\Program Files\\Git\\mingw64\\bin;C:\\Program Files\\Git\\usr\\bin;C:\\Users\\luanr\\bin;C:\\Program Files\\PowerShell\\7;C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\wbin;C:\\Program Files\\Common Files\\Oracle\\Java\\javapath;C:\\WINDOWS\\system32;C:\\WINDOWS;C:\\WINDOWS\\System32\\Wbem;C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\;C:\\WINDOWS\\System32\\OpenSSH\\;C:\\Program Files\\dotnet\\;C:\\Program Files\\Git\\cmd;C:\\Program Files\\nodejs\\;C:\\Program Files\\Docker\\Docker\\resources\\bin;C:\\Program Files\\PowerShell\\7\\;C:\\Users\\luanr\\scoop\\persist\\bun\\bin;C:\\Users\\luanr\\scoop\\apps\\pnpm\\current\\bin;C:\\Users\\luanr\\AppData\\Local\\Programs\\Herdr\\bin;C:\\Users\\luanr\\scoop\\persist\\uv\\tools\\shims;C:\\Users\\luanr\\scoop\\persist\\uv\\python\\shims;C:\\Users\\luanr\\scoop\\apps\\starship\\current;C:\\Users\\luanr\\.cargo\\bin;C:\\Users\\luanr\\.local\\bin;C:\\Users\\luanr\\scoop\\shims;C:\\Users\\luanr\\AppData\\Local\\Microsoft\\WindowsApps;C:\\Users\\luanr\\AppData\\Local\\gitkraken\\bin;C:\\Users\\luanr\\AppData\\Local\\JetBrains\\Toolbox\\scripts;C:\\Users\\luanr\\AppData\\Local\\Programs\\Microsoft VS Code\\bin;C:\\Users\\luanr\\AppData\\Local\\Microsoft\\WindowsApps;C:\\Users\\luanr\\AppData\\Local\\Android\\Sdk\\platform-tools;C:\\Users\\luanr\\Documents\\protoc\\bin;C:\\Users\\luanr\\AppData\\Local\\Programs\\Zed\\bin;C:\\Users\\luanr\\AppData\\Roaming\\npm",
+    "PROCESSOR_IDENTIFIER": "Intel64 Family 6 Model 170 Stepping 4, GenuineIntel",
+    "CARGO_NET_OFFLINE": "true"
+  },
+  "order": "verify; compiler None/Basic + guest None/Basic; compiler Basic/None + guest Basic/None",
+  "overrides": {
+    "CARGO_NET_OFFLINE": "true",
+    "INTEGER_BASELINE_LEVEL": "set per command"
+  }
+}

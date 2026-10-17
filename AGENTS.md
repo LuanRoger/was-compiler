@@ -32,7 +32,7 @@ execution engine. Host registration declares imports; it does not install callba
 | [Compilation roadmap](docs/compilation-roadmap.md) | Architecture, milestones, acceptance criteria |
 | [Memory ABI](docs/memory-abi.md) | Authoritative descriptor, allocation, ownership, and host contract |
 | [Typed arrays #37](docs/typed-arrays.md) | Contextual typing, Rust migration, consumed validation, adapter copy contract and final release evidence |
-| [Integer specialization #38](docs/integer-specialization.md) | Baseline/proof contracts, narrow scheduling exception, future preset parity and measurement gates |
+| [Integer specialization #38/#39](docs/integer-specialization.md) | Broader proof contract, experimental literal/add-sub subset, preset parity and pending release decision |
 | [Limitations](docs/limitations.md) | Implemented restrictions versus possible alternatives |
 | [Runtime integration](docs/runtime-integration.md) | CLI, raw execution, imports, explicit marshaling |
 | [Browser guide](docs/browser.md) | Compiler-in-Wasm API, packaging, playground integration |
@@ -77,8 +77,8 @@ Use the documented direct commands for bounded validation evidence.
 
 ```text
 source -> lexer -> parser AST -> semantic analysis + host signatures
-       -> TypedProgram -> optimization (currently no-op)
-       -> ABI/module layout -> checked function-body lowering
+       -> TypedProgram -> borrowed optimization boundary + numeric policy
+       -> ABI/module layout -> checked function-body lowering + representation facts
        -> private ValidatedProgram -> wasm_encoder section assembly -> Wasm bytes
 ```
 
@@ -86,7 +86,7 @@ The library entry points are `Compiler::analyze`, `Compiler::compile`, and
 `Compiler::compile_source`. Analysis produces an owned typed program; compilation
 uses its host-declaration snapshot, not the compiler's subsequently edited registry.
 `analyze` is independent of optimization settings. Direct `codegen::compile`
-bypasses the compiler's optimization/options orchestration.
+bypasses the compiler's optimization/options orchestration and retains baseline lowering.
 
 | Location | Responsibility |
 | --- | --- |
@@ -99,7 +99,8 @@ bypasses the compiler's optimization/options orchestration.
 | `crates/compiler/src/match_patterns.rs` | Shared semantic/backend numeric-pattern, domain and exhaustiveness checks |
 | `crates/compiler/src/flow.rs` | Private completion sets shared by semantic/backend flow summaries |
 | `crates/compiler/src/host.rs`, `crates/compiler/src/exports.rs` | Ordered host declarations, private external-type eligibility, and owned export selection |
-| `crates/compiler/src/optimization.rs` | Borrowed `Cow<TypedProgram>` no-op; future transformation boundary |
+| `crates/compiler/src/optimization.rs` | Preset-to-numeric policy selection; borrowed `Cow<TypedProgram>` boundary without AST rewrites |
+| `crates/compiler/src/codegen/representation.rs` | Private per-body `Facts` cache for #39 exact-i32 literal/add-sub representation proofs |
 | `crates/compiler/src/codegen/abi.rs` | Internal language-to-Wasm signatures, separate external signature checks, and named memory-layout constants |
 | `crates/compiler/src/codegen/layout.rs`, `crates/compiler/src/codegen/indices.rs` | Signatures, callees, exports, distinct Wasm index types |
 | `crates/compiler/src/codegen/walker.rs` | Shared structural traversal for separate planning policies |
@@ -143,12 +144,17 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   The internal boundary is not a public checked-AST API or a guarantee that every
   arbitrary malformed tree produces a recoverable error.
 - Keep `CompilerOptions` small and `Copy`; owned `ExportOptions` stays separate.
-  Optimization levels `None`, `Basic`, `Standard`, and `Aggressive` currently have
-  identical output and diagnostics; `None` remains default and the byte baseline.
+  `None` remains default and the byte baseline, as do direct codegen entry points.
+  `Basic`, `Standard`, and `Aggressive` share #39's experimental exact-i32 literal
+  and proven add/sub lowering; require semantic/diagnostic parity across levels,
+  enabled-preset byte identity and adapter byte parity within each level.
   Before changing numeric representation, preset parity, or integer benchmarks,
-  read [the #38 contracts](docs/integer-specialization.md). Its narrow scope may
-  precede WP12, but production implementation still needs separate authorization;
-  it does not authorize general WP13 or optimization as incidental cleanup.
+  read [the #38/#39 contracts](docs/integer-specialization.md). All numeric locals
+  remain f64; broader #38 local/comparison/negation specialization is future work.
+  Facts guide checked emission, which still validates all nodes. #39 is approved
+  ahead of WP12, not general WP13. Measurements show size benefit and noisy material
+  timing regressions pending explicit user acceptance. [Correctness gates passed](docs/integer-specialization.md#correctness-validation-2026-10-17);
+  Release acceptance remains pending; review against `09dcb5c` is complete.
 
 ## Current language support
 
@@ -809,7 +815,9 @@ existing tests and add focused coverage for newly introduced boundaries when nee
   applicable. In JavaScript use `Number.isNaN` and `Object.is` for special values;
   use independent expected results/reference behavior, not the production algorithm.
 - Preserve import snapshots, deterministic ordering, export-selection behavior,
-  and optimization-level parity. Adapter changes need CLI/browser contract tests.
+  and optimization-level semantic/diagnostic parity. Require enabled-preset byte
+    identity and adapter byte parity within each level, not blanket O0–O3 byte identity.
+    Adapter changes need CLI/browser contract tests.
 - Use `tests/support/process.rs` for bounded subprocess tests: it drains pipes
   concurrently, applies deadlines, and kills/reaps the direct child. It is not a
   process-tree controller or guest fuel mechanism. Keep specialized decoders local;

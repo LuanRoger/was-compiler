@@ -203,11 +203,14 @@ fn rebuilt_browser_contract_bytes_diagnostics_raw_calls_and_recovery_match_nativ
         &mut input,
         format!("host registration error: {registration_error}").as_bytes(),
     );
-    for names in [&["main"][..], &[][..]] {
-        native.set_exports(ExportOptions::Only(
-            names.iter().map(|n| (*n).into()).collect(),
-        ));
-        field(&mut input, &native.compile_source(SOURCE).unwrap());
+    for (_, level) in LEVELS {
+        native.set_optimization_level(level);
+        for names in [&["main"][..], &[][..]] {
+            native.set_exports(ExportOptions::Only(
+                names.iter().map(|n| (*n).into()).collect(),
+            ));
+            field(&mut input, &native.compile_source(SOURCE).unwrap());
+        }
     }
     let script = r#"
         const assert = require('node:assert/strict');
@@ -229,7 +232,7 @@ fn rebuilt_browser_contract_bytes_diagnostics_raw_calls_and_recovery_match_nativ
             const native = Array.from({length: 4}, () => ({bytes: field(), wat: field().toString('utf8')}));
             const diagnostics = Array.from({length: diagnosticCount}, () => ({source: field().toString('utf8'), message: field().toString('utf8')}));
             const registration = field().toString('utf8');
-            const mainOnly = field(), none = field();
+            const selections = Array.from({length: 4}, () => ({mainOnly: field(), none: field()}));
             assert.equal(offset, input.length);
             const directory = process.argv[1];
             const {default: init, Compiler} = await import(pathToFileURL(path.join(directory, 'was_compiler.js')).href);
@@ -277,9 +280,9 @@ fn rebuilt_browser_contract_bytes_diagnostics_raw_calls_and_recovery_match_nativ
                     assert.throws(() => e.recursive(-1), WebAssembly.RuntimeError);
                     assert.deepEqual(events, []);
                     compiler.setExports(['main']);
-                    assert.deepEqual(Buffer.from(compiler.compile(source)), mainOnly);
+                    assert.deepEqual(Buffer.from(compiler.compile(source)), selections[level].mainOnly);
                     compiler.exportNone();
-                    assert.deepEqual(Buffer.from(compiler.compile(source)), none);
+                    assert.deepEqual(Buffer.from(compiler.compile(source)), selections[level].none);
                     compiler.setExports(selected); same(native[level]);
                 }
             } finally {compiler.free();}

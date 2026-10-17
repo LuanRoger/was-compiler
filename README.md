@@ -624,8 +624,8 @@ collection yet**. Scalar-only modules do not include the memory runtime.
 
 All user functions are exported by default. `ExportOptions` or CLI `--export` /
 `--no-exports` select the public user-function surface without removing bodies or
-imports. Required memory ABI exports remain. M0–M9 are implemented; no optimization
-passes were added.
+imports. Required memory ABI exports remain. M0–M9 are implemented; those milestones
+added no optimization passes. See the experimental #39 subset below.
 
 ```rust
 use was_compiler::{Compiler, Type};
@@ -879,8 +879,20 @@ helper kind or optimization pass; all optimization levels retain parity.
 
 The compiler supports configuring `OptimizationLevel::None` (the default),
 `Basic`, `Standard`, or `Aggressive`, corresponding to the intended O0–O3 presets.
-**No optimization passes exist yet:** all levels currently produce identical Wasm
-and preserve the same diagnostics.
+`Basic`, `Standard`, and `Aggressive` share **experimental #39 integer
+specialization**: exact parsed signed-i32 literals and proven add/sub subtrees use
+private i32 lowering, converting back to f64 at unspecialized consumers. All numeric
+locals remain f64, including never-reassigned lets; comparisons, unary operations,
+calls, loads and captured reads retain existing lowering/unknown facts. Public AST,
+language types and ABI are unchanged. Enabled bytes may differ from `None`; semantics
+and diagnostics must match across levels, with adapter byte parity within each level.
+
+[Contracts and status](docs/integer-specialization.md) distinguish this subset from
+#38's broader future design. [Measurements](docs/benchmarks/integer-add-sub-39/README.md)
+show smaller modules but noisy timing results with material regression signals
+pending explicit user acceptance. [Correctness gates passed](docs/integer-specialization.md#correctness-validation-2026-10-17)
+with 1,261 workspace tests and 25 browser groups; this is not release acceptance or
+a default change. Review against `09dcb5c` is complete.
 
 ```rust
 use was_compiler::{Compiler, CompilerOptions, OptimizationLevel};
@@ -895,8 +907,10 @@ compiler.set_optimization_level(OptimizationLevel::None);
 Both `compile` and `compile_source` go through an optimization stage between the
 typed AST and code generation. `analyze` remains independent of the selected
 level. The stage currently borrows the input without cloning or changing it;
-future transformations can return an owned typed AST. Calling the lower-level
-`codegen::compile` directly bypasses compiler options and optimization.
+the orchestrator separately selects the numeric policy used by checked emission's
+private per-body facts cache. Future AST transformations can return an owned tree.
+Calling lower-level `codegen::compile` or `codegen::compile_with_exports` directly
+bypasses compiler options and retains baseline lowering.
 
 Run `cargo run --offline -- examples/array-sum.was` to print plain WAT with
 `wasmprinter`.

@@ -245,17 +245,14 @@ fn run_node(bytes: &[u8], assertions: &str) {
 fn run_source(fixture: &str, script: &str) {
     let mut compiler = compiler();
     let source = source(fixture, true);
-    let mut baseline = None;
+    let baseline_program = compiler.analyze(&source).unwrap();
     for level in LEVELS {
         compiler.set_optimization_level(level);
         let program = compiler.analyze(&source).expect("named source analysis");
         let bytes = compiler.compile(&program).unwrap();
         assert_eq!(compiler.compile_source(&source).unwrap(), bytes);
-        if let Some(baseline) = &baseline {
-            assert_eq!(&bytes, baseline, "{level:?}");
-        } else {
-            baseline = Some(bytes.clone());
-        }
+        assert_eq!(program, baseline_program, "{level:?}");
+        assert_eq!(compiler.compile(&program).unwrap(), bytes);
         run_node(&bytes, script);
     }
 }
@@ -455,7 +452,10 @@ fn run_typed(fixture: &str, script: &str) {
     for level in LEVELS {
         compiler.set_optimization_level(level);
         let bytes = compiler.compile(&program).unwrap();
-        assert_eq!(bytes, baseline, "{level:?}");
+        if level == OptimizationLevel::None {
+            assert_eq!(bytes, baseline, "{level:?}");
+        }
+        assert_eq!(compiler.compile(&program).unwrap(), bytes);
         run_node(&bytes, script);
         assert_eq!(program, snapshot);
     }
@@ -526,6 +526,7 @@ fn typed_sequences_preserve_import_snapshot_export_choices_and_determinism() {
         ExportOptions::None,
         ExportOptions::Only(vec!["reordered".into(), "continued".into()]),
     ] {
+        compiler.set_optimization_level(OptimizationLevel::None);
         compiler.set_exports(selection.clone());
         let expected = compiler.compile(&program).unwrap();
         Validator::new().validate_all(&expected).unwrap();
@@ -564,6 +565,14 @@ fn typed_sequences_preserve_import_snapshot_export_choices_and_determinism() {
         assert!(exports.iter().any(|name| name == "__alloc"));
         for level in LEVELS {
             compiler.set_optimization_level(level);
+            let selected_bytes = compiler.compile(&program).unwrap();
+            wasmparser::Validator::new()
+                .validate_all(&selected_bytes)
+                .unwrap();
+            if level == OptimizationLevel::None {
+                assert_eq!(selected_bytes, expected);
+            }
+            let expected = selected_bytes;
             assert_eq!(compiler.compile(&program).unwrap(), expected, "{level:?}");
             assert_eq!(program, snapshot);
         }

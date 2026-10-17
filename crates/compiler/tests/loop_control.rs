@@ -72,16 +72,20 @@ fn transfers_preserve_optimization_export_and_owned_import_snapshot_contracts() 
         ExportOptions::None,
         ExportOptions::Only(vec!["main".into()]),
     ] {
-        compiler.set_exports(exports);
-        let expected = compiler.compile(&program).unwrap();
-        validate(&expected);
-        assert_eq!(
-            sections_without_exports(&expected),
-            sections_without_exports(&baseline)
-        );
-
         for level in LEVELS {
             compiler.set_optimization_level(level);
+            compiler.set_exports(ExportOptions::All);
+            let all_exports = compiler.compile(&program).unwrap();
+            if level == OptimizationLevel::None {
+                assert_eq!(all_exports, baseline);
+            }
+            compiler.set_exports(exports.clone());
+            let expected = compiler.compile(&program).unwrap();
+            validate(&expected);
+            assert_eq!(
+                sections_without_exports(&expected),
+                sections_without_exports(&all_exports)
+            );
             assert_eq!(compiler.compile(&program).unwrap(), expected);
             assert_eq!(program, original);
         }
@@ -97,7 +101,10 @@ fn source_transfers_decode_expected_depths_without_adding_memory_or_helpers() {
         compiler.set_optimization_level(level);
         let bytes = compiler.compile_source(SOURCE).unwrap();
         validate(&bytes);
-        assert_eq!(bytes, expected);
+        if level == OptimizationLevel::None {
+            assert_eq!(bytes, expected);
+        }
+        assert_eq!(compiler.compile_source(SOURCE).unwrap(), bytes);
         let program = compiler.analyze(SOURCE).unwrap();
         assert_eq!(compiler.compile(&program).unwrap(), bytes);
 

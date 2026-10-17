@@ -677,6 +677,8 @@ fn named_defaults_cli_bytes_exports_and_full_arity_match_library_at_every_level(
         ("-O3", was_compiler::OptimizationLevel::Aggressive),
     ] {
         compiler.set_optimization_level(level);
+        compiler.set_exports(ExportOptions::All);
+        let all = decode(&compiler.compile_source(NAMED_DEFAULT_SOURCE).unwrap());
         for (selection, export_flags, names) in [
             (ExportOptions::All, vec![], vec!["main", "target", "count"]),
             (
@@ -837,9 +839,14 @@ fn compound_cli_output_matches_library_bytes_and_wat_at_every_level() {
     ";
     let mut compiler = Compiler::new();
     compiler.set_exports(ExportOptions::Only(vec!["main".into()]));
-    let expected = compiler.compile_source(source).unwrap();
-
-    for flag in ["-O0", "-O1", "-O2", "-O3"] {
+    for (flag, level) in [
+        ("-O0", was_compiler::OptimizationLevel::None),
+        ("-O1", was_compiler::OptimizationLevel::Basic),
+        ("-O2", was_compiler::OptimizationLevel::Standard),
+        ("-O3", was_compiler::OptimizationLevel::Aggressive),
+    ] {
+        compiler.set_optimization_level(level);
+        let expected = compiler.compile_source(source).unwrap();
         assert_eq!(
             scratch.compile(source, &[flag, "--export", "main"]),
             expected
@@ -874,9 +881,14 @@ fn loop_transfers_match_library_binary_and_wat_at_every_level() {
     ";
     let mut compiler = Compiler::new();
     compiler.set_exports(ExportOptions::Only(vec!["main".into()]));
-    let expected = compiler.compile_source(source).unwrap();
-
-    for flag in ["-O0", "-O1", "-O2", "-O3"] {
+    for (flag, level) in [
+        ("-O0", was_compiler::OptimizationLevel::None),
+        ("-O1", was_compiler::OptimizationLevel::Basic),
+        ("-O2", was_compiler::OptimizationLevel::Standard),
+        ("-O3", was_compiler::OptimizationLevel::Aggressive),
+    ] {
+        compiler.set_optimization_level(level);
+        let expected = compiler.compile_source(source).unwrap();
         assert_eq!(
             scratch.compile(source, &[flag, "--export", "main"]),
             expected
@@ -922,7 +934,6 @@ fn statement_and_value_loops_match_library_binary_and_wat_at_every_level() {
     let mut compiler = Compiler::new();
     compiler.set_exports(ExportOptions::Only(vec!["main".into()]));
     let baseline = compiler.compile_source(source).unwrap();
-    let expected_wat = wasmprinter::print_bytes(&baseline).unwrap();
     assert_eq!(user_exports(&decode(&baseline)), ["main"]);
 
     let bodies = Parser::new(0)
@@ -969,7 +980,7 @@ fn statement_and_value_loops_match_library_binary_and_wat_at_every_level() {
     ] {
         compiler.set_optimization_level(level);
         let expected = compiler.compile_source(source).unwrap();
-        assert_eq!(expected, baseline);
+        let expected_wat = wasmprinter::print_bytes(&expected).unwrap();
         assert_eq!(
             scratch.compile(source, &[flag, "--export", "main"]),
             expected
@@ -1295,7 +1306,6 @@ fn value_blocks_cli_binary_and_wat_match_library_at_every_level() {
     let mut compiler = Compiler::new();
     compiler.set_exports(ExportOptions::Only(vec!["main".into()]));
     let baseline = compiler.compile_source(source).unwrap();
-    let expected_wat = wasmprinter::print_bytes(&baseline).unwrap();
     let module = decode(&baseline);
     assert_eq!(user_exports(&module), ["main"]);
 
@@ -1338,7 +1348,7 @@ fn value_blocks_cli_binary_and_wat_match_library_at_every_level() {
     ] {
         compiler.set_optimization_level(level);
         let expected = compiler.compile_source(source).unwrap();
-        assert_eq!(expected, baseline);
+        let expected_wat = wasmprinter::print_bytes(&expected).unwrap();
         assert_eq!(
             scratch.compile(source, &[flag, "--export", "main"]),
             expected
@@ -1558,7 +1568,7 @@ fn main() -> number {
 "#;
     scratch.write("program.was", source);
     let host = "by=env.step()->number";
-    let mut selected: Option<Decoded> = None;
+    let mut selected: [Option<Decoded>; 4] = std::array::from_fn(|_| None);
     for (flags, exports, expected_names) in [
         (
             vec!["--host", host, "--export", "main"],
@@ -1571,13 +1581,15 @@ fn main() -> number {
             vec![],
         ),
     ] {
-        let mut baseline = None;
-        for (level, optimization_level) in [
+        for (index, (level, optimization_level)) in [
             ("-O0", was_compiler::OptimizationLevel::None),
             ("-O1", was_compiler::OptimizationLevel::Basic),
             ("-O2", was_compiler::OptimizationLevel::Standard),
             ("-O3", was_compiler::OptimizationLevel::Aggressive),
-        ] {
+        ]
+        .into_iter()
+        .enumerate()
+        {
             let mut compiler =
                 Compiler::with_options(was_compiler::CompilerOptions { optimization_level });
             compiler
@@ -1588,11 +1600,6 @@ fn main() -> number {
             args.push(level);
             let bytes = scratch.compile(source, &args);
             assert_eq!(bytes, compiler.compile_source(source).unwrap());
-            if let Some(previous) = &baseline {
-                assert_eq!(&bytes, previous);
-            } else {
-                baseline = Some(bytes.clone());
-            }
             let mut wat_args = vec!["program.was", "--emit", "wat"];
             wat_args.extend_from_slice(&args);
             let wat = success(scratch.cli(&wat_args, None));
@@ -1612,13 +1619,13 @@ fn main() -> number {
                 abi.iter()
                     .any(|(name, kind, _)| name == "__alloc" && *kind == ExternalKind::Func)
             );
-            if let Some(previous) = &selected {
+            if let Some(previous) = &selected[index] {
                 assert_eq!(decoded.sections, previous.sections);
                 assert_eq!(decoded.bodies, previous.bodies);
                 assert_eq!(decoded.functions, previous.functions);
                 assert_eq!(abi, abi_exports(previous));
             }
-            selected = Some(decoded);
+            selected[index] = Some(decoded);
         }
     }
     scratch.assert_entries(&["program.was", "program.wasm"]);
@@ -1781,7 +1788,52 @@ fn attached_option_values_and_separated_levels_preserve_artifacts() {
 }
 
 #[test]
-fn every_optimization_preset_is_currently_a_noop() {
+fn integer_specialization_cli_bytes_and_wat_match_library_at_every_level() {
+    let source = "fn main() -> number { return (10 + 20) - 3; }";
+    let scratch = Scratch::new("integer_specialization");
+    let mut compiler = Compiler::new();
+    let baseline = compiler.compile_source(source).unwrap();
+    assert_eq!(scratch.compile(source, &[]), baseline);
+
+    let mut enabled = None;
+    for (flag, level) in [
+        ("-O0", was_compiler::OptimizationLevel::None),
+        ("-O1", was_compiler::OptimizationLevel::Basic),
+        ("-O2", was_compiler::OptimizationLevel::Standard),
+        ("-O3", was_compiler::OptimizationLevel::Aggressive),
+    ] {
+        compiler.set_optimization_level(level);
+        let expected = compiler.compile_source(source).unwrap();
+        decode(&expected);
+        if level == was_compiler::OptimizationLevel::None {
+            assert_eq!(expected, baseline);
+        } else {
+            assert_ne!(
+                expected, baseline,
+                "{flag} must specialize literal addition/subtraction"
+            );
+            if let Some(previous) = &enabled {
+                assert_eq!(
+                    &expected, previous,
+                    "enabled presets use the same initial pass"
+                );
+            } else {
+                enabled = Some(expected.clone());
+            }
+        }
+        assert_eq!(scratch.compile(source, &[flag]), expected, "{flag}");
+        let wat = success(scratch.cli(&["program.was", flag, "--emit", "wat"], None));
+        assert_eq!(
+            assert_plain_wat(&wat),
+            wasmprinter::print_bytes(&expected).unwrap()
+        );
+    }
+    assert_eq!(scratch.compile(source, &["-O0"]), baseline);
+    scratch.assert_entries(&["program.was", "program.wasm"]);
+}
+
+#[test]
+fn unspecialized_program_preserves_bytes_at_every_optimization_level() {
     let scratch = Scratch::new("optimization");
     let baseline = scratch.compile(MEMORY_SOURCE, &["--export", "main"]);
     for level in ["-O0", "-O1", "-O2", "-O3"] {

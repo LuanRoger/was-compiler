@@ -37,7 +37,7 @@ fn compiler(level: OptimizationLevel) -> Compiler {
 }
 
 #[test]
-fn memory_abi_preserves_pre_refactor_module_bytes_at_every_level() {
+fn memory_abi_preserves_baseline_bytes_and_determinism_at_every_level() {
     Validator::new().validate_all(GOLDEN).unwrap();
 
     for level in LEVELS {
@@ -46,8 +46,11 @@ fn memory_abi_preserves_pre_refactor_module_bytes_at_every_level() {
         let bytes = compiler.compile(&program).unwrap();
 
         Validator::new().validate_all(&bytes).unwrap();
-        assert_eq!(bytes, GOLDEN, "ABI bytes changed at {level:?}");
-        assert_eq!(compiler.compile_source(SOURCE).unwrap(), GOLDEN);
+        if level == OptimizationLevel::None {
+            assert_eq!(bytes, GOLDEN, "ABI baseline bytes changed");
+        }
+        assert_eq!(compiler.compile(&program).unwrap(), bytes);
+        assert_eq!(compiler.compile_source(SOURCE).unwrap(), bytes);
     }
 }
 

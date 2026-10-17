@@ -173,6 +173,12 @@ fn combined_features_preserve_snapshot_layout_helpers_and_export_independence() 
         .unwrap();
     for level in LEVELS {
         compiler.set_optimization_level(level);
+        let selected_bytes = compiler.compile(&program).unwrap();
+        Validator::new().validate_all(&selected_bytes).unwrap();
+        if level == OptimizationLevel::None {
+            assert_eq!(selected_bytes, baseline);
+        }
+        let baseline = selected_bytes;
         assert_eq!(compiler.compile(&program).unwrap(), baseline, "{level:?}");
         for selection in [
             ExportOptions::None,
@@ -268,7 +274,10 @@ fn combined_features_execute_effects_aliases_transfers_and_traps_at_all_levels()
         compiler.set_optimization_level(level);
         let bytes = compiler.compile_source(SOURCE).unwrap();
         Validator::new().validate_all(&bytes).unwrap();
-        assert_eq!(bytes, baseline);
+        if level == OptimizationLevel::None {
+            assert_eq!(bytes, baseline);
+        }
+        assert_eq!(compiler.compile_source(SOURCE).unwrap(), bytes);
         let output = test_process::output(
             Command::new("node").arg("-e").arg(script),
             Some(&bytes),

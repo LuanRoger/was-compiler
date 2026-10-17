@@ -168,7 +168,7 @@ fn mixed_call_diamond_has_canonical_concrete_calls_and_owned_source_order_layout
         ExportOptions::None,
     ] {
         compiler.set_exports(exports.clone());
-        let mut baseline = None;
+        let mut enabled_bytes = None;
         for level in LEVELS {
             compiler.set_optimization_level(level);
             let bytes = compiler.compile(&program).unwrap();
@@ -179,8 +179,13 @@ fn mixed_call_diamond_has_canonical_concrete_calls_and_owned_source_order_layout
             assert_eq!(bytes, fresh.compile_source(DIAMOND).unwrap());
             assert_eq!(bytes, fresh.compile_source(&explicit(DIAMOND)).unwrap());
             assert_eq!(bytes, compiler.compile(&program).unwrap());
-            if let Some(previous) = &baseline {
-                assert_eq!(&bytes, previous);
+            Validator::new().validate_all(&bytes).unwrap();
+            if level != OptimizationLevel::None {
+                if let Some(expected) = &enabled_bytes {
+                    assert_eq!(&bytes, expected);
+                } else {
+                    enabled_bytes = Some(bytes.clone());
+                }
             }
             let decoded = decode(&bytes);
             assert_eq!(
@@ -221,13 +226,36 @@ fn mixed_call_diamond_has_canonical_concrete_calls_and_owned_source_order_layout
                     .flatten()
                     .all(|op| !matches!(op, Operator::CallIndirect { .. }))
             );
-            assert!(matches!(decoded.bodies[1].as_slice(), [
-                Operator::LocalGet { local_index: 2 }, Operator::LocalSet { local_index: 3 },
-                Operator::LocalGet { local_index: 0 }, Operator::LocalSet { local_index: 4 },
-                Operator::LocalGet { local_index: 4 }, Operator::F64Const { value: one }, Operator::F64Add, Operator::LocalSet { local_index: 5 },
-                Operator::LocalGet { local_index: 4 }, Operator::LocalGet { local_index: 5 }, Operator::LocalGet { local_index: 3 },
-                Operator::Call { function_index: 5 }, Operator::Return, Operator::End,
-            ] if one.bits() == 1f64.to_bits()));
+            if level == OptimizationLevel::None {
+                assert!(matches!(decoded.bodies[1].as_slice(), [
+                    Operator::LocalGet { local_index: 2 }, Operator::LocalSet { local_index: 3 },
+                    Operator::LocalGet { local_index: 0 }, Operator::LocalSet { local_index: 4 },
+                    Operator::LocalGet { local_index: 4 }, Operator::F64Const { value: one }, Operator::F64Add, Operator::LocalSet { local_index: 5 },
+                    Operator::LocalGet { local_index: 4 }, Operator::LocalGet { local_index: 5 }, Operator::LocalGet { local_index: 3 },
+                    Operator::Call { function_index: 5 }, Operator::Return, Operator::End,
+                ] if one.bits() == 1f64.to_bits()));
+            } else {
+                assert!(matches!(
+                    decoded.bodies[1].as_slice(),
+                    [
+                        Operator::LocalGet { local_index: 2 },
+                        Operator::LocalSet { local_index: 3 },
+                        Operator::LocalGet { local_index: 0 },
+                        Operator::LocalSet { local_index: 4 },
+                        Operator::LocalGet { local_index: 4 },
+                        Operator::I32Const { value: 1 },
+                        Operator::F64ConvertI32S,
+                        Operator::F64Add,
+                        Operator::LocalSet { local_index: 5 },
+                        Operator::LocalGet { local_index: 4 },
+                        Operator::LocalGet { local_index: 5 },
+                        Operator::LocalGet { local_index: 3 },
+                        Operator::Call { function_index: 5 },
+                        Operator::Return,
+                        Operator::End,
+                    ]
+                ));
+            }
             assert!(matches!(
                 decoded.bodies[2].as_slice(),
                 [
@@ -250,7 +278,7 @@ fn mixed_call_diamond_has_canonical_concrete_calls_and_owned_source_order_layout
                     ]
                 }
             );
-            baseline = Some(bytes);
+            assert_eq!(fresh.analyze(DIAMOND).unwrap(), program);
         }
     }
     assert_eq!(program, snapshot);
@@ -362,6 +390,7 @@ fn descriptor_default_diamond_keeps_full_arity_private_ranges_and_required_memor
         ExportOptions::Only(vec!["main".into(), "arrays".into(), "texts".into()]),
         ExportOptions::None,
     ] {
+        compiler.set_optimization_level(OptimizationLevel::None);
         compiler.set_exports(exports.clone());
         let baseline = compiler.compile(&program).unwrap();
         let decoded = decode(&baseline);
@@ -398,6 +427,14 @@ fn descriptor_default_diamond_keeps_full_arity_private_ranges_and_required_memor
         );
         for level in LEVELS {
             compiler.set_optimization_level(level);
+            let selected_bytes = compiler.compile(&program).unwrap();
+            wasmparser::Validator::new()
+                .validate_all(&selected_bytes)
+                .unwrap();
+            if level == OptimizationLevel::None {
+                assert_eq!(selected_bytes, baseline);
+            }
+            let baseline = selected_bytes;
             assert_eq!(compiler.compile(&program).unwrap(), baseline);
             assert_eq!(compiler.compile_source(DESCRIPTORS).unwrap(), baseline);
             assert_eq!(
@@ -546,6 +583,14 @@ fn nested_transfer_diamond_resolves_caller_results_and_validates_at_every_level(
     decode(&baseline);
     for level in LEVELS {
         compiler.set_optimization_level(level);
+        let selected_bytes = compiler.compile(&program).unwrap();
+        wasmparser::Validator::new()
+            .validate_all(&selected_bytes)
+            .unwrap();
+        if level == OptimizationLevel::None {
+            assert_eq!(selected_bytes, baseline);
+        }
+        let baseline = selected_bytes;
         assert_eq!(compiler.compile(&program).unwrap(), baseline);
         assert_eq!(compiler.compile_source(TRANSFERS).unwrap(), baseline);
         assert_eq!(
@@ -693,6 +738,14 @@ fn trapping_default_diamond_is_concrete_and_matches_explicit_bytes_at_all_levels
     decode(&baseline);
     for level in LEVELS {
         compiler.set_optimization_level(level);
+        let selected_bytes = compiler.compile(&program).unwrap();
+        wasmparser::Validator::new()
+            .validate_all(&selected_bytes)
+            .unwrap();
+        if level == OptimizationLevel::None {
+            assert_eq!(selected_bytes, baseline);
+        }
+        let baseline = selected_bytes;
         assert_eq!(compiler.compile(&program).unwrap(), baseline);
         assert_eq!(compiler.compile_source(TRAPS).unwrap(), baseline);
         assert_eq!(compiler.compile_source(&explicit(TRAPS)).unwrap(), baseline);

@@ -1,5 +1,37 @@
 use super::*;
 
+fn run_runtime_at_all_levels(
+    source: &str,
+    script: &str,
+    check: impl Fn(&DecodedModule, OptimizationLevel),
+) {
+    let mut enabled_bytes = None;
+    for level in [
+        OptimizationLevel::None,
+        OptimizationLevel::Basic,
+        OptimizationLevel::Standard,
+        OptimizationLevel::Aggressive,
+    ] {
+        let compiler = Compiler::with_options(CompilerOptions {
+            optimization_level: level,
+        });
+        let bytes = compiler
+            .compile_source(source)
+            .expect("compile guest runtime");
+        let module = decode(&bytes);
+        check(&module, level);
+        assert_eq!(compiler.compile_source(source).unwrap(), bytes);
+        if level == OptimizationLevel::None {
+            assert_eq!(compile(&compiler.analyze(source).unwrap()).unwrap(), bytes);
+        } else if let Some(expected) = &enabled_bytes {
+            assert_eq!(&bytes, expected, "optimization level {level:?}");
+        } else {
+            enabled_bytes = Some(bytes.clone());
+        }
+        run_node(&bytes, script);
+    }
+}
+
 #[test]
 #[ignore = "requires Node.js"]
 fn node_executes_numeric_literal_returns() {
@@ -378,9 +410,7 @@ fn node_executes_nested_user_host_calls_left_to_right_with_void_side_effects() {
                 .unwrap();
         }
 
-        let bytes = compiler
-            .compile_source(
-                "fn entry() -> number {
+        let source = "fn entry() -> number {
                     let result: number = combine(mark(1), identity(mark(2)), mark(identity(mark(3))));
                     relay(result);
                     combine(mark(4), mark(5), mark(6));
@@ -388,8 +418,9 @@ fn node_executes_nested_user_host_calls_left_to_right_with_void_side_effects() {
                 }
                 fn identity(n: number) -> number { return n; }
                 fn combine(a: number, b: number, c: number) -> number { return join(a, b, c); }
-                fn relay(n: number) -> void { print(n); }",
-            )
+                fn relay(n: number) -> void { print(n); }";
+        let bytes = compiler
+            .compile_source(source)
             .expect("compile nested user and host runtime");
         let module = decode(&bytes);
 
@@ -397,8 +428,7 @@ fn node_executes_nested_user_host_calls_left_to_right_with_void_side_effects() {
             module.exports[0],
             ("entry".to_owned(), ExternalKind::Func, 4)
         );
-        assert_eq!(
-            module.bodies[0],
+        let expected = if level == OptimizationLevel::None {
             vec![
                 DecodedInstruction::F64Const(1.0),
                 DecodedInstruction::Call(1),
@@ -424,10 +454,48 @@ fn node_executes_nested_user_host_calls_left_to_right_with_void_side_effects() {
                 DecodedInstruction::LocalGet(0),
                 DecodedInstruction::Return,
                 DecodedInstruction::End,
-            ],
-        );
+            ]
+        } else {
+            use DecodedInstruction::*;
+            vec![
+                I32Const(1),
+                Runtime("F64ConvertI32S".into()),
+                Call(1),
+                I32Const(2),
+                Runtime("F64ConvertI32S".into()),
+                Call(1),
+                Call(5),
+                I32Const(3),
+                Runtime("F64ConvertI32S".into()),
+                Call(1),
+                Call(5),
+                Call(1),
+                Call(6),
+                LocalSet(0),
+                LocalGet(0),
+                Call(7),
+                I32Const(4),
+                Runtime("F64ConvertI32S".into()),
+                Call(1),
+                I32Const(5),
+                Runtime("F64ConvertI32S".into()),
+                Call(1),
+                I32Const(6),
+                Runtime("F64ConvertI32S".into()),
+                Call(1),
+                Call(6),
+                Drop,
+                LocalGet(0),
+                Return,
+                End,
+            ]
+        };
+        assert_eq!(module.bodies[0], expected);
 
-        if let Some(expected) = &snapshot {
+        assert_eq!(compiler.compile_source(source).unwrap(), bytes);
+        if level == OptimizationLevel::None {
+            assert_eq!(compile(&compiler.analyze(source).unwrap()).unwrap(), bytes);
+        } else if let Some(expected) = &snapshot {
             assert_eq!(&bytes, expected, "optimization level {level:?}");
         } else {
             snapshot = Some(bytes.clone());
@@ -616,12 +684,11 @@ fn node_executes_self_and_mutual_recursion_with_a_bounded_host_tick() {
             .register_host_function("tick", "env", "tick", vec![Type::Number], Type::Void)
             .unwrap();
 
-        let bytes = compiler
-            .compile_source(
-                "fn recurse(n: number) -> number { tick(n); return recurse(n + 1); }
+        let source = "fn recurse(n: number) -> number { tick(n); return recurse(n + 1); }
                 fn left(n: number) -> void { tick(n); right(n + 1); }
-                fn right(n: number) -> void { tick(n); left(n + 1); }",
-            )
+                fn right(n: number) -> void { tick(n); left(n + 1); }";
+        let bytes = compiler
+            .compile_source(source)
             .expect("compile bounded recursive runtime");
         let module = decode(&bytes);
 
@@ -633,8 +700,7 @@ fn node_executes_self_and_mutual_recursion_with_a_bounded_host_tick() {
                 ("right".to_owned(), ExternalKind::Func, 4),
             ],
         );
-        assert_eq!(
-            module.bodies,
+        let expected = if level == OptimizationLevel::None {
             vec![
                 vec![
                     DecodedInstruction::LocalGet(0),
@@ -664,10 +730,49 @@ fn node_executes_self_and_mutual_recursion_with_a_bounded_host_tick() {
                     DecodedInstruction::Call(3),
                     DecodedInstruction::End,
                 ],
-            ],
-        );
+            ]
+        } else {
+            use DecodedInstruction::*;
+            vec![
+                vec![
+                    LocalGet(0),
+                    Call(1),
+                    LocalGet(0),
+                    I32Const(1),
+                    Runtime("F64ConvertI32S".into()),
+                    F64Add,
+                    Call(2),
+                    Return,
+                    End,
+                ],
+                vec![
+                    LocalGet(0),
+                    Call(1),
+                    LocalGet(0),
+                    I32Const(1),
+                    Runtime("F64ConvertI32S".into()),
+                    F64Add,
+                    Call(4),
+                    End,
+                ],
+                vec![
+                    LocalGet(0),
+                    Call(1),
+                    LocalGet(0),
+                    I32Const(1),
+                    Runtime("F64ConvertI32S".into()),
+                    F64Add,
+                    Call(3),
+                    End,
+                ],
+            ]
+        };
+        assert_eq!(module.bodies, expected);
 
-        if let Some(expected) = &snapshot {
+        assert_eq!(compiler.compile_source(source).unwrap(), bytes);
+        if level == OptimizationLevel::None {
+            assert_eq!(compile(&compiler.analyze(source).unwrap()).unwrap(), bytes);
+        } else if let Some(expected) = &snapshot {
             assert_eq!(&bytes, expected, "optimization level {level:?}");
         } else {
             snapshot = Some(bytes.clone());
@@ -709,7 +814,7 @@ fn node_executes_self_and_mutual_recursion_with_a_bounded_host_tick() {
 #[test]
 #[ignore = "requires Node.js"]
 fn node_executes_comparisons_ieee754_and_noncanonical_bool_operators_at_all_levels() {
-    run_guest_at_all_optimization_levels(
+    run_runtime_at_all_levels(
         "fn eq(a: number, b: number) -> bool { return a == b; }
          fn ne(a: number, b: number) -> bool { return a != b; }
          fn lt(a: number, b: number) -> bool { return a < b; }
@@ -770,6 +875,28 @@ fn node_executes_comparisons_ieee754_and_noncanonical_bool_operators_at_all_leve
             }
         }
         "#,
+        |module, level| {
+            use DecodedInstruction::*;
+            let mut expected = if level == OptimizationLevel::None {
+                vec![F64Const(7.0)]
+            } else {
+                vec![I32Const(7), Runtime("F64ConvertI32S".into())]
+            };
+            expected.extend([
+                LocalGet(0),
+                If(BlockType::Type(ValType::I32)),
+                I32Const(1),
+                Else,
+                LocalGet(1),
+                I32Eqz,
+                I32Eqz,
+                End,
+                Call(15),
+                Return,
+                End,
+            ]);
+            assert_eq!(module.bodies[14], expected);
+        },
     );
 }
 
@@ -801,9 +928,7 @@ fn node_executes_short_circuit_host_effects_in_order_at_all_levels() {
             )
             .unwrap();
 
-        let bytes = compiler
-            .compile_source(
-                "fn both() -> bool { return probe(1) && probe(2); }
+        let source = "fn both() -> bool { return probe(1) && probe(2); }
              fn either() -> bool { return probe(1) || probe(2); }
              fn nested_or() -> bool { return (probe(1) && probe(2)) || (probe(3) && probe(4)); }
              fn nested_and() -> bool { return probe(1) && (probe(2) || probe(3)); }
@@ -811,13 +936,42 @@ fn node_executes_short_circuit_host_effects_in_order_at_all_levels() {
              fn equal() -> bool { return probe(1) == probe(2); }
              fn unequal() -> bool { return probe(1) != probe(2); }
              fn numeric_compare() -> bool { return numeric(1) < numeric(2); }
-             fn guarded_compare() -> bool { return probe(1) && numeric(2) >= numeric(3); }",
-            )
+             fn guarded_compare() -> bool { return probe(1) && numeric(2) >= numeric(3); }";
+        let bytes = compiler
+            .compile_source(source)
             .expect("compile host effects runtime");
 
-        decode(&bytes);
+        let module = decode(&bytes);
+        use DecodedInstruction::*;
+        let mut expected = if level == OptimizationLevel::None {
+            vec![F64Const(1.0)]
+        } else {
+            vec![I32Const(1), Runtime("F64ConvertI32S".into())]
+        };
+        expected.extend([Call(0), I32Eqz, I32Eqz, If(BlockType::Type(ValType::I32))]);
+        if level == OptimizationLevel::None {
+            expected.push(F64Const(2.0));
+        } else {
+            expected.extend([I32Const(2), Runtime("F64ConvertI32S".into())]);
+        }
+        expected.extend([
+            Call(0),
+            I32Eqz,
+            I32Eqz,
+            I32Eqz,
+            I32Eqz,
+            Else,
+            I32Const(0),
+            End,
+            Return,
+            End,
+        ]);
+        assert_eq!(module.bodies[0], expected);
 
-        if let Some(expected) = &snapshot {
+        assert_eq!(compiler.compile_source(source).unwrap(), bytes);
+        if level == OptimizationLevel::None {
+            assert_eq!(compile(&compiler.analyze(source).unwrap()).unwrap(), bytes);
+        } else if let Some(expected) = &snapshot {
             assert_eq!(&bytes, expected, "optimization level {level:?}");
         } else {
             snapshot = Some(bytes.clone());
@@ -969,7 +1123,7 @@ fn node_executes_host_if_and_repeated_loop_conditions_at_all_levels() {
 #[test]
 #[ignore = "requires Node.js"]
 fn node_executes_if_loops_early_returns_and_nested_shadowing_at_all_levels() {
-    run_guest_at_all_optimization_levels(
+    run_runtime_at_all_levels(
         "fn choose(flag: bool) -> number { if flag { return 1; } else { return 2; } }
          fn partial(a: bool, b: bool) -> number { if a { if b { return 1; } } else { return 2; } return 3; }
          fn sum(n: number) -> number {
@@ -1055,13 +1209,24 @@ fn node_executes_if_loops_early_returns_and_nested_shadowing_at_all_levels() {
             }
         }
         "#,
+        |module, level| {
+            use DecodedInstruction::*;
+            let expected = if level == OptimizationLevel::None {
+                vec![LocalGet(0), If(BlockType::Empty), F64Const(1.0), Return,
+                    Else, F64Const(2.0), Return, End, Unreachable, End]
+            } else {
+                vec![LocalGet(0), If(BlockType::Empty), I32Const(1), Runtime("F64ConvertI32S".into()), Return,
+                    Else, I32Const(2), Runtime("F64ConvertI32S".into()), Return, End, Unreachable, End]
+            };
+            assert_eq!(module.bodies[0], expected);
+        },
     );
 }
 
 #[test]
 #[ignore = "requires Node.js"]
 fn node_executes_guest_only_factorial_and_mutual_recursion_base_cases_at_all_levels() {
-    run_guest_at_all_optimization_levels(
+    run_runtime_at_all_levels(
         "fn factorial(n: number) -> number {
              if n <= 1 { return 1; } else { return n * factorial(n - 1); }
          }
@@ -1087,5 +1252,25 @@ fn node_executes_guest_only_factorial_and_mutual_recursion_base_cases_at_all_lev
         assert.equal(guest.even(-1), 1);
         assert.equal(guest.odd(-1), 0);
         "#,
+        |module, level| {
+            use DecodedInstruction::*;
+            let mut expected = vec![LocalGet(0)];
+            let literal = if level == OptimizationLevel::None {
+                vec![F64Const(1.0)]
+            } else {
+                vec![I32Const(1), Runtime("F64ConvertI32S".into())]
+            };
+            expected.extend(literal.clone());
+            expected.extend([F64Le, If(BlockType::Empty)]);
+            expected.extend(literal.clone());
+            expected.extend([Return, Else, LocalGet(0), LocalGet(0)]);
+            expected.extend(literal);
+            expected.extend([F64Sub, Call(0), F64Mul, Return, End, Unreachable, End]);
+            assert_eq!(module.bodies[0], expected);
+            assert_eq!(
+                module.signatures[0],
+                (vec![ValType::F64], vec![ValType::F64])
+            );
+        },
     );
 }

@@ -168,11 +168,13 @@ fn compile(compiler: &Compiler, source: &str) -> Vec<u8> {
 
 fn run_node_at_all_levels(source: &str, script: &str) {
     let mut compiler = compiler();
-    let baseline = compile(&compiler, source);
+    let program = compiler.analyze(source).unwrap();
     for level in LEVELS {
         compiler.set_optimization_level(level);
         let bytes = compile(&compiler, source);
-        assert_eq!(bytes, baseline, "{level:?}");
+        assert_eq!(compiler.compile_source(source).unwrap(), bytes);
+        assert_eq!(compiler.compile(&program).unwrap(), bytes);
+        assert_eq!(compiler.analyze(source).unwrap(), program);
         let output = test_process::output(
             Command::new("node").arg("-e").arg(script),
             Some(&bytes),
@@ -196,7 +198,7 @@ fn array_for_compiles_through_public_pipeline() {
 }
 
 #[test]
-fn fixtures_validate_deterministically_with_owned_imports_and_optimization_parity() {
+fn fixtures_validate_deterministically_with_owned_imports_at_each_optimization_level() {
     for source in [VALUES, CONTROL, TRANSFERS, DESCRIPTORS] {
         let mut compiler = compiler();
         let program = compiler.analyze(source).unwrap();
@@ -208,8 +210,13 @@ fn fixtures_validate_deterministically_with_owned_imports_and_optimization_parit
             .unwrap();
         for level in LEVELS {
             compiler.set_optimization_level(level);
+            let expected = compiler.compile(&program).unwrap();
+            Validator::new().validate_all(&expected).unwrap();
+            if level == OptimizationLevel::None {
+                assert_eq!(expected, baseline);
+            }
             for _ in 0..2 {
-                assert_eq!(compiler.compile(&program).unwrap(), baseline, "{level:?}");
+                assert_eq!(compiler.compile(&program).unwrap(), expected, "{level:?}");
                 assert_eq!(program, snapshot);
             }
         }
@@ -258,14 +265,15 @@ fn non_export_sections(bytes: &[u8]) -> Vec<(u8, Vec<u8>)> {
 fn export_selection_does_not_prune_array_bodies_imports_or_shift_helpers() {
     let mut compiler = compiler();
     let program = compiler.analyze(VALUES).unwrap();
-    let baseline = compiler.compile(&program).unwrap();
     for selection in [
         ExportOptions::None,
         ExportOptions::Only(vec!["main".into()]),
     ] {
-        compiler.set_exports(selection);
         for level in LEVELS {
             compiler.set_optimization_level(level);
+            compiler.set_exports(ExportOptions::All);
+            let baseline = compiler.compile(&program).unwrap();
+            compiler.set_exports(selection.clone());
             let bytes = compiler.compile(&program).unwrap();
             Validator::new().validate_all(&bytes).unwrap();
             assert_eq!(non_export_sections(&bytes), non_export_sections(&baseline));
@@ -415,7 +423,10 @@ fn array_literal_temporary_follows_reserved_for_scratch() {
     for level in LEVELS {
         compiler.set_optimization_level(level);
         let bytes = compiler.compile(&program).unwrap();
-        assert_eq!(bytes, baseline);
+        if level == OptimizationLevel::None {
+            assert_eq!(bytes, baseline);
+        }
+        assert_eq!(compiler.compile(&program).unwrap(), bytes);
         Validator::new().validate_all(&bytes).unwrap();
         let body = Parser::new(0)
             .parse_all(&bytes)

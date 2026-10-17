@@ -404,6 +404,14 @@ fn valid_array_iterables_are_accepted_by_checked_lowering() {
         let mut compiler = Compiler::new();
         for level in LEVELS {
             compiler.set_optimization_level(level);
+            let selected_bytes = compiler.compile(&program).unwrap();
+            wasmparser::Validator::new()
+                .validate_all(&selected_bytes)
+                .unwrap();
+            if level == OptimizationLevel::None {
+                assert_eq!(selected_bytes, baseline);
+            }
+            let baseline = selected_bytes;
             assert_eq!(compiler.compile(&program).unwrap(), baseline);
             assert_eq!(program, snapshot);
         }
@@ -1156,7 +1164,10 @@ fn planning_keeps_preorder_slots_for_nested_unreachable_and_short_circuited_fors
     for level in LEVELS {
         compiler.set_optimization_level(level);
         let bytes = compiler.compile(&program).unwrap();
-        assert_eq!(bytes, baseline);
+        if level == OptimizationLevel::None {
+            assert_eq!(bytes, baseline);
+        }
+        assert_eq!(compiler.compile(&program).unwrap(), bytes);
         let body = function_body(&bytes, 0);
         assert_eq!(local_types(&body), expected_locals);
         let ops = body

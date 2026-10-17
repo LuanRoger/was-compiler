@@ -11,6 +11,17 @@ pub enum OptimizationLevel {
     Aggressive,
 }
 
+impl OptimizationLevel {
+    pub(crate) fn numeric_policy(self) -> crate::codegen::NumericPolicy {
+        match self {
+            Self::None => crate::codegen::NumericPolicy::Baseline,
+            Self::Basic | Self::Standard | Self::Aggressive => {
+                crate::codegen::NumericPolicy::ProvenIntegers
+            }
+        }
+    }
+}
+
 pub(crate) fn optimize(program: &TypedProgram, level: OptimizationLevel) -> Cow<'_, TypedProgram> {
     match level {
         OptimizationLevel::None
@@ -25,7 +36,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn levels_borrow_the_input_until_optimization_passes_exist() {
+    fn representation_selection_does_not_rewrite_the_input_program() {
         let program = TypedProgram {
             host_functions: vec![],
             functions: vec![],

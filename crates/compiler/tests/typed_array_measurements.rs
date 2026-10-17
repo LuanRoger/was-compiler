@@ -109,19 +109,28 @@ fn bounded_typed_array_workloads_use_public_compile_and_normal_memory_exports() 
                 ("memory".into(), ExternalKind::Memory),
             ]
         );
+        let mut enabled_bytes = None;
         for optimization_level in [
             OptimizationLevel::None,
             OptimizationLevel::Basic,
             OptimizationLevel::Standard,
             OptimizationLevel::Aggressive,
         ] {
+            let selected = Compiler::with_options(CompilerOptions { optimization_level });
+            let selected_bytes = selected.compile_source(&case.source).unwrap();
+            Validator::new().validate_all(&selected_bytes).unwrap();
+            if optimization_level == OptimizationLevel::None {
+                assert_eq!(selected_bytes, bytes, "{}", case.name);
+            } else if let Some(expected) = &enabled_bytes {
+                assert_eq!(&selected_bytes, expected, "{}", case.name);
+            } else {
+                enabled_bytes = Some(selected_bytes.clone());
+            }
+            assert_eq!(selected.analyze(&case.source).unwrap(), typed);
+            assert_eq!(selected.compile(&typed).unwrap(), selected_bytes);
             assert_eq!(
-                bytes,
-                Compiler::with_options(CompilerOptions { optimization_level })
-                    .compile_source(&case.source)
-                    .unwrap(),
-                "{}",
-                case.name
+                selected.compile_source(&case.source).unwrap(),
+                selected_bytes
             );
         }
     }

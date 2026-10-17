@@ -58,28 +58,35 @@ fn scalar_compounds_keep_old_value_on_stack_and_need_no_memory_import_or_scratch
             assert_eq!(module.sections, [1, 2, 3, 7, 10]);
             assert!(module.imports.is_empty());
             assert!(module.locals[0].is_empty());
-            assert_eq!(
-                module.bodies[0],
-                [
-                    LocalGet(0),
-                    LocalGet(0),
-                    F64Const(2.0),
-                    F64Add,
-                    arithmetic(op, 1),
-                    LocalSet(0),
-                    LocalGet(0),
-                    Return,
-                    End
-                ]
-            );
+            let mut expected = vec![LocalGet(0), LocalGet(0)];
+            if level == OptimizationLevel::None {
+                expected.push(F64Const(2.0));
+            } else {
+                expected.extend([I32Const(2), Runtime("F64ConvertI32S".into())]);
+            }
+            expected.extend([
+                F64Add,
+                arithmetic(op, 1),
+                LocalSet(0),
+                LocalGet(0),
+                Return,
+                End,
+            ]);
+            assert_eq!(module.bodies[0], expected);
             assert_eq!(
                 module.functions.len(),
                 if op == BinaryOp::Remainder { 2 } else { 1 }
             );
-            if let Some(expected) = &snapshot {
-                assert_eq!(&bytes, expected);
-            } else {
-                snapshot = Some(bytes);
+            assert_eq!(compiler.compile_source(&source).unwrap(), bytes);
+            if level == OptimizationLevel::None {
+                assert_eq!(compile(&compiler.analyze(&source).unwrap()).unwrap(), bytes);
+            }
+            if level != OptimizationLevel::None {
+                if let Some(expected) = &snapshot {
+                    assert_eq!(&bytes, expected);
+                } else {
+                    snapshot = Some(bytes);
+                }
             }
         }
     }

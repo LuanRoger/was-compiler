@@ -1,0 +1,8 @@
+test_changed_inputs_including_added_removed (__main__.self_test.<locals>.Tests.test_changed_inputs_including_added_removed) ... ok
+test_compiler_report_and_rejections (__main__.self_test.<locals>.Tests.test_compiler_report_and_rejections) ... ok
+test_preset_identity_and_within_level_stability (__main__.self_test.<locals>.Tests.test_preset_identity_and_within_level_stability) ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.005s
+
+OK

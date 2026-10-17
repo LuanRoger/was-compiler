@@ -93,9 +93,13 @@ fn inference_preserves_raw_bytes_at_every_level_and_export_surface() {
             compiler.set_optimization_level(level);
             let bytes = compiler.compile_source(&inferred).unwrap();
             Validator::new().validate_all(&bytes).unwrap();
-            assert_eq!(bytes, expected, "{level:?}, {exports:?}");
-            assert_eq!(compiler.compile_source(ANNOTATED).unwrap(), expected);
-            assert_eq!(compiler.compile(&program).unwrap(), expected);
+            if level == OptimizationLevel::None {
+                assert_eq!(bytes, expected, "{level:?}, {exports:?}");
+            }
+            assert_eq!(compiler.compile_source(ANNOTATED).unwrap(), bytes);
+            assert_eq!(compiler.compile_source(&inferred).unwrap(), bytes);
+            assert_eq!(compiler.compile(&program).unwrap(), bytes);
+            assert_eq!(compiler.analyze(&inferred).unwrap(), original);
             assert_eq!(program, original);
         }
     }
@@ -179,9 +183,22 @@ fn inferred_locals_keep_f64_numbers_i32_handles_and_independent_slot_layout() {
         fn items() -> number[] { let value = []; return value; }
     "#;
     let mut compiler = Compiler::new();
+    let program = compiler.analyze(source).unwrap();
+    let mut enabled_bytes = None;
     for level in LEVELS {
         compiler.set_optimization_level(level);
-        let decoded = decode(&compiler.compile_source(source).unwrap());
+        let bytes = compiler.compile_source(source).unwrap();
+        assert_eq!(compiler.compile_source(source).unwrap(), bytes);
+        assert_eq!(compiler.compile(&program).unwrap(), bytes);
+        assert_eq!(compiler.analyze(source).unwrap(), program);
+        if level != OptimizationLevel::None {
+            if let Some(expected) = &enabled_bytes {
+                assert_eq!(&bytes, expected);
+            } else {
+                enabled_bytes = Some(bytes.clone());
+            }
+        }
+        let decoded = decode(&bytes);
         for (index, (params, results)) in [
             (vec![ValType::F64, ValType::I32], vec![ValType::F64]),
             (vec![], vec![ValType::I32]),
@@ -208,7 +225,28 @@ fn inferred_locals_keep_f64_numbers_i32_handles_and_independent_slot_layout() {
             ]
         );
         assert_eq!(decoded.local_sets[0], [2, 3, 4, 7, 5, 8, 6]);
-        assert_eq!(decoded.numbers[0], [10.0]);
+        if level == OptimizationLevel::None {
+            assert_eq!(decoded.numbers[0], [10.0]);
+        } else {
+            assert!(decoded.numbers[0].is_empty());
+            let body = Parser::new(0)
+                .parse_all(&bytes)
+                .find_map(|payload| match payload.unwrap() {
+                    Payload::CodeSectionEntry(body) => Some(body),
+                    _ => None,
+                })
+                .unwrap();
+            let mut ops = body.get_operators_reader().unwrap();
+            assert!(matches!(
+                ops.read().unwrap(),
+                Operator::I32Const { value: 10 }
+            ));
+            assert!(matches!(ops.read().unwrap(), Operator::F64ConvertI32S));
+            assert!(matches!(
+                ops.read().unwrap(),
+                Operator::LocalSet { local_index: 2 }
+            ));
+        }
         assert_eq!(decoded.locals[1], [ValType::I32]);
         assert_eq!(decoded.locals[2], [ValType::I32]);
         assert_eq!(decoded.locals[3], [ValType::I32, ValType::I32]);

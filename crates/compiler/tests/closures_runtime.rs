@@ -20,7 +20,7 @@ fn run(source: &str, selected: &[&str], assertions: &str) {
     compiler.set_exports(ExportOptions::Only(
         selected.iter().map(|name| (*name).into()).collect(),
     ));
-    let mut baseline = None;
+    let baseline_program = compiler.analyze(source).unwrap();
     for level in LEVELS {
         compiler.set_optimization_level(level);
         let program = compiler.analyze(source).unwrap();
@@ -28,11 +28,7 @@ fn run(source: &str, selected: &[&str], assertions: &str) {
         assert_eq!(compiler.compile_source(source).unwrap(), bytes);
         assert_eq!(compiler.compile(&program).unwrap(), bytes);
         Validator::new().validate_all(&bytes).unwrap();
-        if let Some(expected) = &baseline {
-            assert_eq!(&bytes, expected, "{level:?}");
-        } else {
-            baseline = Some(bytes.clone());
-        }
+        assert_eq!(program, baseline_program, "{level:?}");
         let script = format!(
             r#"
             const assert = require('node:assert/strict');

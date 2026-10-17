@@ -48,7 +48,14 @@ fn typed_widths_and_helper_families_are_static_deterministic_and_lazy() {
             OptimizationLevel::Aggressive,
         ] {
             c.set_optimization_level(level);
-            assert_eq!(c.compile_source(&source).unwrap(), baseline);
+            let bytes = c.compile_source(&source).unwrap();
+            Validator::new().validate_all(&bytes).unwrap();
+            if level == OptimizationLevel::None {
+                assert_eq!(bytes, baseline);
+            }
+            assert_eq!(c.compile_source(&source).unwrap(), bytes);
+            let program = c.analyze(&source).unwrap();
+            assert_eq!(c.compile(&program).unwrap(), bytes);
         }
         Validator::new().validate_all(&baseline).unwrap();
         let mut count = 0;

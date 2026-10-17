@@ -1,0 +1,12 @@
+test_failed_commands_preserve_output (__main__.self_test.<locals>.Tests.test_failed_commands_preserve_output) ... COMMAND: test
+COMMAND: test
+COMMAND: test
+ok
+test_output_safety (__main__.self_test.<locals>.Tests.test_output_safety) ... ok
+test_parse_and_rejections (__main__.self_test.<locals>.Tests.test_parse_and_rejections) ... ok
+test_summary_and_parity (__main__.self_test.<locals>.Tests.test_summary_and_parity) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.262s
+
+OK

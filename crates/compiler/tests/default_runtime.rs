@@ -34,16 +34,14 @@ fn compiler() -> Compiler {
 
 fn run(source: &str, assertions: &str) {
     let mut compiler = compiler();
-    let mut baseline = None;
+    let program = compiler.analyze(source).unwrap();
     for level in LEVELS {
         compiler.set_optimization_level(level);
         let bytes = compiler.compile_source(source).unwrap();
         Validator::new().validate_all(&bytes).unwrap();
-        if let Some(expected) = &baseline {
-            assert_eq!(&bytes, expected);
-        } else {
-            baseline = Some(bytes.clone());
-        }
+        assert_eq!(compiler.compile_source(source).unwrap(), bytes);
+        assert_eq!(compiler.compile(&program).unwrap(), bytes);
+        assert_eq!(compiler.analyze(source).unwrap(), program);
         let script = format!(
             r#"
             const assert = require('node:assert/strict');
@@ -236,6 +234,14 @@ fn full_positional_default_declarations_preserve_bytes_import_snapshot_and_selec
         .unwrap();
     for level in LEVELS {
         compiler.set_optimization_level(level);
+        let selected_bytes = compiler.compile(&program).unwrap();
+        wasmparser::Validator::new()
+            .validate_all(&selected_bytes)
+            .unwrap();
+        if level == OptimizationLevel::None {
+            assert_eq!(selected_bytes, before);
+        }
+        let before = selected_bytes;
         assert_eq!(compiler.compile(&program).unwrap(), before);
     }
     let mut legacy = self::compiler();

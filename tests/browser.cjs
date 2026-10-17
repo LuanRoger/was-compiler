@@ -154,9 +154,9 @@ async function main() {
                 return total;
             }
         `;
-        const expected = compile(compiler, source).bytes;
         for (const level of [0, 1, 2, 3]) {
             compiler.setOptimizationLevel(level);
+            const expected = compile(compiler, source).bytes;
             const { bytes, module } = compile(compiler, source);
             assert.deepEqual(bytes, expected);
             const events = [];
@@ -275,13 +275,13 @@ async function main() {
             ['fn main() -> number {\n    let value = false && loop { break; };\n    return 1;\n}',
                 /A value loop requires a break value/, 'let value = false && loop { break; };', 2, 33],
         ];
-        const expected = compile(compiler, source).bytes;
-        const wat = compiler.compileWat(source);
-        const neverBytes = compile(compiler, noExit).bytes;
-        const neverWat = compiler.compileWat(noExit);
         const diagnostics = new Map();
         for (const level of [0, 1, 2, 3]) {
             compiler.setOptimizationLevel(level);
+            const expected = compile(compiler, source).bytes;
+            const wat = compiler.compileWat(source);
+            const neverBytes = compile(compiler, noExit).bytes;
+            const neverWat = compiler.compileWat(noExit);
             const { bytes, module } = compile(compiler, source);
             assert.deepEqual(bytes, expected);
             assert.equal(compiler.compileWat(source), wat);
@@ -375,9 +375,9 @@ async function main() {
             }
             fn remainder(n: number, divisor: number) -> number { n %= divisor; return n; }
         `;
-        const expected = compile(compiler, source).bytes;
         for (const level of [0, 1, 2, 3]) {
             compiler.setOptimizationLevel(level);
+            const expected = compile(compiler, source).bytes;
             const { bytes, module } = compile(compiler, source);
             assert.deepEqual(bytes, expected);
             let instance;
@@ -438,8 +438,6 @@ async function main() {
                 return { match b { true => 7, false => 8 } };
             }
         `;
-        const expected = compiler.compile(source);
-        const wat = compiler.compileWat(source);
         const invalid = '// é🦀\r\n\tfn f(b: bool) { return match b { true => 1, false => "é" }; }\r\n';
         const origin = 'false => "é"';
         const start = invalid.indexOf(origin);
@@ -449,6 +447,8 @@ async function main() {
         const message = `<browser>:2:${Array.from(prefix).length + 1}: semantic error: Type mismatch: expected Number, found String at ${span}\n  |\n2 | ${excerpt}\n  | ${' '.repeat(Array.from(prefix.replace(/\t/g, '    ')).length)}${'^'.repeat(Array.from(origin).length)}`;
         for (let level = 0; level < 4; level++) {
             compiler.setOptimizationLevel(level);
+            const expected = compiler.compile(source);
+            const wat = compiler.compileWat(source);
             const { bytes, module } = compile(compiler, source);
             assert.deepEqual(bytes, expected);
             assert.equal(compiler.compileWat(source), wat);
@@ -501,15 +501,15 @@ async function main() {
         }).exports.main(), 9);
     });
 
-    test('comments preserve bytes across optimization levels and execute without changing strings or division', compiler => {
+    test('comments preserve within-level bytes and execute without changing strings or division', compiler => {
         const plain = 'fn main() -> number { return 84 / 2; } fn text() -> string { return "// /* */ é🦀"; }';
         const commented = '// leading comment\n'
             + '/* multiline\n/* nested opener is text */fn/**/main()/* signature */->number{\n'
             + '// stops at CR\rreturn/* left */84 / /* divisor */2;// stops at LF\n'
             + '}\nfn text()->string{return "// /* */ é🦀";}// EOF';
-        const expected = compile(compiler, plain).bytes;
         for (const level of [0, 1, 2, 3]) {
             compiler.setOptimizationLevel(level);
+            const expected = compile(compiler, plain).bytes;
             assert.deepEqual(compile(compiler, plain).bytes, expected);
             const { bytes, module } = compile(compiler, commented);
             assert.deepEqual(bytes, expected);
@@ -539,10 +539,10 @@ async function main() {
             fn later(value: number) -> number { return value * 2; }
         `;
         const inferred = annotated.replace(/: (number\[\]|number|bool|string) =/g, ' =');
-        const expected = compile(compiler, annotated).bytes;
-        const wat = compiler.compileWat(annotated);
         for (const level of [0, 1, 2, 3]) {
             compiler.setOptimizationLevel(level);
+            const expected = compile(compiler, annotated).bytes;
+            const wat = compiler.compileWat(annotated);
             assert.deepEqual(compile(compiler, annotated).bytes, expected);
             const { bytes, module } = compile(compiler, inferred);
             assert.deepEqual(bytes, expected);
@@ -590,10 +590,10 @@ async function main() {
         compiler.registerHostFunction('mark', 'env', 'mark', ['number'], 'number');
         compiler.registerHostFunction('host_flag', 'env', 'flag', ['bool'], 'bool');
         compiler.setExports(selected);
-        const expected = compile(compiler, explicit).bytes;
-        const wat = compiler.compileWat(explicit);
         for (const level of [0, 1, 2, 3]) {
             compiler.setOptimizationLevel(level);
+            const expected = compile(compiler, explicit).bytes;
+            const wat = compiler.compileWat(explicit);
             for (const [name, params, result] of [
                 ['bad_parameter', ['range'], 'number'],
                 ['bad_result', [], 'range'],
@@ -754,9 +754,9 @@ async function main() {
             ]);
         }
         const valid = 'fn main() { return middle(); } fn middle() { return leaf(); } fn leaf() { return 42; }';
-        const expected = compile(compiler, valid).bytes;
         for (const level of [0, 1, 2, 3]) {
             compiler.setOptimizationLevel(level);
+            const expected = compile(compiler, valid).bytes;
             for (const [body, origin, message] of cases) {
                 const source = `// é🦀\r\n\t/* λ */ ${body}\r\n`;
                 const start = source.indexOf(origin);
@@ -899,11 +899,11 @@ async function main() {
             ['fn main() -> number {\n    let value = false && { missing };\n    return 1;\n}',
                 /Undefined variable 'missing'/, 'let value = false && { missing };', 26],
         ];
-        const expected = compile(compiler, source).bytes;
-        const wat = compiler.compileWat(source);
         const diagnostics = new Map();
         for (const level of [0, 1, 2, 3]) {
             compiler.setOptimizationLevel(level);
+            const expected = compile(compiler, source).bytes;
+            const wat = compiler.compileWat(source);
             const { bytes, module } = compile(compiler, source);
             assert.deepEqual(bytes, expected);
             assert.equal(compiler.compileWat(source), wat);
@@ -1005,7 +1005,14 @@ async function main() {
         }
         for (const level of [0, 1, 2, 3]) {
             compiler.setOptimizationLevel(level);
-            assert.deepEqual(compile(compiler, source).bytes, bytes);
+            const current = compile(compiler, source);
+            assert.deepEqual(compile(compiler, source).bytes, current.bytes);
+            const exports = new WebAssembly.Instance(current.module).exports;
+            assert.equal(exports.arithmetic(), 8);
+            assert.equal(exports.nested(17), -2);
+            for (const [left, right] of pairs) {
+                assert.ok(Object.is(exports.remainder(left, right), left % right), `${left} % ${right}`);
+            }
         }
         const memorySource = `
             fn remainder(left: number, right: number) -> number { return left % right; }
@@ -1310,11 +1317,14 @@ async function main() {
         ]);
         assert.deepEqual(WebAssembly.Module.imports(none), WebAssembly.Module.imports(selected));
         assert.doesNotMatch(compiler.compileWat(source), /\(export "(?:main|identity)"/);
-        const expected = compile(compiler, source).bytes;
-        const wat = compiler.compileWat(source);
         const diagnostics = new Map();
         for (const level of [0, 1, 2, 3]) {
             compiler.setOptimizationLevel(level);
+            compiler.setExports(['main']);
+            const levelSelectedBytes = compile(compiler, source).bytes;
+            compiler.exportNone();
+            const expected = compile(compiler, source).bytes;
+            const wat = compiler.compileWat(source);
             assert.deepEqual(compile(compiler, source).bytes, expected);
             assert.equal(compiler.compileWat(source), wat);
             for (const selection of ['all', 'identity', 'contains', 'bounds']) {
@@ -1336,7 +1346,7 @@ async function main() {
                 assert.deepEqual(compile(compiler, source).bytes, expected);
             }
             compiler.setExports(['main']);
-            assert.deepEqual(compile(compiler, source).bytes, selectedBytes);
+            assert.deepEqual(compile(compiler, source).bytes, levelSelectedBytes);
             assert.deepEqual(WebAssembly.Module.exports(compile(compiler, source).module), WebAssembly.Module.exports(selected));
             calls = 0;
             assert.equal(instantiate(compiler, source, { env: { step() { calls += 1; return 2; } } }).exports.main(), 65);
@@ -1384,10 +1394,10 @@ async function main() {
             }
             fn invalidRange() -> void { let unused = mark(60)..mark(61) by mark(0); }
         `;
-        const expected = compile(compiler, source).bytes;
-        const wat = compiler.compileWat(source);
         for (const level of [0, 1, 2, 3]) {
             compiler.setOptimizationLevel(level);
+            const expected = compile(compiler, source).bytes;
+            const wat = compiler.compileWat(source);
             const { bytes, module } = compile(compiler, source);
             assert.deepEqual(bytes, expected);
             assert.equal(compiler.compileWat(source), wat);
@@ -1426,10 +1436,10 @@ async function main() {
             ['fn main() -> void {\n    for n in 0..3 { n += 1; }\n}', /Variable 'n' is read-only/, 'for n in 0..3 { n += 1; }', 21],
             ['fn main() -> void {\n    for n in [1] { return; n = 2; }\n}', /Variable 'n' is read-only/, 'for n in [1] { return; n = 2; }', 28],
         ];
-        const expected = compile(compiler, valid).bytes;
         const diagnostics = new Map();
         for (const level of [0, 1, 2, 3]) {
             compiler.setOptimizationLevel(level);
+            const expected = compile(compiler, valid).bytes;
             for (const [source, message, excerpt, column] of cases) {
                 for (const method of ['compile', 'compileWat']) {
                     assert.throws(() => compiler[method](source), error => {
@@ -1506,22 +1516,36 @@ async function main() {
         assert.deepEqual(userExports(compile(compiler, source).module), ['hidden', 'main', 'helper', 'text']);
     });
 
-    test('optimization levels are exact integers and currently preserve bytes and state', compiler => {
+    test('optimization levels specialize integer expressions, require exact integers, and preserve state', compiler => {
         compiler.registerHostFunction('clock', 'env', 'now', [], 'number');
         compiler.setExports(['main']);
         const source = 'fn main() -> number { return clock() + helper(); } fn helper() -> number { return 2 * 3; }';
-        const expected = compile(compiler, source).bytes;
-        const wat = compiler.compileWat(source);
-        for (const level of [0, 1, 2, 3]) {
+        const integerSource = 'fn main() -> number { return (10 + 20) - 3; }';
+        const baseline = compile(compiler, integerSource).bytes;
+        let enabled;
+        for (const level of [0, 1, 2, 3, 0]) {
             compiler.setOptimizationLevel(level);
+            const { bytes, module } = compile(compiler, integerSource);
+            if (level === 0) assert.deepEqual(bytes, baseline);
+            else {
+                assert.notDeepEqual(bytes, baseline);
+                if (enabled) assert.deepEqual(bytes, enabled);
+                else enabled = bytes;
+            }
+            assert.equal(new WebAssembly.Instance(module, { env: { now: () => 4 } }).exports.main(), 27);
+            const expected = compile(compiler, source).bytes;
+            const wat = compiler.compileWat(source);
             assert.deepEqual(compile(compiler, source).bytes, expected);
             assert.equal(compiler.compileWat(source), wat);
             assert.equal(instantiate(compiler, source, { env: { now: () => 4 } }).exports.main(), 10);
             fails(() => compiler.compile(OVERFLOW_SOURCE), /code generation error:.*outside the finite f64 range/);
-        }
-        for (const level of [-1, 4, 0.5, 1.5, 2.999, NaN, Infinity, -Infinity, 2 ** 32]) {
-            fails(() => compiler.setOptimizationLevel(level));
             assert.deepEqual(compile(compiler, source).bytes, expected);
+            for (const invalid of [-1, 4, 0.5, 1.5, 2.999, NaN, Infinity, -Infinity, 2 ** 32]) {
+                fails(() => compiler.setOptimizationLevel(invalid));
+                assert.deepEqual(compile(compiler, source).bytes, expected);
+                assert.equal(compiler.compileWat(source), wat);
+                assert.deepEqual(compile(compiler, integerSource).bytes, bytes);
+            }
         }
     });
 

@@ -216,10 +216,13 @@ fn node_rebuilt_browser_inference_defaults_bytes_diagnostics_recovery_and_range_
         );
         field(&mut input, message.as_bytes());
     }
-    compiler.set_exports(ExportOptions::Only(vec!["main".into()]));
-    field(&mut input, &compiler.compile_source(SOURCE).unwrap());
-    compiler.set_exports(ExportOptions::None);
-    field(&mut input, &compiler.compile_source(SOURCE).unwrap());
+    for (_, level) in LEVELS {
+        compiler.set_optimization_level(level);
+        compiler.set_exports(ExportOptions::Only(vec!["main".into()]));
+        field(&mut input, &compiler.compile_source(SOURCE).unwrap());
+        compiler.set_exports(ExportOptions::None);
+        field(&mut input, &compiler.compile_source(SOURCE).unwrap());
+    }
 
     let script = r#"
         const assert = require('node:assert/strict');
@@ -242,8 +245,7 @@ fn node_rebuilt_browser_inference_defaults_bytes_diagnostics_recovery_and_range_
             const diagnostics = Array.from({length: 8}, () => ({source: field().toString('utf8'), message: field().toString('utf8')}));
             const rangeAll = field().toString('utf8');
             const rangeSelected = field().toString('utf8');
-            const mainOnly = field();
-            const none = field();
+            const selections = Array.from({length: 4}, () => ({mainOnly: field(), none: field()}));
             assert.equal(offset, input.length);
             const directory = process.argv[1];
             const { default: init, Compiler } = await import(pathToFileURL(path.join(directory, 'was_compiler.js')).href);
@@ -286,9 +288,9 @@ fn node_rebuilt_browser_inference_defaults_bytes_diagnostics_recovery_and_range_
                         same(inferred, native[level]); same(explicit, native[level]);
                     }
                     compiler.exportAll(); fails(inferred, rangeAll);
-                    compiler.setExports(['main']); same(inferred, mainOnly); same(explicit, mainOnly);
+                    compiler.setExports(['main']); same(inferred, selections[level].mainOnly); same(explicit, selections[level].mainOnly);
                     compiler.setExports(['make']); fails(inferred, rangeSelected);
-                    compiler.exportNone(); same(inferred, none); same(explicit, none);
+                    compiler.exportNone(); same(inferred, selections[level].none); same(explicit, selections[level].none);
                     compiler.setExports(selected); same(inferred, native[level]);
                 }
             } finally { compiler.free(); }

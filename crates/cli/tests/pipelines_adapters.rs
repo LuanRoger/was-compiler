@@ -483,7 +483,10 @@ fn cli_pipeline_wasm_and_wat_equal_native_at_every_level_and_export_selection() 
         native.set_exports(ExportOptions::Only(
             SELECTED.iter().map(|name| (*name).into()).collect(),
         ));
-        assert_eq!(native.compile_source(SOURCE).unwrap(), baseline);
+        let selected_bytes = native.compile_source(SOURCE).unwrap();
+        assert_full_arity_default_export(&selected_bytes);
+        let program = native.analyze(SOURCE).unwrap();
+        assert_eq!(selected_bytes, native.compile(&program).unwrap());
         for names in [SELECTED, &["main"][..], &[][..]] {
             native.set_exports(ExportOptions::Only(
                 names.iter().map(|name| (*name).into()).collect(),
@@ -594,11 +597,12 @@ fn ordinary_calls_keep_named_defaults_hosts_builtins_zero_arity_and_void_support
     fs::write(scratch.0.join("ordinary.was"), source).unwrap();
     let mut native = compiler();
     native.set_exports(ExportOptions::Only(vec!["main".into()]));
-    let baseline = native.compile_source(source).unwrap();
-    Validator::new().validate_all(&baseline).unwrap();
     for (flag, level) in LEVELS {
         native.set_optimization_level(level);
-        assert_eq!(native.compile_source(source).unwrap(), baseline);
+        let expected = native.compile_source(source).unwrap();
+        Validator::new().validate_all(&expected).unwrap();
+        let program = native.analyze(source).unwrap();
+        assert_eq!(expected, native.compile(&program).unwrap());
         let output = scratch.cli(&[
             "ordinary.was",
             flag,
@@ -617,7 +621,7 @@ fn ordinary_calls_keep_named_defaults_hosts_builtins_zero_arity_and_void_support
         );
         assert!(output.stdout.is_empty());
         assert!(output.stderr.is_empty());
-        assert_eq!(fs::read(scratch.0.join("out.wasm")).unwrap(), baseline);
+        assert_eq!(fs::read(scratch.0.join("out.wasm")).unwrap(), expected);
     }
 }
 

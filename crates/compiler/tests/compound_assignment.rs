@@ -72,16 +72,20 @@ fn compound_analysis_compilation_and_export_selection_preserve_owned_input_and_i
         ExportOptions::None,
         ExportOptions::Only(vec!["main".into()]),
     ] {
-        compiler.set_exports(exports);
-        let expected = compiler.compile(&program).unwrap();
-        validate(&expected);
-        assert_eq!(
-            sections_without_exports(&expected),
-            sections_without_exports(&baseline)
-        );
-
         for level in LEVELS {
             compiler.set_optimization_level(level);
+            compiler.set_exports(ExportOptions::All);
+            let all_exports = compiler.compile(&program).unwrap();
+            if level == OptimizationLevel::None {
+                assert_eq!(all_exports, baseline);
+            }
+            compiler.set_exports(exports.clone());
+            let expected = compiler.compile(&program).unwrap();
+            validate(&expected);
+            assert_eq!(
+                sections_without_exports(&expected),
+                sections_without_exports(&all_exports)
+            );
             assert_eq!(compiler.compile(&program).unwrap(), expected);
             assert_eq!(program, original);
         }
@@ -113,11 +117,10 @@ fn scalar_compounds_match_explicit_arithmetic_bytes_at_every_level() {
             "fn main(n: number, rhs: number) -> number {{ n = n {binary} rhs; return n; }}"
         );
         let mut compiler = Compiler::new();
-        let expected = compiler.compile_source(&explicit).unwrap();
-        validate(&expected);
-
         for level in LEVELS {
             compiler.set_optimization_level(level);
+            let expected = compiler.compile_source(&explicit).unwrap();
+            validate(&expected);
             let program = compiler.analyze(&source).unwrap();
             let bytes = compiler.compile_source(&source).unwrap();
             validate(&bytes);

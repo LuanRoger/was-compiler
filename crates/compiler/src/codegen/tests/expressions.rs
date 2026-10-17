@@ -239,7 +239,8 @@ fn arithmetic_preserves_import_indices_and_is_not_folded_at_any_optimization_lev
             .unwrap();
 
         let source = "fn value(n: number, flag: bool) -> number { return -(1 + 2 * 3); }
-                      fn quotient() -> number { return 1 / (2 / 4); }";
+                      fn quotient() -> number { return 1 / (2 / 4); }
+                      fn sum() -> number { return (1 + 2) - 3; }";
         let program = compiler.analyze(source).expect("analyze arithmetic");
         let original = program.clone();
         let bytes = compiler.compile(&program).expect("compile arithmetic");
@@ -247,6 +248,9 @@ fn arithmetic_preserves_import_indices_and_is_not_folded_at_any_optimization_lev
 
         assert_eq!(program, original);
         assert_eq!(compiler.compile_source(source).unwrap(), bytes);
+        if level == OptimizationLevel::None {
+            assert_eq!(compile(&program).unwrap(), bytes);
+        }
         assert_eq!(module.sections, vec![1, 2, 3, 7, 10]);
         assert_eq!(
             module.signatures,
@@ -263,16 +267,16 @@ fn arithmetic_preserves_import_indices_and_is_not_folded_at_any_optimization_lev
                 ("provider".to_owned(), "ready".to_owned(), 1),
             ],
         );
-        assert_eq!(module.functions, vec![2, 0]);
+        assert_eq!(module.functions, vec![2, 0, 0]);
         assert_eq!(
             module.exports,
             vec![
                 ("value".to_owned(), ExternalKind::Func, 2),
                 ("quotient".to_owned(), ExternalKind::Func, 3),
+                ("sum".to_owned(), ExternalKind::Func, 4),
             ],
         );
-        assert_eq!(
-            module.bodies,
+        let expected = if level == OptimizationLevel::None {
             vec![
                 vec![
                     F64Const(1.0),
@@ -291,16 +295,65 @@ fn arithmetic_preserves_import_indices_and_is_not_folded_at_any_optimization_lev
                     F64Div,
                     F64Div,
                     Return,
-                    End
+                    End,
                 ],
-            ],
-            "optimization level {level:?}",
-        );
-
-        if let Some(expected) = &expected_bytes {
-            assert_eq!(&bytes, expected, "optimization level {level:?}");
+                vec![
+                    F64Const(1.0),
+                    F64Const(2.0),
+                    F64Add,
+                    F64Const(3.0),
+                    F64Sub,
+                    Return,
+                    End,
+                ],
+            ]
         } else {
-            expected_bytes = Some(bytes);
+            vec![
+                vec![
+                    I32Const(1),
+                    Runtime("F64ConvertI32S".into()),
+                    I32Const(2),
+                    Runtime("F64ConvertI32S".into()),
+                    I32Const(3),
+                    Runtime("F64ConvertI32S".into()),
+                    F64Mul,
+                    F64Add,
+                    F64Neg,
+                    Return,
+                    End,
+                ],
+                vec![
+                    I32Const(1),
+                    Runtime("F64ConvertI32S".into()),
+                    I32Const(2),
+                    Runtime("F64ConvertI32S".into()),
+                    I32Const(4),
+                    Runtime("F64ConvertI32S".into()),
+                    F64Div,
+                    F64Div,
+                    Return,
+                    End,
+                ],
+                vec![
+                    I32Const(1),
+                    I32Const(2),
+                    Runtime("I32Add".into()),
+                    I32Const(3),
+                    Runtime("I32Sub".into()),
+                    Runtime("F64ConvertI32S".into()),
+                    Return,
+                    End,
+                ],
+            ]
+        };
+        assert_eq!(module.bodies, expected, "optimization level {level:?}");
+
+        if level != OptimizationLevel::None {
+            if let Some(expected) = &expected_bytes {
+                assert_eq!(&bytes, expected, "optimization level {level:?}");
+            } else {
+                expected_bytes = Some(bytes);
+            }
         }
     }
 }
@@ -394,8 +447,7 @@ fn numeric_comparisons_emit_f64_operands_and_bool_results_at_all_optimization_le
                 module.signatures,
                 vec![(vec![ValType::F64, ValType::F64], vec![ValType::I32])]
             );
-            assert_eq!(
-                module.bodies[0],
+            let expected = if level == OptimizationLevel::None {
                 vec![
                     DecodedInstruction::LocalGet(0),
                     DecodedInstruction::F64Const(1.0),
@@ -406,7 +458,25 @@ fn numeric_comparisons_emit_f64_operands_and_bool_results_at_all_optimization_le
                     instruction,
                     DecodedInstruction::Return,
                     DecodedInstruction::End,
-                ],
+                ]
+            } else {
+                use DecodedInstruction::*;
+                vec![
+                    LocalGet(0),
+                    I32Const(1),
+                    Runtime("F64ConvertI32S".into()),
+                    F64Add,
+                    LocalGet(1),
+                    I32Const(2),
+                    Runtime("F64ConvertI32S".into()),
+                    F64Mul,
+                    instruction,
+                    Return,
+                    End,
+                ]
+            };
+            assert_eq!(
+                module.bodies[0], expected,
                 "operator {operator}, level {level:?}"
             );
         }

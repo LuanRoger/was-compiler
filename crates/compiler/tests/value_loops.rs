@@ -85,7 +85,7 @@ fn semantic_rejection(source: &str, expected: SemanticError) {
 }
 
 #[test]
-fn public_pipeline_preserves_owned_snapshots_exports_and_o0_through_o3_bytes() {
+fn public_pipeline_preserves_owned_snapshots_exports_and_per_preset_bytes() {
     let mut compiler = compiler();
     let program = compiler.analyze(SOURCE).unwrap();
     let original = program.clone();
@@ -94,6 +94,8 @@ fn public_pipeline_preserves_owned_snapshots_exports_and_o0_through_o3_bytes() {
 
     for level in LEVELS {
         compiler.set_optimization_level(level);
+        let baseline = compiler.compile(&program).unwrap();
+        validate(&baseline);
         for _ in 0..2 {
             assert_eq!(compiler.analyze(SOURCE).unwrap(), original);
             assert_eq!(compiler.compile_source(SOURCE).unwrap(), baseline);
@@ -102,6 +104,7 @@ fn public_pipeline_preserves_owned_snapshots_exports_and_o0_through_o3_bytes() {
         }
     }
 
+    compiler.set_optimization_level(OptimizationLevel::None);
     compiler
         .register_host_function("later", "later", "added", vec![], Type::Void)
         .unwrap();
@@ -118,10 +121,12 @@ fn public_pipeline_preserves_owned_snapshots_exports_and_o0_through_o3_bytes() {
             vec!["numeric", "items"],
         ),
     ] {
-        compiler.set_exports(selection);
-        let expected = compiler.compile(&program).unwrap();
         for level in LEVELS {
             compiler.set_optimization_level(level);
+            compiler.set_exports(ExportOptions::All);
+            let baseline = compiler.compile(&program).unwrap();
+            compiler.set_exports(selection.clone());
+            let expected = compiler.compile(&program).unwrap();
             let bytes = compiler.compile(&program).unwrap();
             validate(&bytes);
             assert_eq!(bytes, expected);
@@ -216,7 +221,10 @@ fn all_four_source_results_decode_mvp_value_exits_and_empty_backedges() {
             compiler.set_optimization_level(level);
             let bytes = compiler.compile_source(&source).unwrap();
             validate(&bytes);
-            assert_eq!(bytes, baseline);
+            if level == OptimizationLevel::None {
+                assert_eq!(bytes, baseline);
+            }
+            assert_eq!(compiler.compile(&program).unwrap(), bytes);
             let body = Parser::new(0)
                 .parse_all(&bytes)
                 .find_map(|payload| match payload.unwrap() {
@@ -344,7 +352,10 @@ fn unreachable_valid_break_mismatches_do_not_join_but_their_children_are_checked
             compiler.set_optimization_level(level);
             let bytes = compiler.compile_source(&source).unwrap();
             validate(&bytes);
-            assert_eq!(bytes, baseline);
+            if level == OptimizationLevel::None {
+                assert_eq!(bytes, baseline);
+            }
+            assert_eq!(compiler.compile(&program).unwrap(), bytes);
         }
     }
     let source =
@@ -410,7 +421,10 @@ fn nested_loop_result_types_and_targets_are_independent() {
         compiler.set_optimization_level(level);
         let bytes = compiler.compile_source(source).unwrap();
         validate(&bytes);
-        assert_eq!(bytes, baseline);
+        if level == OptimizationLevel::None {
+            assert_eq!(bytes, baseline);
+        }
+        assert_eq!(compiler.compile(&program).unwrap(), bytes);
     }
 }
 
@@ -439,7 +453,10 @@ fn no_exit_is_never_with_concrete_annotated_storage_and_explicit_divergence_comp
             compiler.set_optimization_level(level);
             let bytes = compiler.compile_source(&source).unwrap();
             validate(&bytes);
-            assert_eq!(bytes, baseline);
+            if level == OptimizationLevel::None {
+                assert_eq!(bytes, baseline);
+            }
+            assert_eq!(compiler.compile(&program).unwrap(), bytes);
             validate(
                 &compiler
                     .compile_source(&format!("fn main() -> {name} {{ loop {{}} }}"))
@@ -601,16 +618,26 @@ fn legacy_empty_void_signature_and_statement_if_bytes_remain_unchanged() {
     compiler
         .register_host_function("signal", "env", "signal", vec![Type::Bool], Type::Bool)
         .unwrap();
+    let source = include_str!("../../../tests/fixtures/emitter/control.was");
+    let program = compiler.analyze(source).unwrap();
+    let mut enabled_bytes = None;
     for level in LEVELS {
         compiler.set_optimization_level(level);
-        let bytes = compiler
-            .compile_source(include_str!("../../../tests/fixtures/emitter/control.was"))
-            .unwrap();
+        let bytes = compiler.compile_source(source).unwrap();
         validate(&bytes);
-        assert_eq!(
-            bytes,
-            include_bytes!("../../../tests/fixtures/emitter/control.wasm")
-        );
+        if level == OptimizationLevel::None {
+            assert_eq!(
+                bytes,
+                include_bytes!("../../../tests/fixtures/emitter/control.wasm")
+            );
+        } else if let Some(expected) = &enabled_bytes {
+            assert_eq!(&bytes, expected);
+        } else {
+            enabled_bytes = Some(bytes.clone());
+        }
+        assert_eq!(compiler.compile_source(source).unwrap(), bytes);
+        assert_eq!(compiler.compile(&program).unwrap(), bytes);
+        assert_eq!(compiler.analyze(source).unwrap(), program);
     }
 }
 
@@ -754,12 +781,16 @@ fn node_value_loops_preserve_results_aliases_effects_and_abrupt_stack_prefixes()
             Type::Number,
         )
         .unwrap();
+    let program = compiler.analyze(source).unwrap();
     let baseline = compiler.compile_source(source).unwrap();
     for level in LEVELS {
         compiler.set_optimization_level(level);
         let bytes = compiler.compile_source(source).unwrap();
         validate(&bytes);
-        assert_eq!(bytes, baseline);
+        if level == OptimizationLevel::None {
+            assert_eq!(bytes, baseline);
+        }
+        assert_eq!(compiler.compile(&program).unwrap(), bytes);
         let output = test_process::output(
             Command::new("node").arg("-e").arg(script),
             Some(&bytes),

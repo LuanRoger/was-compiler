@@ -22,7 +22,9 @@ use super::{
     layout::{CallTarget, Layout},
     locals::{BindingKind, LocalLayout},
     memory::Helper,
-    range, statement, temporaries,
+    range,
+    representation::{Facts, NumericPolicy, Representation},
+    statement, temporaries,
 };
 
 // The child module owns callable lifecycle operations without exposing emitter state.
@@ -232,6 +234,7 @@ pub(super) struct BodyEmitter<'a> {
     next_label: usize,
     loops: Vec<LoopContext>,
     seen_loops: HashSet<LoopId>,
+    numeric: Facts,
 }
 
 impl<'a> BodyEmitter<'a> {
@@ -269,6 +272,7 @@ impl<'a> BodyEmitter<'a> {
             next_label: 0,
             loops: Vec::new(),
             seen_loops: HashSet::new(),
+            numeric: Facts::default(),
         })
     }
 
@@ -674,6 +678,21 @@ impl<'a> BodyEmitter<'a> {
         self.structured(|emitter| expression::emit(expr, emitter, span))
     }
 
+    pub fn numeric_representation(&mut self, expr: &TypedExpr) -> Representation {
+        self.numeric.representation(expr)
+    }
+
+    // The requested representation applies only to numeric results; other
+    // expression types keep their existing Wasm representation.
+    pub fn emit_expr_as(
+        &mut self,
+        expr: &TypedExpr,
+        span: Span,
+        representation: Representation,
+    ) -> Result<Flow, CodegenError> {
+        self.structured(|emitter| expression::emit_as(expr, emitter, span, representation))
+    }
+
     pub fn emit_block(&mut self, block: &TypedBlock) -> Result<Flow, CodegenError> {
         statement::emit_block(block, self)
     }
@@ -682,8 +701,10 @@ impl<'a> BodyEmitter<'a> {
 pub(super) fn emit<'a>(
     function: &'a TypedFunction,
     module: &'a Layout<'a>,
+    policy: NumericPolicy,
 ) -> Result<Function, CodegenError> {
     let mut emitter = BodyEmitter::new(function, module)?;
+    emitter.numeric = Facts::new(policy);
 
     validate_parameters(&function.params, &mut emitter)?;
 

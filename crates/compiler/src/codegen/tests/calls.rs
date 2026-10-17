@@ -65,9 +65,7 @@ fn forward_nested_scalar_and_void_calls_preserve_import_indices_at_all_optimizat
             .register_host_function("print", "env", "log", vec![Type::Number], Type::Void)
             .unwrap();
 
-        let bytes = compiler
-            .compile_source(
-                "fn run(n: number, flag: bool) -> number {
+        let source = "fn run(n: number, flag: bool) -> number {
                     let value: number = identity(seed(n) + 2);
                     let copy: bool = pass(ready(flag));
                     copy;
@@ -77,8 +75,9 @@ fn forward_nested_scalar_and_void_calls_preserve_import_indices_at_all_optimizat
                 }
                 fn identity(n: number) -> number { return n; }
                 fn pass(flag: bool) -> bool { return flag; }
-                fn relay(n: number) -> void { print(n); }",
-            )
+                fn relay(n: number) -> void { print(n); }";
+        let bytes = compiler
+            .compile_source(source)
             .expect("compile forward nested calls");
         let module = decode(&bytes);
 
@@ -99,37 +98,45 @@ fn forward_nested_scalar_and_void_calls_preserve_import_indices_at_all_optimizat
                 ("env".to_owned(), "log".to_owned(), 2),
             ],
         );
+        let literal = if level == OptimizationLevel::None {
+            vec![DecodedInstruction::F64Const(2.0)]
+        } else {
+            vec![
+                DecodedInstruction::I32Const(2),
+                DecodedInstruction::Runtime("F64ConvertI32S".into()),
+            ]
+        };
+        let mut run = vec![DecodedInstruction::LocalGet(0), DecodedInstruction::Call(0)];
+        run.extend(literal);
+        run.extend([
+            DecodedInstruction::F64Add,
+            DecodedInstruction::Call(4),
+            DecodedInstruction::LocalSet(2),
+            DecodedInstruction::LocalGet(1),
+            DecodedInstruction::I32Eqz,
+            DecodedInstruction::I32Eqz,
+            DecodedInstruction::Call(1),
+            DecodedInstruction::I32Eqz,
+            DecodedInstruction::I32Eqz,
+            DecodedInstruction::Call(5),
+            DecodedInstruction::LocalSet(3),
+            DecodedInstruction::LocalGet(3),
+            DecodedInstruction::Drop,
+            DecodedInstruction::LocalGet(2),
+            DecodedInstruction::Call(6),
+            DecodedInstruction::LocalGet(2),
+            DecodedInstruction::Call(4),
+            DecodedInstruction::Drop,
+            DecodedInstruction::LocalGet(2),
+            DecodedInstruction::Call(0),
+            DecodedInstruction::Call(4),
+            DecodedInstruction::Return,
+            DecodedInstruction::End,
+        ]);
         assert_eq!(
             module.bodies,
             vec![
-                vec![
-                    DecodedInstruction::LocalGet(0),
-                    DecodedInstruction::Call(0),
-                    DecodedInstruction::F64Const(2.0),
-                    DecodedInstruction::F64Add,
-                    DecodedInstruction::Call(4),
-                    DecodedInstruction::LocalSet(2),
-                    DecodedInstruction::LocalGet(1),
-                    DecodedInstruction::I32Eqz,
-                    DecodedInstruction::I32Eqz,
-                    DecodedInstruction::Call(1),
-                    DecodedInstruction::I32Eqz,
-                    DecodedInstruction::I32Eqz,
-                    DecodedInstruction::Call(5),
-                    DecodedInstruction::LocalSet(3),
-                    DecodedInstruction::LocalGet(3),
-                    DecodedInstruction::Drop,
-                    DecodedInstruction::LocalGet(2),
-                    DecodedInstruction::Call(6),
-                    DecodedInstruction::LocalGet(2),
-                    DecodedInstruction::Call(4),
-                    DecodedInstruction::Drop,
-                    DecodedInstruction::LocalGet(2),
-                    DecodedInstruction::Call(0),
-                    DecodedInstruction::Call(4),
-                    DecodedInstruction::Return,
-                    DecodedInstruction::End,
-                ],
+                run,
                 vec![
                     DecodedInstruction::LocalGet(0),
                     DecodedInstruction::Return,
@@ -148,10 +155,16 @@ fn forward_nested_scalar_and_void_calls_preserve_import_indices_at_all_optimizat
             ],
         );
 
-        if let Some(expected) = &snapshot {
-            assert_eq!(&bytes, expected, "optimization level {level:?}");
-        } else {
-            snapshot = Some(bytes);
+        assert_eq!(compiler.compile_source(source).unwrap(), bytes);
+        if level == OptimizationLevel::None {
+            assert_eq!(compile(&compiler.analyze(source).unwrap()).unwrap(), bytes);
+        }
+        if level != OptimizationLevel::None {
+            if let Some(expected) = &snapshot {
+                assert_eq!(&bytes, expected, "optimization level {level:?}");
+            } else {
+                snapshot = Some(bytes);
+            }
         }
     }
 }

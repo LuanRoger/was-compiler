@@ -24,23 +24,32 @@ release manifest. See [contracts, Rust migration and release evidence](typed-arr
 Earlier milestone/extension records below retain their historical scope.
 This work adds neither reclamation nor optimization transformations.
 
-## Proven integer specialization baseline (#38)
+## Proven integer specialization (#38 contract; experimental #39 subset)
 
-[The integer-specialization contract](integer-specialization.md) establishes the
-first pass's proof scope and baseline gates before production changes. This is a
-narrow scheduling exception ahead of WP12, not authorization for general WP13.
-Only proven signed-i32 literals/reads, addition/subtraction, comparisons, restricted
-negation and never-reassigned uncaptured ordinary locals (including loop-local
-bindings) are in scope; language types, public AST and ABI remain unchanged.
+[The maintained contract](integer-specialization.md) separates #38's broader
+literal/read/add/sub/comparison/restricted-negation and never-reassigned local
+design from user-approved #39: only exact parsed signed-i32 literals and proven
+add/sub subtrees are implemented. All numeric locals remain f64, including
+never-reassigned and loop-local lets. Comparisons, unary operations, calls, loads
+and captured reads retain existing lowering/unknown facts. Independent eligible
+subtrees convert back to f64 at unspecialized consumers. Public AST, language types
+and ABI remain unchanged.
 
-All levels currently remain identical no-ops. `None` stays default and preserves
-baseline bytes. A separately authorized implementation would give `Basic`,
-`Standard`, and `Aggressive` the same initial pass, preserving semantics/diagnostics
-across levels and library/CLI/browser byte parity within each level. See the
-[measurement procedure](benchmarks.md#issue-38-integer-specialization-baseline-and-comparison)
-for the integrated harness, matched comparisons and release gates, and the
-[baseline summary](benchmarks/integer-specialization/summary.md) for recorded evidence.
-No implementation or performance benefit is claimed by this baseline work.
+`Basic`, `Standard`, and `Aggressive` share this subset and must be byte-identical
+to each other, with semantic/diagnostic parity across all levels and adapter byte
+parity within each level. `None` stays default and preserves baseline bytes; direct
+codegen APIs also retain baseline policy. This approved exception ahead of WP12
+does not authorize general WP13 or broader #38 implementation.
+
+The [#38 baseline](benchmarks/integer-specialization/summary.md) is historical.
+[#39 matched measurements](benchmarks/integer-add-sub-39/README.md) show a size
+benefit, but noisy compilation/guest timings include material regressions pending
+explicit user decision. The subset remains experimental, not a release/default
+change. [Correctness gates passed](integer-specialization.md#correctness-validation-2026-10-17),
+including 1,261 workspace tests with zero failed/ignored and 25 rebuilt-browser
+groups. The linked validation section points to raw final test evidence; focused
+measurement checks retain their historical scope. Review against `09dcb5c` is complete; release acceptance remains pending explicit acceptance of the
+noisy material timing regressions.
 
 ## Pipeline and ownership
 
@@ -50,9 +59,9 @@ Source
   → Parser AST
   → Semantic analysis + registered host signatures
   → TypedProgram
-  → Optimization stage (currently a no-op at every level)
+  → Borrowed optimization boundary + preset-selected numeric policy
   → ABI and module layout
-  → Function-body validation/lowering
+  → Checked function-body lowering + private per-body representation facts
   → Internal ValidatedProgram (borrowed AST + layout + checked bodies)
   → wasm_encoder section assembly
   → WebAssembly bytes
@@ -151,7 +160,8 @@ members; browser tests require explicit selection. See [ADR 0005](adr/0005-compi
 | `crates/compiler/tests/diagnostics.rs`, `crates/cli/tests/diagnostics.rs`, `crates/cli/src/cli_contract_tests.rs` | Exhaustive span access/delegation, exact pre-refactor diagnostic text, and CLI format/destination/configuration mappings. |
 | `runtime/index.cjs`, `runtime/abi.cjs`, `runtime/run.cjs` | Instantiate raw binaries, offer explicit ABI conversions, and expose a raw-call Node runner. |
 | `crates/cli/tests/cli.rs`, `crates/compiler/tests/runtime.rs` | Exercise source-file/raw-binary/provider integration separately from backend tests. |
-| `crates/compiler/src/optimization.rs` | O0–O3 level configuration and a typed-AST optimization boundary; no passes implemented yet. |
+| `crates/compiler/src/optimization.rs` | O0–O3 numeric policy selection and a borrowed typed-AST boundary without rewrites. |
+| `crates/compiler/src/codegen/representation.rs` | Private per-body `Facts` cache for exact-i32 literal/add-sub proofs; checked emission still validates all nodes. |
 | `crates/compiler/src/host.rs` | Ordered host declarations, language-visible names, import names, signatures, and private external-type eligibility shared with backend checks. |
 | `crates/compiler/src/semantic.rs` | Resolve and type-check user, host, and built-in calls; produce the typed AST. |
 | `crates/compiler/src/typed_ast.rs` | Typed expressions, resolved function/variable/loop references, and owned import metadata. |
@@ -187,13 +197,15 @@ These are concrete modules with narrow responsibilities, not a generic plugin or
 pass framework. Add modules when a milestone requires them.
 
 `CompilerOptions` selects `OptimizationLevel::None`, `Basic`, `Standard`, or
-`Aggressive`; the default is `None`. These are intended O0–O3 presets, not
-implemented transformations. All levels currently preserve the same Wasm and
-errors. `Compiler::compile` and `compile_source` invoke the optimization boundary,
-while semantic analysis is independent of it. The boundary uses `Cow<TypedProgram>`
-to borrow the input today and allow owned transformations later without mutating
-the caller's AST. Future passes must preserve resolved IDs and the host ABI unless
-they explicitly update the corresponding metadata and references.
+`Aggressive`; the default is `None`. Enabled presets share experimental #39
+representation selection, not AST transformations. Preserve semantics/diagnostics
+across levels, enabled-preset byte identity and adapter byte parity within each
+level. `Compiler::compile` and `compile_source` invoke the borrowed
+`Cow<TypedProgram>` boundary and select numeric policy; analysis is independent
+of it. Private facts guide checked lowering without rewriting the caller's AST.
+Direct codegen entry points retain baseline lowering. Future passes must preserve
+resolved IDs and the host ABI unless they explicitly update corresponding metadata
+and references.
 
 ## Initial ABI and index conventions
 
@@ -378,8 +390,9 @@ symbol tables.
 - Instruction-sequence tests verify nesting, associativity, and operand order.
   Node.js runtime tests verify decimal rounding, NaN, positive/negative infinity,
   signed zero, overflow from finite operands, and import-index offsets.
-- Every optimization level still emits the same expression instructions without
-  constant folding. Malformed typed-AST operands and unsupported operators retain
+- `None` and direct codegen preserve baseline expression instructions. Enabled
+  presets may specialize #39 literal/add-sub subtrees without constant folding.
+  Malformed typed-AST operands and unsupported operators retain
   enclosing statement spans in their errors.
 - **Separate remainder checkpoint (M9): complete.** Wasm has no `f64.rem`;
   `%` now lowers to an optional guest helper implementing truncating floating
@@ -714,7 +727,8 @@ guarantees return before the body; a literal-true body alone still does not.
 The walker visits value-block statements then tail within scope hooks. Locals
 traverse expressions for declarations, reserving an outer let slot before its
 initializer declarations. Separate memory, scratch and remainder discovery,
-helper ordering, host ABI, and optimization no-op behavior are unchanged.
+helper ordering and host ABI are unchanged by WP3. #39 later adds private numeric
+representation selection without changing these region results.
 
 Coverage includes `crates/compiler/tests/block_values.rs`, frontend/planner/checked-backend units,
 independent decoded MVP region/local/drop checks plus Validator, legacy byte

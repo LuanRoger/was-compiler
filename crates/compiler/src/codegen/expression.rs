@@ -11,7 +11,9 @@ use super::{
     function::{BodyEmitter, LoopKind},
     match_,
     memory::Helper,
-    range, values,
+    range,
+    representation::Representation,
+    values,
 };
 
 fn result(flow: Flow, ty: Type) -> ExprResult {
@@ -49,7 +51,17 @@ pub(super) fn emit(
     body: &mut BodyEmitter<'_>,
     span: Span,
 ) -> Result<Flow, CodegenError> {
+    emit_as(expr, body, span, Representation::F64)
+}
+
+pub(super) fn emit_as(
+    expr: &TypedExpr,
+    body: &mut BodyEmitter<'_>,
+    span: Span,
+    output: Representation,
+) -> Result<Flow, CodegenError> {
     let function = body.name();
+    let representation = body.numeric_representation(expr);
 
     let (flow, actual) = match &expr.kind {
         TypedExprKind::Number(literal) => {
@@ -57,7 +69,12 @@ pub(super) fn emit(
 
             let value = number(literal, function, span)?;
 
-            body.instruction(&Instruction::F64Const(value.into()));
+            if representation == Representation::I32 {
+                // The private proof checked parsed-value integrality and i32 bounds.
+                body.instruction(&Instruction::I32Const(value as i32));
+            } else {
+                body.instruction(&Instruction::F64Const(value.into()));
+            }
 
             (Flow::FALLTHROUGH, Type::Number.into())
         }
@@ -153,7 +170,7 @@ pub(super) fn emit(
                 span,
             )?;
 
-            let left_flow = body.emit_expr(left, span)?;
+            let left_flow = body.emit_expr_as(left, span, representation)?;
             let flow = if logical {
                 emit_logical(op, right, left_flow, body, span)?
             } else {
@@ -162,11 +179,17 @@ pub(super) fn emit(
                 if normalize {
                     body.normalize_bool();
                 }
-                let right_flow = body.emit_expr(right, span)?;
+                let right_flow = body.emit_expr_as(right, span, representation)?;
                 if normalize {
                     body.normalize_bool();
                 }
-                if *op == BinaryOp::In {
+                if representation == Representation::I32 {
+                    body.instruction(&match op {
+                        BinaryOp::Add => Instruction::I32Add,
+                        BinaryOp::Subtract => Instruction::I32Sub,
+                        _ => unreachable!("only proven addition/subtraction use integer operands"),
+                    });
+                } else if *op == BinaryOp::In {
                     body.call(body.range_helper(range::Helper::Contains));
                 } else if matches!(operand_type, Type::String | Type::Array(_)) {
                     body.call(body.helper(if operand_type == Type::String {
@@ -304,6 +327,9 @@ pub(super) fn emit(
     };
 
     expect_result(function, actual, expr.ty, span)?;
+    if representation == Representation::I32 && output == Representation::F64 {
+        body.instruction(&Instruction::F64ConvertI32S);
+    }
     if !flow.can_fall_through() {
         // End restores the enclosing Wasm stack's reachability. Reassert the
         // checked absence of a normal path, rather than inventing a result value.

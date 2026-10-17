@@ -148,19 +148,38 @@ fn block(
     )
 }
 
-fn compiled(program: &TypedProgram) -> Vec<u8> {
-    let bytes = codegen::compile(program).unwrap();
-    Validator::new().validate_all(&bytes).unwrap();
-    for level in [
-        OptimizationLevel::None,
-        OptimizationLevel::Basic,
-        OptimizationLevel::Standard,
-        OptimizationLevel::Aggressive,
-    ] {
-        let mut compiler = Compiler::new();
-        compiler.set_optimization_level(level);
-        assert_eq!(compiler.compile(program).unwrap(), bytes);
+const LEVELS: [OptimizationLevel; 4] = [
+    OptimizationLevel::None,
+    OptimizationLevel::Basic,
+    OptimizationLevel::Standard,
+    OptimizationLevel::Aggressive,
+];
+
+fn compiled(program: &TypedProgram, level: OptimizationLevel) -> Vec<u8> {
+    let mut compiler = Compiler::new();
+    compiler.set_optimization_level(level);
+    if program
+        .functions
+        .iter()
+        .any(|function| function.return_type == Type::Range)
+    {
+        compiler.set_exports(ExportOptions::None);
     }
+    let bytes = compiler.compile(program).unwrap();
+    Validator::new().validate_all(&bytes).unwrap();
+    if level == OptimizationLevel::None {
+        let baseline = if program
+            .functions
+            .iter()
+            .any(|function| function.return_type == Type::Range)
+        {
+            codegen::compile_with_exports(program, &ExportOptions::None)
+        } else {
+            codegen::compile(program)
+        };
+        assert_eq!(bytes, baseline.unwrap());
+    }
+    assert_eq!(compiler.compile(program).unwrap(), bytes);
     bytes
 }
 
@@ -371,173 +390,196 @@ fn every_arm_is_checked_in_statement_value_and_unreachable_matches() {
 
 #[test]
 fn numeric_chain_caches_once_and_uses_mvp_result_regions_and_fractional_comparisons() {
-    let value = match_value(
-        number("1.5"),
-        vec![
-            arm(
-                MatchPatternKind::Relational {
-                    op: BinaryOp::LessThan,
-                    value: "-0".into(),
-                },
-                number("10"),
-            ),
-            arm(
-                MatchPatternKind::Interval {
-                    start: "1.25".into(),
-                    end: "2.75".into(),
-                    inclusive: false,
-                },
-                number("20"),
-            ),
-            arm(
-                MatchPatternKind::Interval {
-                    start: "3".into(),
-                    end: "2".into(),
-                    inclusive: true,
-                },
-                number("30"),
-            ),
-            wildcard(number("40")),
-        ],
-        Type::Number,
-    );
-    let bytes = compiled(&returning(value, Type::Number));
-    assert_eq!(locals(&bytes), [ValType::F64]);
-    let ops = ops(&bytes);
-    assert_eq!(
-        ops.iter()
-            .filter(|op| matches!(op, Operator::LocalSet { local_index: 0 }))
-            .count(),
-        1
-    );
-    assert_eq!(
-        ops.iter()
-            .filter(|op| matches!(
-                op,
-                Operator::If {
-                    blockty: BlockType::Type(ValType::F64)
-                }
-            ))
-            .count(),
-        3
-    );
-    assert_eq!(
-        ops.iter()
-            .filter(|op| matches!(op, Operator::F64Ge))
-            .count(),
-        2
-    );
-    assert_eq!(
-        ops.iter()
-            .filter(|op| matches!(op, Operator::F64Lt))
-            .count(),
-        2
-    );
-    assert_eq!(
-        ops.iter()
-            .filter(|op| matches!(op, Operator::F64Le))
-            .count(),
-        1
-    );
-    assert_eq!(
-        ops.iter()
-            .filter(|op| matches!(op, Operator::I32And))
-            .count(),
-        2
-    );
-    assert!(
-        !Parser::new(0)
-            .parse_all(&bytes)
-            .any(|payload| matches!(payload.unwrap(), Payload::MemorySection(_)))
-    );
+    for level in LEVELS {
+        let value = match_value(
+            number("1.5"),
+            vec![
+                arm(
+                    MatchPatternKind::Relational {
+                        op: BinaryOp::LessThan,
+                        value: "-0".into(),
+                    },
+                    number("10"),
+                ),
+                arm(
+                    MatchPatternKind::Interval {
+                        start: "1.25".into(),
+                        end: "2.75".into(),
+                        inclusive: false,
+                    },
+                    number("20"),
+                ),
+                arm(
+                    MatchPatternKind::Interval {
+                        start: "3".into(),
+                        end: "2".into(),
+                        inclusive: true,
+                    },
+                    number("30"),
+                ),
+                wildcard(number("40")),
+            ],
+            Type::Number,
+        );
+        let bytes = compiled(&returning(value, Type::Number), level);
+        assert_eq!(locals(&bytes), [ValType::F64]);
+        let ops = ops(&bytes);
+        assert_eq!(
+            ops.iter()
+                .filter(|op| matches!(op, Operator::LocalSet { local_index: 0 }))
+                .count(),
+            1
+        );
+        assert_eq!(
+            ops.iter()
+                .filter(|op| matches!(
+                    op,
+                    Operator::If {
+                        blockty: BlockType::Type(ValType::F64)
+                    }
+                ))
+                .count(),
+            3
+        );
+        assert_eq!(
+            ops.iter()
+                .filter(|op| matches!(op, Operator::F64Ge))
+                .count(),
+            2
+        );
+        assert_eq!(
+            ops.iter()
+                .filter(|op| matches!(op, Operator::F64Lt))
+                .count(),
+            2
+        );
+        assert_eq!(
+            ops.iter()
+                .filter(|op| matches!(op, Operator::F64Le))
+                .count(),
+            1
+        );
+        assert_eq!(
+            ops.iter()
+                .filter(|op| matches!(op, Operator::I32And))
+                .count(),
+            2
+        );
+        assert!(
+            !Parser::new(0)
+                .parse_all(&bytes)
+                .any(|payload| matches!(payload.unwrap(), Payload::MemorySection(_)))
+        );
+    }
 }
 
 #[test]
 fn boolean_coverage_without_wildcard_has_an_unreachable_residual_not_a_fake_result() {
-    let bytes = compiled(&returning(
-        match_value(
-            boolean(false),
-            vec![
-                arm(MatchPatternKind::Bool(true), number("1")),
-                arm(MatchPatternKind::Bool(false), number("2")),
-            ],
-            Type::Number,
-        ),
-        Type::Number,
-    ));
-    assert_eq!(locals(&bytes), [ValType::I32]);
-    let ops = ops(&bytes);
-    assert!(ops.windows(4).any(|ops| matches!(
-        ops,
-        [
-            Operator::Else,
-            Operator::Unreachable,
-            Operator::End,
-            Operator::End
-        ]
-    )));
-    assert_eq!(
-        ops.iter()
-            .filter(|op| matches!(op, Operator::I32Eqz))
-            .count(),
-        4
-    );
+    for level in LEVELS {
+        let bytes = compiled(
+            &returning(
+                match_value(
+                    boolean(false),
+                    vec![
+                        arm(MatchPatternKind::Bool(true), number("1")),
+                        arm(MatchPatternKind::Bool(false), number("2")),
+                    ],
+                    Type::Number,
+                ),
+                Type::Number,
+            ),
+            level,
+        );
+        assert_eq!(locals(&bytes), [ValType::I32]);
+        let ops = ops(&bytes);
+        assert!(ops.windows(4).any(|ops| matches!(
+            ops,
+            [
+                Operator::Else,
+                Operator::Unreachable,
+                Operator::End,
+                Operator::End
+            ]
+        )));
+        assert_eq!(
+            ops.iter()
+                .filter(|op| matches!(op, Operator::I32Eqz))
+                .count(),
+            4
+        );
+    }
 }
 
 #[test]
 fn statement_match_discards_heterogeneous_tails_with_empty_regions() {
-    let bytes = compiled(&discarded(
-        number("0"),
-        vec![
-            arm(MatchPatternKind::Number("0".into()), string("zero")),
-            arm(MatchPatternKind::Number("1".into()), boolean(true)),
-            wildcard(expr(
-                TypedExprKind::Array(vec![number("3")], was_compiler::ArrayElementType::Number),
-                Type::Array(was_compiler::ArrayElementType::Number),
-            )),
-        ],
-    ));
-    assert_eq!(locals(&bytes), [ValType::F64, ValType::I32]);
-    let ops = ops(&bytes);
-    assert_eq!(
-        ops.iter().filter(|op| matches!(op, Operator::Drop)).count(),
-        3
-    );
-    assert_eq!(
-        ops.iter()
-            .filter(|op| matches!(
-                op,
-                Operator::If {
-                    blockty: BlockType::Empty
-                }
-            ))
-            .count(),
-        2
-    );
+    for level in LEVELS {
+        let bytes = compiled(
+            &discarded(
+                number("0"),
+                vec![
+                    arm(MatchPatternKind::Number("0".into()), string("zero")),
+                    arm(MatchPatternKind::Number("1".into()), boolean(true)),
+                    wildcard(expr(
+                        TypedExprKind::Array(
+                            vec![number("3")],
+                            was_compiler::ArrayElementType::Number,
+                        ),
+                        Type::Array(was_compiler::ArrayElementType::Number),
+                    )),
+                ],
+            ),
+            level,
+        );
+        assert_eq!(locals(&bytes), [ValType::F64, ValType::I32]);
+        let ops = ops(&bytes);
+        assert_eq!(
+            ops.iter().filter(|op| matches!(op, Operator::Drop)).count(),
+            3
+        );
+        assert_eq!(
+            ops.iter()
+                .filter(|op| matches!(
+                    op,
+                    Operator::If {
+                        blockty: BlockType::Empty
+                    }
+                ))
+                .count(),
+            2
+        );
+    }
 }
 
 #[test]
 fn never_scrutinees_reserve_no_match_scratch_or_local_set_but_check_all_arms() {
-    for arms in [
-        vec![wildcard(number("2"))],
-        vec![
-            arm(MatchPatternKind::String("unused".into()), number("1")),
-            wildcard(number("2")),
-        ],
-    ] {
-        let bytes = compiled(&returning(
-            match_value(divergent(0), arms, ExprResult::Never),
-            Type::Number,
-        ));
-        assert!(locals(&bytes).is_empty());
-        assert!(
-            !ops(&bytes)
-                .iter()
-                .any(|op| matches!(op, Operator::LocalSet { .. } | Operator::LocalGet { .. }))
+    for level in LEVELS {
+        for arms in [
+            vec![wildcard(number("2"))],
+            vec![
+                arm(MatchPatternKind::String("unused".into()), number("1")),
+                wildcard(number("2")),
+            ],
+        ] {
+            let bytes = compiled(
+                &returning(
+                    match_value(divergent(0), arms, ExprResult::Never),
+                    Type::Number,
+                ),
+                level,
+            );
+            assert!(locals(&bytes).is_empty());
+            assert!(
+                !ops(&bytes)
+                    .iter()
+                    .any(|op| matches!(op, Operator::LocalSet { .. } | Operator::LocalGet { .. }))
+            );
+        }
+        let bytes = compiled(
+            &discarded(divergent(0), vec![wildcard(boolean(true))]),
+            level,
         );
+        assert!(locals(&bytes).is_empty());
     }
-    let bytes = compiled(&discarded(divergent(0), vec![wildcard(boolean(true))]));
-    assert!(locals(&bytes).is_empty());
 }
 
 #[test]
@@ -571,193 +613,220 @@ fn forged_result_annotations_and_arm_literals_remain_independently_checked() {
 
 #[test]
 fn scrutinee_scratch_is_reserved_before_nested_matches_and_array_arm_scratch() {
-    let scrutinee = match_value(boolean(true), vec![wildcard(number("1"))], Type::Number);
-    let bytes = compiled(&returning(
-        match_value(
-            scrutinee,
-            vec![wildcard(expr(
-                TypedExprKind::Array(vec![number("3")], was_compiler::ArrayElementType::Number),
+    for level in LEVELS {
+        let scrutinee = match_value(boolean(true), vec![wildcard(number("1"))], Type::Number);
+        let bytes = compiled(
+            &returning(
+                match_value(
+                    scrutinee,
+                    vec![wildcard(expr(
+                        TypedExprKind::Array(
+                            vec![number("3")],
+                            was_compiler::ArrayElementType::Number,
+                        ),
+                        Type::Array(was_compiler::ArrayElementType::Number),
+                    ))],
+                    Type::Array(was_compiler::ArrayElementType::Number),
+                ),
                 Type::Array(was_compiler::ArrayElementType::Number),
-            ))],
-            Type::Array(was_compiler::ArrayElementType::Number),
-        ),
-        Type::Array(was_compiler::ArrayElementType::Number),
-    ));
-    assert_eq!(locals(&bytes), [ValType::F64, ValType::I32, ValType::I32]);
-    let indices: Vec<_> = ops(&bytes)
-        .into_iter()
-        .filter_map(|op| match op {
-            Operator::LocalSet { local_index } => Some(local_index),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(indices, [1, 0, 2]);
+            ),
+            level,
+        );
+        assert_eq!(locals(&bytes), [ValType::F64, ValType::I32, ValType::I32]);
+        let indices: Vec<_> = ops(&bytes)
+            .into_iter()
+            .filter_map(|op| match op {
+                Operator::LocalSet { local_index } => Some(local_index),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(indices, [1, 0, 2]);
+    }
 }
 
 #[test]
 fn string_patterns_intern_in_scrutinee_pattern_body_order_and_call_content_equality() {
-    let bytes = compiled(&returning(
-        match_value(
-            string("é"),
-            vec![
-                arm(MatchPatternKind::String("a".into()), string("body")),
-                arm(MatchPatternKind::String("é".into()), string("a")),
-                wildcard(string("last")),
-            ],
-            Type::String,
-        ),
-        Type::String,
-    ));
-    assert_eq!(locals(&bytes), [ValType::I32]);
-    let ops = ops(&bytes);
-    let handles: Vec<_> = ops
-        .iter()
-        .filter_map(|op| match op {
-            Operator::I32Const { value } => Some(*value),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(handles, [8, 24, 40, 8, 24, 56]);
-    let calls: Vec<_> = ops
-        .iter()
-        .filter_map(|op| match op {
-            Operator::Call { function_index } => Some(*function_index),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(calls, [6, 6]); // one user, Alloc..StringEqual in existing order
-    assert_eq!(
-        ops.iter()
-            .filter(|op| matches!(
-                op,
-                Operator::If {
-                    blockty: BlockType::Type(ValType::I32)
+    for level in LEVELS {
+        let bytes = compiled(
+            &returning(
+                match_value(
+                    string("é"),
+                    vec![
+                        arm(MatchPatternKind::String("a".into()), string("body")),
+                        arm(MatchPatternKind::String("é".into()), string("a")),
+                        wildcard(string("last")),
+                    ],
+                    Type::String,
+                ),
+                Type::String,
+            ),
+            level,
+        );
+        assert_eq!(locals(&bytes), [ValType::I32]);
+        let ops = ops(&bytes);
+        let handles: Vec<_> = ops
+            .iter()
+            .filter_map(|op| match op {
+                Operator::I32Const { value } => Some(*value),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(handles, [8, 24, 40, 8, 24, 56]);
+        let calls: Vec<_> = ops
+            .iter()
+            .filter_map(|op| match op {
+                Operator::Call { function_index } => Some(*function_index),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(calls, [6, 6]); // one user, Alloc..StringEqual in existing order
+        assert_eq!(
+            ops.iter()
+                .filter(|op| matches!(
+                    op,
+                    Operator::If {
+                        blockty: BlockType::Type(ValType::I32)
+                    }
+                ))
+                .count(),
+            2
+        );
+        let data = Parser::new(0)
+            .parse_all(&bytes)
+            .find_map(|payload| match payload.unwrap() {
+                Payload::DataSection(reader) => {
+                    Some(reader.into_iter().next().unwrap().unwrap().data)
                 }
-            ))
-            .count(),
-        2
-    );
-    let data = Parser::new(0)
-        .parse_all(&bytes)
-        .find_map(|payload| match payload.unwrap() {
-            Payload::DataSection(reader) => Some(reader.into_iter().next().unwrap().unwrap().data),
-            _ => None,
-        })
-        .unwrap();
-    assert_eq!(&data[8..16], &[16, 0, 0, 0, 2, 0, 0, 0]);
-    assert_eq!(&data[16..18], "é".as_bytes());
-    assert_eq!(&data[32..33], b"a");
-    assert_eq!(&data[48..52], b"body");
-    assert_eq!(&data[64..68], b"last");
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(&data[8..16], &[16, 0, 0, 0, 2, 0, 0, 0]);
+        assert_eq!(&data[16..18], "é".as_bytes());
+        assert_eq!(&data[32..33], b"a");
+        assert_eq!(&data[48..52], b"body");
+        assert_eq!(&data[64..68], b"last");
+    }
 }
 
 #[test]
 fn pattern_only_strings_enable_memory_after_never_scrutinee() {
-    let bytes = compiled(&returning(
-        match_value(
-            divergent(0),
-            vec![
-                arm(MatchPatternKind::String("pattern only".into()), number("1")),
-                wildcard(number("2")),
-            ],
-            ExprResult::Never,
-        ),
-        Type::Number,
-    ));
-    assert!(
-        Parser::new(0)
-            .parse_all(&bytes)
-            .any(|payload| matches!(payload.unwrap(), Payload::DataSection(_)))
-    );
-    assert!(
-        !ops(&bytes)
-            .iter()
-            .any(|op| matches!(op, Operator::Call { .. }))
-    );
+    for level in LEVELS {
+        let bytes = compiled(
+            &returning(
+                match_value(
+                    divergent(0),
+                    vec![
+                        arm(MatchPatternKind::String("pattern only".into()), number("1")),
+                        wildcard(number("2")),
+                    ],
+                    ExprResult::Never,
+                ),
+                Type::Number,
+            ),
+            level,
+        );
+        assert!(
+            Parser::new(0)
+                .parse_all(&bytes)
+                .any(|payload| matches!(payload.unwrap(), Payload::DataSection(_)))
+        );
+        assert!(
+            !ops(&bytes)
+                .iter()
+                .any(|op| matches!(op, Operator::Call { .. }))
+        );
+    }
 }
 
 #[test]
 fn arm_transfers_use_dynamic_depths_and_preserve_live_operand_prefixes() {
-    let continue_arm = block(
-        vec![statement(TypedStatementKind::Continue {
-            target: LoopId(0),
-        })],
-        None,
-        ExprResult::Never,
-    );
-    let break_arm = block(
-        vec![statement(TypedStatementKind::BreakValue {
-            target: LoopId(0),
-            value: number("7"),
-        })],
-        None,
-        ExprResult::Never,
-    );
-    let loop_value = expr(
-        TypedExprKind::Loop {
-            id: LoopId(0),
-            body: vec![statement(TypedStatementKind::Expression(match_value(
-                boolean(true),
-                vec![
-                    arm(MatchPatternKind::Bool(true), continue_arm),
-                    wildcard(break_arm),
-                ],
-                ExprResult::Never,
-            )))],
-        },
-        Type::Number,
-    );
-    let bytes = compiled(&returning(
-        expr(
-            TypedExprKind::Binary {
-                left: Box::new(number("5")),
-                op: BinaryOp::Add,
-                right: Box::new(loop_value),
+    for level in LEVELS {
+        let continue_arm = block(
+            vec![statement(TypedStatementKind::Continue {
+                target: LoopId(0),
+            })],
+            None,
+            ExprResult::Never,
+        );
+        let break_arm = block(
+            vec![statement(TypedStatementKind::BreakValue {
+                target: LoopId(0),
+                value: number("7"),
+            })],
+            None,
+            ExprResult::Never,
+        );
+        let loop_value = expr(
+            TypedExprKind::Loop {
+                id: LoopId(0),
+                body: vec![statement(TypedStatementKind::Expression(match_value(
+                    boolean(true),
+                    vec![
+                        arm(MatchPatternKind::Bool(true), continue_arm),
+                        wildcard(break_arm),
+                    ],
+                    ExprResult::Never,
+                )))],
             },
             Type::Number,
-        ),
-        Type::Number,
-    ));
-    let branches: Vec<_> = ops(&bytes)
-        .iter()
-        .filter_map(|op| match op {
-            Operator::Br { relative_depth } => Some(*relative_depth),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(branches, [2, 3, 0]); // arm block + match if + loop (+ result block)
-    assert!(ops(&bytes).iter().any(|op| matches!(op, Operator::F64Add)));
+        );
+        let bytes = compiled(
+            &returning(
+                expr(
+                    TypedExprKind::Binary {
+                        left: Box::new(number("5")),
+                        op: BinaryOp::Add,
+                        right: Box::new(loop_value),
+                    },
+                    Type::Number,
+                ),
+                Type::Number,
+            ),
+            level,
+        );
+        let branches: Vec<_> = ops(&bytes)
+            .iter()
+            .filter_map(|op| match op {
+                Operator::Br { relative_depth } => Some(*relative_depth),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(branches, [2, 3, 0]); // arm block + match if + loop (+ result block)
+        assert!(ops(&bytes).iter().any(|op| matches!(op, Operator::F64Add)));
+    }
 }
 
 #[test]
 fn never_scrutinee_arm_breaks_do_not_constrain_enclosing_value_loop() {
-    let scrutinee = block(
-        vec![statement(TypedStatementKind::Continue {
-            target: LoopId(0),
-        })],
-        None,
-        ExprResult::Never,
-    );
-    let arm_body = block(
-        vec![statement(TypedStatementKind::BreakValue {
-            target: LoopId(0),
-            value: boolean(true),
-        })],
-        None,
-        ExprResult::Never,
-    );
-    let value = expr(
-        TypedExprKind::Loop {
-            id: LoopId(0),
-            body: vec![statement(TypedStatementKind::Expression(match_value(
-                scrutinee,
-                vec![wildcard(arm_body)],
-                ExprResult::Never,
-            )))],
-        },
-        ExprResult::Never,
-    );
-    compiled(&returning(value, Type::Number));
+    for level in LEVELS {
+        let scrutinee = block(
+            vec![statement(TypedStatementKind::Continue {
+                target: LoopId(0),
+            })],
+            None,
+            ExprResult::Never,
+        );
+        let arm_body = block(
+            vec![statement(TypedStatementKind::BreakValue {
+                target: LoopId(0),
+                value: boolean(true),
+            })],
+            None,
+            ExprResult::Never,
+        );
+        let value = expr(
+            TypedExprKind::Loop {
+                id: LoopId(0),
+                body: vec![statement(TypedStatementKind::Expression(match_value(
+                    scrutinee,
+                    vec![wildcard(arm_body)],
+                    ExprResult::Never,
+                )))],
+            },
+            ExprResult::Never,
+        );
+        compiled(&returning(value, Type::Number), level);
+    }
 }
 
 #[test]
@@ -843,138 +912,138 @@ fn match_is_rejected_in_forged_contracts_and_normalized_defaults() {
 
 #[test]
 fn all_concrete_results_and_void_never_joins_use_their_exact_region_types() {
-    let cases = vec![
-        (number("2"), Type::Number, ValType::F64),
-        (boolean(true), Type::Bool, ValType::I32),
-        (string("a"), Type::String, ValType::I32),
-        (
-            expr(
-                TypedExprKind::Array(vec![], was_compiler::ArrayElementType::Number),
+    for level in LEVELS {
+        let cases = vec![
+            (number("2"), Type::Number, ValType::F64),
+            (boolean(true), Type::Bool, ValType::I32),
+            (string("a"), Type::String, ValType::I32),
+            (
+                expr(
+                    TypedExprKind::Array(vec![], was_compiler::ArrayElementType::Number),
+                    Type::Array(was_compiler::ArrayElementType::Number),
+                ),
                 Type::Array(was_compiler::ArrayElementType::Number),
+                ValType::I32,
             ),
-            Type::Array(was_compiler::ArrayElementType::Number),
-            ValType::I32,
-        ),
-        (
-            expr(
-                TypedExprKind::Range {
-                    start: Box::new(number("0")),
-                    end: Box::new(number("2")),
-                    step: None,
-                    inclusive: false,
-                },
+            (
+                expr(
+                    TypedExprKind::Range {
+                        start: Box::new(number("0")),
+                        end: Box::new(number("2")),
+                        step: None,
+                        inclusive: false,
+                    },
+                    Type::Range,
+                ),
                 Type::Range,
+                ValType::I32,
             ),
-            Type::Range,
-            ValType::I32,
-        ),
-    ];
-    for (value, result, wasm_type) in cases {
-        let program = returning(
-            match_value(
-                boolean(true),
-                vec![
-                    arm(MatchPatternKind::Bool(true), divergent(0)),
-                    wildcard(value),
-                ],
+        ];
+        for (value, result, wasm_type) in cases {
+            let program = returning(
+                match_value(
+                    boolean(true),
+                    vec![
+                        arm(MatchPatternKind::Bool(true), divergent(0)),
+                        wildcard(value),
+                    ],
+                    result,
+                ),
                 result,
-            ),
-            result,
-        );
-        let bytes = if result == Type::Range {
-            let bytes = codegen::compile_with_exports(&program, &ExportOptions::None).unwrap();
-            Validator::new().validate_all(&bytes).unwrap();
-            bytes
-        } else {
-            compiled(&program)
-        };
-        assert!(ops(&bytes).iter().any(
-            |op| matches!(op, Operator::If { blockty: BlockType::Type(ty) } if *ty == wasm_type)
-        ));
-    }
-    let void = block(vec![], None, ExprResult::Void);
-    let bytes = compiled(&program(
-        Type::Void,
-        vec![statement(TypedStatementKind::Expression(match_value(
-            boolean(true),
-            vec![
-                arm(MatchPatternKind::Bool(true), divergent(0)),
-                wildcard(void),
-            ],
-            ExprResult::Void,
-        )))],
-    ));
-    assert!(ops(&bytes).iter().any(|op| matches!(
-        op,
-        Operator::If {
-            blockty: BlockType::Empty
+            );
+            let bytes = compiled(&program, level);
+            assert!(ops(&bytes).iter().any(
+                |op| matches!(op, Operator::If { blockty: BlockType::Type(ty) } if *ty == wasm_type)
+            ));
         }
-    )));
-    assert!(!ops(&bytes).iter().any(|op| matches!(op, Operator::Drop)));
+        let void = block(vec![], None, ExprResult::Void);
+        let bytes = compiled(
+            &program(
+                Type::Void,
+                vec![statement(TypedStatementKind::Expression(match_value(
+                    boolean(true),
+                    vec![
+                        arm(MatchPatternKind::Bool(true), divergent(0)),
+                        wildcard(void),
+                    ],
+                    ExprResult::Void,
+                )))],
+            ),
+            level,
+        );
+        assert!(ops(&bytes).iter().any(|op| matches!(
+            op,
+            Operator::If {
+                blockty: BlockType::Empty
+            }
+        )));
+        assert!(!ops(&bytes).iter().any(|op| matches!(op, Operator::Drop)));
+    }
 }
 
 #[test]
 #[ignore = "requires Node.js"]
 fn runtime_selects_first_arm_once_with_nan_signed_zero_fractional_and_string_patterns() {
-    use std::{process::Command, time::Duration};
-    use was_compiler::host::HostFunctionId;
+    for level in LEVELS {
+        use std::{process::Command, time::Duration};
+        use was_compiler::host::HostFunctionId;
 
-    let mut compiler = Compiler::new();
-    compiler
-        .register_host_function("probe", "env", "probe", vec![Type::Number], Type::Number)
-        .unwrap();
-    let mut program = compiler.analyze("fn main(n: number) -> number { return probe(n); } fn text(s: string) -> number { return 0; }").unwrap();
-    let probe = |value| {
-        expr(
-            TypedExprKind::Call {
-                func: FunctionRef::Host(HostFunctionId(0)),
-                name: "probe".into(),
-                args: vec![value],
-            },
+        let mut compiler = Compiler::new();
+        compiler
+            .register_host_function("probe", "env", "probe", vec![Type::Number], Type::Number)
+            .unwrap();
+        let mut program = compiler.analyze("fn main(n: number) -> number { return probe(n); } fn text(s: string) -> number { return 0; }").unwrap();
+        let probe = |value| {
+            expr(
+                TypedExprKind::Call {
+                    func: FunctionRef::Host(HostFunctionId(0)),
+                    name: "probe".into(),
+                    args: vec![value],
+                },
+                Type::Number,
+            )
+        };
+        program.functions[0].body = vec![statement(TypedStatementKind::Return(Some(match_value(
+            probe(read(0, Type::Number)),
+            vec![
+                arm(MatchPatternKind::Number("-0".into()), probe(number("10"))),
+                arm(
+                    MatchPatternKind::Interval {
+                        start: "1.25".into(),
+                        end: "2.75".into(),
+                        inclusive: false,
+                    },
+                    probe(number("20")),
+                ),
+                arm(
+                    MatchPatternKind::Interval {
+                        start: "1".into(),
+                        end: "3".into(),
+                        inclusive: true,
+                    },
+                    probe(number("30")),
+                ),
+                arm(
+                    MatchPatternKind::Relational {
+                        op: BinaryOp::GreaterThan,
+                        value: "3".into(),
+                    },
+                    probe(number("40")),
+                ),
+                wildcard(probe(number("50"))),
+            ],
             Type::Number,
-        )
-    };
-    program.functions[0].body = vec![statement(TypedStatementKind::Return(Some(match_value(
-        probe(read(0, Type::Number)),
-        vec![
-            arm(MatchPatternKind::Number("-0".into()), probe(number("10"))),
-            arm(
-                MatchPatternKind::Interval {
-                    start: "1.25".into(),
-                    end: "2.75".into(),
-                    inclusive: false,
-                },
-                probe(number("20")),
-            ),
-            arm(
-                MatchPatternKind::Interval {
-                    start: "1".into(),
-                    end: "3".into(),
-                    inclusive: true,
-                },
-                probe(number("30")),
-            ),
-            arm(
-                MatchPatternKind::Relational {
-                    op: BinaryOp::GreaterThan,
-                    value: "3".into(),
-                },
-                probe(number("40")),
-            ),
-            wildcard(probe(number("50"))),
-        ],
-        Type::Number,
-    ))))];
-    program.functions[1].body = vec![statement(TypedStatementKind::Return(Some(match_value(
-        read(0, Type::String),
-        vec![
-            arm(MatchPatternKind::String("é".into()), number("1")),
-            wildcard(number("2")),
-        ],
-        Type::Number,
-    ))))];
-    let bytes = compiled(&program);
-    let script = r#"
+        ))))];
+        program.functions[1].body = vec![statement(TypedStatementKind::Return(Some(match_value(
+            read(0, Type::String),
+            vec![
+                arm(MatchPatternKind::String("é".into()), number("1")),
+                wildcard(number("2")),
+            ],
+            Type::Number,
+        ))))];
+        let bytes = compiled(&program, level);
+        let script = r#"
         const assert = require('node:assert/strict');
         const events = [];
         const bytes = require('node:fs').readFileSync(0);
@@ -1001,16 +1070,17 @@ fn runtime_selects_first_arm_once_with_nan_signed_zero_fractional_and_string_pat
         assert.equal(e.text(text('e\u0301')), 2);
         assert.equal(e.text(text('other')), 2);
     "#;
-    let output = test_process::output(
-        Command::new("node").args(["-e", script]),
-        Some(&bytes),
-        Duration::from_secs(30),
-    );
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+        let output = test_process::output(
+            Command::new("node").args(["-e", script]),
+            Some(&bytes),
+            Duration::from_secs(30),
+        );
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }
 
 #[test]

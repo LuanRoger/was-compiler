@@ -544,7 +544,6 @@ fn forward_named_default_diamond_keeps_concrete_signatures_and_source_order_call
     );
     assert_eq!(inner.bindings[0].span, span(DIAMOND, "3"));
     let mut compiler = Compiler::new();
-    let mut baseline = None;
     for level in LEVELS {
         compiler.set_optimization_level(level);
         let bytes = compiler.compile(&program).unwrap();
@@ -580,9 +579,6 @@ fn forward_named_default_diamond_keeps_concrete_signatures_and_source_order_call
         assert_eq!(signatures[1].params(), [ValType::F64; 3]);
         assert_eq!(signatures[1].results(), [ValType::F64]);
         assert_eq!(calls, [vec![3, 1, 2, 3], vec![3], vec![3], vec![]]);
-        if let Some(previous) = &baseline {
-            assert_eq!(&bytes, previous);
-        }
-        baseline = Some(bytes);
+        assert_eq!(compiler.compile(&program).unwrap(), bytes);
     }
 }

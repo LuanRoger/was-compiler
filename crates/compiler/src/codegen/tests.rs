@@ -419,33 +419,6 @@ fn while_loop(cond: TypedExpr, body: Vec<TypedStatement>, span: Span) -> TypedSt
     }
 }
 
-fn run_guest_at_all_optimization_levels(source: &str, script: &str) {
-    let mut snapshot = None;
-
-    for level in [
-        OptimizationLevel::None,
-        OptimizationLevel::Basic,
-        OptimizationLevel::Standard,
-        OptimizationLevel::Aggressive,
-    ] {
-        let compiler = Compiler::with_options(CompilerOptions {
-            optimization_level: level,
-        });
-        let bytes = compiler
-            .compile_source(source)
-            .expect("compile guest runtime");
-
-        decode(&bytes);
-
-        if let Some(expected) = &snapshot {
-            assert_eq!(&bytes, expected, "optimization level {level:?}");
-        } else {
-            snapshot = Some(bytes.clone());
-        }
-
-        run_node(&bytes, script);
-    }
-}
 
 mod block_values;
 mod calls;

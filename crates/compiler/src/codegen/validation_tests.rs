@@ -90,7 +90,7 @@ fn legacy_compile(
     let mut exports = ExportSection::new();
     let mut code = CodeSection::new();
     for (user, plan) in program.functions.iter().zip(&layout.users) {
-        let body = function::emit(user, &layout)?;
+        let body = function::emit(user, &layout, codegen::NumericPolicy::Baseline)?;
         functions.function(plan.type_index.raw());
         if plan.exported {
             exports.export(&user.name, ExportKind::Func, plan.function_index.raw());
@@ -226,10 +226,59 @@ fn checked_and_legacy_paths_preserve_bytes_for_all_exports_and_levels() {
         assert_eq!(codegen::assemble(&validated), legacy);
         wasmparser::Validator::new().validate_all(&legacy).unwrap();
 
+        assert_eq!(
+            codegen::compile_with_exports(&program, &exports).unwrap(),
+            legacy
+        );
+        let mut enabled_bytes = None;
         for level in LEVELS {
             compiler.set_optimization_level(level);
             compiler.set_exports(exports.clone());
-            assert_eq!(compiler.compile(&program).unwrap(), legacy);
+            let bytes = compiler.compile(&program).unwrap();
+            let policy = if level == OptimizationLevel::None {
+                codegen::NumericPolicy::Baseline
+            } else {
+                codegen::NumericPolicy::ProvenIntegers
+            };
+            let checked = ValidatedProgram::with_policy(&program, &exports, policy).unwrap();
+            assert_eq!(codegen::assemble(&checked), bytes);
+            assert_eq!(compiler.compile(&program).unwrap(), bytes);
+            wasmparser::Validator::new().validate_all(&bytes).unwrap();
+            let bodies: Vec<_> = wasmparser::Parser::new(0)
+                .parse_all(&bytes)
+                .filter_map(|payload| match payload.unwrap() {
+                    wasmparser::Payload::CodeSectionEntry(body) => Some(body),
+                    _ => None,
+                })
+                .collect();
+            let mut ops = bodies[1].get_operators_reader().unwrap();
+            if level == OptimizationLevel::None {
+                assert_eq!(bytes, legacy);
+                assert!(
+                    matches!(ops.read().unwrap(), wasmparser::Operator::F64Const { value } if f64::from_bits(value.bits()) == 3.0)
+                );
+            } else {
+                assert!(matches!(
+                    ops.read().unwrap(),
+                    wasmparser::Operator::I32Const { value: 3 }
+                ));
+                assert!(matches!(
+                    ops.read().unwrap(),
+                    wasmparser::Operator::F64ConvertI32S
+                ));
+                if let Some(expected) = &enabled_bytes {
+                    assert_eq!(&bytes, expected);
+                } else {
+                    enabled_bytes = Some(bytes.clone());
+                }
+            }
+            assert!(matches!(
+                ops.read().unwrap(),
+                wasmparser::Operator::Call { function_index: 1 }
+            ));
+            assert!(matches!(ops.read().unwrap(), wasmparser::Operator::Return));
+            assert!(matches!(ops.read().unwrap(), wasmparser::Operator::End));
+            assert!(ops.eof());
         }
     }
 

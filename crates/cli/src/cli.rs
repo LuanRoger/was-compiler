@@ -94,7 +94,7 @@ struct Arguments {
         short = 'O',
         value_name = "LEVEL",
         value_parser = clap::value_parser!(u8).range(0..=3),
-        help = "Optimization preset (-O0, -O1, -O2, -O3; all currently no-ops)"
+        help = "Optimization preset (-O0 default; -O1/-O2/-O3 use experimental proven integer addition/subtraction)"
     )]
     level: Option<u8>,
 }

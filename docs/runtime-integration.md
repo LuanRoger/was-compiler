@@ -52,9 +52,22 @@ was-compiler [OPTIONS] <SOURCE>
 | `--export NAME` | Export only these user-function names; repeat for more names. |
 | `--no-exports` | Export no user functions. Cannot be combined with `--export`. |
 | `--host DECL` | Declare a host import and its language signature; repeat for more imports. |
-| `-O0` … `-O3`, `-O LEVEL` | Select existing presets; they are all no-ops today. |
+| `-O0` … `-O3`, `-O LEVEL` | `-O0` is the default baseline; `-O1`–`-O3` share experimental #39 literal/add-sub specialization. |
 | `--` | Treat remaining arguments as source paths, including a source filename beginning with `-`. |
 | `-h`, `--help` | Print usage and exit `0`. |
+
+#39 specializes exact parsed signed-i32 literals and proven add/sub subtrees,
+converting back to f64 at every unspecialized consumer. Numeric locals (including
+never-reassigned lets), comparisons, unary operations, calls, loads and captured
+reads retain existing lowering/unknown facts. Public AST and raw ABI are unchanged.
+Enabled bytes may differ from `-O0`; require semantic/diagnostic parity across levels
+and library/CLI/current-source browser byte parity within each level. Direct codegen
+APIs retain baseline policy. [Contracts and status](integer-specialization.md)
+separate this subset from #38's broader future scope. Measurements show size benefit
+and noisy material timing regressions pending explicit user acceptance.
+[#39 correctness gates passed](integer-specialization.md#correctness-validation-2026-10-17),
+including 1,261 workspace tests with zero failed/ignored and 25 rebuilt-browser
+groups, not release acceptance or a default change. Review against `09dcb5c` is complete.
 
 The CLI uses `clap` derive for argument parsing, generated help, and usage errors.
 Long options with values also accept `--option=value`, such as `--emit=wasm`.

@@ -65,13 +65,22 @@ fn integer_workloads_preserve_the_unoptimized_public_compilation_contract() {
             OptimizationLevel::Aggressive,
         ] {
             let selected = corpus::compiler(optimization_level);
+            let selected_bytes = selected.compile_source(&case.source).unwrap();
+            Validator::new().validate_all(&selected_bytes).unwrap();
+            if optimization_level == OptimizationLevel::None {
+                assert_eq!(selected_bytes, bytes, "{}", case.name);
+            }
+            assert_eq!(selected.analyze(&case.source).unwrap(), typed);
             assert_eq!(
-                selected.compile_source(&case.source).unwrap(),
-                bytes,
+                selected.compile(&typed).unwrap(),
+                selected_bytes,
                 "{}",
                 case.name
             );
-            assert_eq!(selected.compile(&typed).unwrap(), bytes, "{}", case.name);
+            assert_eq!(
+                selected.compile_source(&case.source).unwrap(),
+                selected_bytes
+            );
         }
         assert_eq!(*Compiler::new().options(), CompilerOptions::default());
     }

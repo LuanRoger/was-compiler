@@ -323,7 +323,6 @@ fn recursive_contexts_keep_local_environment_pointers_and_only_allocator_writes_
             return second();
         }
     "#;
-    let mut baseline = None;
     for level in [
         OptimizationLevel::None,
         OptimizationLevel::Basic,
@@ -346,11 +345,7 @@ fn recursive_contexts_keep_local_environment_pointers_and_only_allocator_writes_
             .unwrap();
         let bytes = compiler.compile(&program).unwrap();
         assert_eq!(bytes, before_registry_edit);
-        if let Some(expected) = &baseline {
-            assert_eq!(&bytes, expected);
-        } else {
-            baseline = Some(bytes.clone());
-        }
+        assert_eq!(compiler.compile(&program).unwrap(), bytes);
         Validator::new().validate_all(&bytes).unwrap();
         let mut imports = vec![];
         let mut allocator = None;
@@ -2009,7 +2004,13 @@ fn integrated_source_retains_named_calls_normalized_defaults_contracts_and_owner
             let compiler = Compiler::with_options(CompilerOptions {
                 optimization_level: optimization,
             });
-            assert_eq!(compiler.compile(&typed).unwrap(), baseline, "{source}");
+            let bytes = compiler.compile(&typed).unwrap();
+            Validator::new().validate_all(&bytes).unwrap();
+            if optimization == OptimizationLevel::None {
+                assert_eq!(bytes, baseline, "{source}");
+            }
+            assert_eq!(compiler.compile(&typed).unwrap(), bytes);
+            assert_eq!(compiler.compile_source(source).unwrap(), bytes);
         }
         let hidden =
             was_compiler::codegen::compile_with_exports(&typed, &ExportOptions::None).unwrap();
@@ -3327,7 +3328,6 @@ fn c_body_span(program: &TypedProgram) -> Span {
 fn shared_storage_is_deterministic_across_options_and_keeps_helper_exports_private() {
     use was_compiler::{CompilerOptions, OptimizationLevel};
     let source = "fn main(a: number) -> number { let x = 1; let first = () => { x = x + a; x }; let second = () => x; first(); return second(); }";
-    let mut expected = None;
     for level in [
         OptimizationLevel::None,
         OptimizationLevel::Basic,
@@ -3340,11 +3340,8 @@ fn shared_storage_is_deterministic_across_options_and_keeps_helper_exports_priva
         let bytes = compiler.compile_source(source).unwrap();
         Validator::new().validate_all(&bytes).unwrap();
         assert_eq!(compiler.compile_source(source).unwrap(), bytes);
-        if let Some(expected) = &expected {
-            assert_eq!(&bytes, expected);
-        } else {
-            expected = Some(bytes.clone());
-        }
+        let program = compiler.analyze(source).unwrap();
+        assert_eq!(compiler.compile(&program).unwrap(), bytes);
         let exports: Vec<_> = Parser::new(0)
             .parse_all(&bytes)
             .filter_map(|p| match p.unwrap() {

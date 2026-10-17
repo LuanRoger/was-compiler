@@ -91,12 +91,13 @@ fn compiler() -> Compiler {
 fn named_default_pipeline_compilation_retains_owned_host_snapshot_and_determinism() {
     let mut native = compiler();
     let analyzed = native.analyze(SOURCE).unwrap();
-    let baseline = native.compile_source(SOURCE).unwrap();
     native
         .register_host_function("later", "extra", "later", vec![], Type::Void)
         .unwrap();
     for (_, level) in LEVELS {
         native.set_optimization_level(level);
+        let baseline = native.compile(&analyzed).unwrap();
+        Validator::new().validate_all(&baseline).unwrap();
         for _ in 0..2 {
             assert_eq!(native.compile(&analyzed).unwrap(), baseline);
         }

@@ -243,6 +243,14 @@ fn scheduling_preserves_owned_source_order_call_ids_import_snapshot_and_layout()
     );
     for level in LEVELS {
         compiler.set_optimization_level(level);
+        let selected_bytes = compiler.compile(&program).unwrap();
+        wasmparser::Validator::new()
+            .validate_all(&selected_bytes)
+            .unwrap();
+        if level == OptimizationLevel::None {
+            assert_eq!(selected_bytes, baseline);
+        }
+        let baseline = selected_bytes;
         assert_eq!(compiler.compile(&program).unwrap(), baseline);
         assert_eq!(program, snapshot);
     }
@@ -303,6 +311,7 @@ fn chains_have_explicit_bytes_and_concrete_descriptor_signatures_at_all_levels()
         ExportOptions::Only(vec!["text".into(), "array".into(), "main".into()]),
         ExportOptions::None,
     ] {
+        compiler.set_optimization_level(OptimizationLevel::None);
         compiler.set_exports(exports.clone());
         let baseline = compiler.compile(&explicit).unwrap();
         let decoded = decode(&baseline);
@@ -356,6 +365,14 @@ fn chains_have_explicit_bytes_and_concrete_descriptor_signatures_at_all_levels()
         }
         for level in LEVELS {
             compiler.set_optimization_level(level);
+            let selected_bytes = compiler.compile(&inferred).unwrap();
+            wasmparser::Validator::new()
+                .validate_all(&selected_bytes)
+                .unwrap();
+            if level == OptimizationLevel::None {
+                assert_eq!(selected_bytes, baseline);
+            }
+            let baseline = selected_bytes;
             assert_eq!(compiler.compile(&inferred).unwrap(), baseline, "{level:?}");
             assert_eq!(compiler.compile(&explicit).unwrap(), baseline, "{level:?}");
             assert_eq!(

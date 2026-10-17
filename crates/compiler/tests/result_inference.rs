@@ -827,6 +827,14 @@ fn inferred_results_have_explicit_annotation_bytes_and_abi_at_every_level() {
         .unwrap();
     for level in LEVELS {
         compiler.set_optimization_level(level);
+        let selected_bytes = compiler.compile(&inferred).unwrap();
+        wasmparser::Validator::new()
+            .validate_all(&selected_bytes)
+            .unwrap();
+        if level == OptimizationLevel::None {
+            assert_eq!(selected_bytes, baseline);
+        }
+        let baseline = selected_bytes;
         assert_eq!(compiler.compile(&inferred).unwrap(), baseline, "{level:?}");
         assert_eq!(compiler.compile(&explicit).unwrap(), baseline, "{level:?}");
         assert_eq!(inferred, snapshot);
@@ -835,6 +843,14 @@ fn inferred_results_have_explicit_annotation_bytes_and_abi_at_every_level() {
     for level in LEVELS {
         compiler.set_optimization_level(level);
         assert_eq!(compiler.analyze(PARITY_SOURCE).unwrap(), inferred);
+        let selected_bytes = compiler.compile_source(PARITY_SOURCE).unwrap();
+        wasmparser::Validator::new()
+            .validate_all(&selected_bytes)
+            .unwrap();
+        if level == OptimizationLevel::None {
+            assert_eq!(selected_bytes, baseline);
+        }
+        let baseline = selected_bytes;
         assert_eq!(compiler.compile_source(PARITY_SOURCE).unwrap(), baseline);
     }
 }

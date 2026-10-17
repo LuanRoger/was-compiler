@@ -1,0 +1,126 @@
+ M GLOSSARY.md
+ M crates/browser/tests/default_runtime.rs
+ M crates/cli/tests/cli.rs
+ M crates/cli/tests/result_inference_release.rs
+ M crates/compiler/src/codegen/closures.rs
+ M crates/compiler/src/codegen/expression.rs
+ M crates/compiler/src/codegen/function.rs
+ M crates/compiler/src/codegen/mod.rs
+ M crates/compiler/src/codegen/validation.rs
+ M crates/compiler/src/codegen/validation_tests.rs
+ M crates/compiler/src/compiler.rs
+ M crates/compiler/src/optimization.rs
+ M crates/compiler/tests/abi.rs
+ M crates/compiler/tests/array_equality.rs
+ M crates/compiler/tests/array_for_loops.rs
+ M crates/compiler/tests/benchmark_corpus.rs
+ M crates/compiler/tests/block_values.rs
+ M crates/compiler/tests/closures_frontend.rs
+ M crates/compiler/tests/closures_lowering.rs
+ M crates/compiler/tests/closures_runtime.rs
+ M crates/compiler/tests/comments.rs
+ M crates/compiler/tests/compound_assignment.rs
+ M crates/compiler/tests/contracts_lowering.rs
+ M crates/compiler/tests/contracts_runtime.rs
+ M crates/compiler/tests/default_runtime.rs
+ M crates/compiler/tests/emitter.rs
+ M crates/compiler/tests/for_loops.rs
+ M crates/compiler/tests/for_lowering.rs
+ M crates/compiler/tests/inference.rs
+ M crates/compiler/tests/integer_baselines.rs
+ M crates/compiler/tests/loop_control.rs
+ M crates/compiler/tests/match_lowering.rs
+ M crates/compiler/tests/match_runtime.rs
+ M crates/compiler/tests/named_call_lowering.rs
+ M crates/compiler/tests/named_call_runtime.rs
+ M crates/compiler/tests/pipelines_adapters.rs
+ M crates/compiler/tests/pipelines_frontend.rs
+ M crates/compiler/tests/pipelines_lowering.rs
+ M crates/compiler/tests/pipelines_runtime.rs
+ M crates/compiler/tests/range_membership.rs
+ M crates/compiler/tests/ranges.rs
+ M crates/compiler/tests/remainder.rs
+ M crates/compiler/tests/result_inference.rs
+ M crates/compiler/tests/result_inference_adapters.rs
+ M crates/compiler/tests/result_inference_chains.rs
+ M crates/compiler/tests/result_inference_combined.rs
+ M crates/compiler/tests/result_inference_combined_checks.rs
+ M crates/compiler/tests/result_inference_defaults.rs
+ M crates/compiler/tests/typed_arrays_lowering.rs
+ M crates/compiler/tests/typed_arrays_runtime.rs
+ M crates/compiler/tests/value_loops.rs
+ M crates/compiler/tests/wp5_interactions.rs
+ M tests/browser.cjs
+?? crates/browser/tests/integer_specialization_adapters.rs
+?? crates/compiler/src/codegen/representation.rs
+?? crates/compiler/tests/integer_specialization.rs
+?? docs/adr/0007-proven-integer-specialization.md
+?? docs/benchmarks/integer-add-sub-39/collection-1/cargo.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/cargo.txt
+?? docs/benchmarks/integer-add-sub-39/collection-1/compiler-1-Basic.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/compiler-1-Basic.txt
+?? docs/benchmarks/integer-add-sub-39/collection-1/compiler-1-None.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/compiler-1-None.txt
+?? docs/benchmarks/integer-add-sub-39/collection-1/compiler-2-Basic.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/compiler-2-Basic.txt
+?? docs/benchmarks/integer-add-sub-39/collection-1/compiler-2-None.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/compiler-2-None.txt
+?? docs/benchmarks/integer-add-sub-39/collection-1/default-test.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/default-test.txt
+?? docs/benchmarks/integer-add-sub-39/collection-1/environment.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/git-diff-before.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/git-diff-before.txt
+?? docs/benchmarks/integer-add-sub-39/collection-1/git-head.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/git-head.txt
+?? docs/benchmarks/integer-add-sub-39/collection-1/git-status-after.txt
+?? docs/benchmarks/integer-add-sub-39/collection-1/git-status-before.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/git-status-before.txt
+?? docs/benchmarks/integer-add-sub-39/collection-1/guest-1-Basic.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/guest-1-Basic.txt
+?? docs/benchmarks/integer-add-sub-39/collection-1/guest-1-None.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/guest-1-None.txt
+?? docs/benchmarks/integer-add-sub-39/collection-1/guest-2-Basic.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/guest-2-Basic.txt
+?? docs/benchmarks/integer-add-sub-39/collection-1/guest-2-None.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/guest-2-None.txt
+?? docs/benchmarks/integer-add-sub-39/collection-1/hashes-before.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/inputs-cargo-after.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/inputs-cargo-before.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/inputs-compiler-1-Basic-after.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/inputs-compiler-1-Basic-before.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/inputs-compiler-1-None-after.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/inputs-compiler-1-None-before.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/inputs-compiler-2-Basic-after.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/inputs-compiler-2-Basic-before.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/inputs-compiler-2-None-after.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/inputs-compiler-2-None-before.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/inputs-default-test-after.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/inputs-default-test-before.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/inputs-git-diff-before-after.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/inputs-git-diff-before-before.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/inputs-git-head-after.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/inputs-git-head-before.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/inputs-git-status-after-before.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/inputs-git-status-before-after.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/inputs-git-status-before-before.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/inputs-guest-1-Basic-after.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/inputs-guest-1-Basic-before.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/inputs-guest-1-None-after.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/inputs-guest-1-None-before.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/inputs-guest-2-Basic-after.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/inputs-guest-2-Basic-before.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/inputs-guest-2-None-after.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/inputs-guest-2-None-before.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/inputs-node-after.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/inputs-node-before.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/inputs-rustc-after.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/inputs-rustc-before.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/inputs-verify-after.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/inputs-verify-before.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/node.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/node.txt
+?? docs/benchmarks/integer-add-sub-39/collection-1/rustc.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/rustc.txt
+?? docs/benchmarks/integer-add-sub-39/collection-1/verify.json
+?? docs/benchmarks/integer-add-sub-39/collection-1/verify.txt
+?? docs/benchmarks/integer-add-sub-39/record_matched.py

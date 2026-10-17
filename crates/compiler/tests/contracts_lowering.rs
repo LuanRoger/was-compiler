@@ -70,6 +70,24 @@ fn fixture() -> TypedProgram {
 fn compile(program: &TypedProgram) -> Result<Vec<u8>, CodegenError> {
     codegen::compile_with_exports(program, &ExportOptions::None)
 }
+fn compiler_at(level: OptimizationLevel) -> Compiler {
+    let mut compiler = Compiler::new();
+    compiler.set_optimization_level(level);
+    compiler
+}
+
+fn compile_at(program: &TypedProgram, level: OptimizationLevel) -> Vec<u8> {
+    let mut compiler = compiler_at(level);
+    compiler.set_exports(ExportOptions::None);
+    let bytes = compiler.compile(program).unwrap();
+    Validator::new().validate_all(&bytes).unwrap();
+    if level == OptimizationLevel::None {
+        assert_eq!(bytes, compile(program).unwrap());
+    }
+    assert_eq!(compiler.compile(program).unwrap(), bytes);
+    bytes
+}
+
 fn operators(bytes: &[u8], index: usize) -> Vec<Operator<'_>> {
     Validator::new().validate_all(bytes).unwrap();
     Parser::new(0)
@@ -327,25 +345,29 @@ fn constant_false_does_not_excuse_body_checks_or_missing_returns() {
 
 #[test]
 fn entry_validates_all_handle_parameters_then_ordered_contracts_then_body() {
-    let mut program = Compiler::new()
-        .analyze("fn guarded(s: string, a: number[], r: range, flag: bool) -> number { return 7; }")
-        .unwrap();
-    // Sparse identities map to formal positions, not raw Wasm local indices.
-    for (param, id) in program.functions[0]
-        .params
-        .iter_mut()
-        .zip([101, 500, 900, 77])
-    {
-        param.id = VariableId(id);
-    }
-    program.functions[0].contracts = vec![
-        contract(read(77, Type::Bool)),
-        contract(boolean(false)),
-        contract(boolean(true)),
-    ];
-    let bytes = compile(&program).unwrap();
-    let ops = operators(&bytes, 0);
-    assert!(matches!(ops.as_slice(), [
+    for level in LEVELS {
+        let mut program = compiler_at(level)
+            .analyze(
+                "fn guarded(s: string, a: number[], r: range, flag: bool) -> number { return 7; }",
+            )
+            .unwrap();
+        // Sparse identities map to formal positions, not raw Wasm local indices.
+        for (param, id) in program.functions[0]
+            .params
+            .iter_mut()
+            .zip([101, 500, 900, 77])
+        {
+            param.id = VariableId(id);
+        }
+        program.functions[0].contracts = vec![
+            contract(read(77, Type::Bool)),
+            contract(boolean(false)),
+            contract(boolean(true)),
+        ];
+        let bytes = compile_at(&program, level);
+        let ops = operators(&bytes, 0);
+        if level == OptimizationLevel::None {
+            assert!(matches!(ops.as_slice(), [
         Operator::LocalGet { local_index: 0 }, Operator::Call { function_index: 2 }, Operator::Drop,
         Operator::LocalGet { local_index: 1 }, Operator::Call { function_index: 3 }, Operator::Drop,
         Operator::LocalGet { local_index: 2 }, Operator::Call { function_index: 9 }, Operator::Drop,
@@ -354,118 +376,133 @@ fn entry_validates_all_handle_parameters_then_ordered_contracts_then_body() {
         Operator::I32Const { value: 1 }, Operator::I32Eqz, Operator::If { blockty: BlockType::Empty }, Operator::Unreachable, Operator::End,
         Operator::F64Const { value }, Operator::Return, Operator::End,
     ] if value.bits() == 7f64.to_bits()));
-    let body_count = Parser::new(0)
-        .parse_all(&bytes)
-        .filter(|p| matches!(p, Ok(Payload::CodeSectionEntry(_))))
-        .count();
-    assert_eq!(body_count, 10); // user + seven memory + construct/validate, no contains
-
-    program.functions[0].contracts.push(contract(binary(
-        binary(number("5"), BinaryOp::Remainder, number("2"), Type::Number),
-        BinaryOp::Equal,
-        number("1"),
-        Type::Bool,
-    )));
-    let bytes = compile(&program).unwrap();
-    // Remainder follows memory helpers and precedes both private range helpers.
-    assert_eq!(calls(&operators(&bytes, 0)), [2, 3, 10, 8]);
-    assert_eq!(
-        Parser::new(0)
+        } else {
+            assert!(matches!(ops.as_slice(), [
+        Operator::LocalGet { local_index: 0 }, Operator::Call { function_index: 2 }, Operator::Drop,
+        Operator::LocalGet { local_index: 1 }, Operator::Call { function_index: 3 }, Operator::Drop,
+        Operator::LocalGet { local_index: 2 }, Operator::Call { function_index: 9 }, Operator::Drop,
+        Operator::LocalGet { local_index: 3 }, Operator::I32Eqz, Operator::If { blockty: BlockType::Empty }, Operator::Unreachable, Operator::End,
+        Operator::I32Const { value: 0 }, Operator::I32Eqz, Operator::If { blockty: BlockType::Empty }, Operator::Unreachable, Operator::End,
+        Operator::I32Const { value: 1 }, Operator::I32Eqz, Operator::If { blockty: BlockType::Empty }, Operator::Unreachable, Operator::End,
+        Operator::I32Const { value }, Operator::F64ConvertI32S, Operator::Return, Operator::End,
+    ] if *value == 7));
+        }
+        let body_count = Parser::new(0)
             .parse_all(&bytes)
             .filter(|p| matches!(p, Ok(Payload::CodeSectionEntry(_))))
-            .count(),
-        11
-    );
+            .count();
+        assert_eq!(body_count, 10); // user + seven memory + construct/validate, no contains
+
+        program.functions[0].contracts.push(contract(binary(
+            binary(number("5"), BinaryOp::Remainder, number("2"), Type::Number),
+            BinaryOp::Equal,
+            number("1"),
+            Type::Bool,
+        )));
+        let bytes = compile_at(&program, level);
+        // Remainder follows memory helpers and precedes both private range helpers.
+        assert_eq!(calls(&operators(&bytes, 0)), [2, 3, 10, 8]);
+        assert_eq!(
+            Parser::new(0)
+                .parse_all(&bytes)
+                .filter(|p| matches!(p, Ok(Payload::CodeSectionEntry(_))))
+                .count(),
+            11
+        );
+    }
 }
 
 #[test]
 fn contract_only_remainder_plans_a_helper_without_memory_and_keeps_checks_at_all_levels() {
-    let mut program = Compiler::new()
-        .analyze("fn target() -> number { return 7; }")
-        .unwrap();
-    program.functions[0].contracts = vec![contract(binary(
-        binary(number("5"), BinaryOp::Remainder, number("2"), Type::Number),
-        BinaryOp::Equal,
-        number("1"),
-        Type::Bool,
-    ))];
-    let bytes = compile(&program).unwrap();
-    assert_eq!(calls(&operators(&bytes, 0)), [1]);
-    for payload in Parser::new(0).parse_all(&bytes) {
-        assert!(!matches!(
-            payload.unwrap(),
-            Payload::MemorySection(_) | Payload::GlobalSection(_) | Payload::DataSection(_)
-        ));
-    }
-    let mut compiler = Compiler::new();
-    compiler.set_exports(ExportOptions::None);
     for level in LEVELS {
-        compiler.set_optimization_level(level);
+        let mut program = compiler_at(level)
+            .analyze("fn target() -> number { return 7; }")
+            .unwrap();
+        program.functions[0].contracts = vec![contract(binary(
+            binary(number("5"), BinaryOp::Remainder, number("2"), Type::Number),
+            BinaryOp::Equal,
+            number("1"),
+            Type::Bool,
+        ))];
+        let bytes = compile_at(&program, level);
+        assert_eq!(calls(&operators(&bytes, 0)), [1]);
+        for payload in Parser::new(0).parse_all(&bytes) {
+            assert!(!matches!(
+                payload.unwrap(),
+                Payload::MemorySection(_) | Payload::GlobalSection(_) | Payload::DataSection(_)
+            ));
+        }
+        let mut compiler = compiler_at(level);
+        compiler.set_exports(ExportOptions::None);
+
         assert_eq!(compiler.compile(&program).unwrap(), bytes);
     }
 }
 
 #[test]
 fn contract_only_equality_and_len_keep_memory_helper_order_and_body_temporaries() {
-    let mut program = Compiler::new().analyze("fn target(a: number[], b: number[], s: string) -> number { let body = [3]; return len(body); }").unwrap();
-    let len = expr(
-        TypedExprKind::Call {
-            func: FunctionRef::Builtin(BuiltinFunction::Len),
-            name: "len".into(),
-            args: vec![read(0, Type::Array(was_compiler::ArrayElementType::Number))],
-        },
-        Type::Number,
-    );
-    program.functions[0].contracts = vec![
-        contract(binary(
-            read(0, Type::Array(was_compiler::ArrayElementType::Number)),
-            BinaryOp::Equal,
-            read(1, Type::Array(was_compiler::ArrayElementType::Number)),
-            Type::Bool,
-        )),
-        contract(binary(
-            read(2, Type::String),
-            BinaryOp::Equal,
-            string("entry"),
-            Type::Bool,
-        )),
-        contract(binary(len, BinaryOp::GreaterThan, number("0"), Type::Bool)),
-        contract(binary(
-            binary(number("5"), BinaryOp::Remainder, number("2"), Type::Number),
-            BinaryOp::Equal,
-            number("1"),
-            Type::Bool,
-        )),
-    ];
-    let bytes = compile(&program).unwrap();
-    assert_eq!(calls(&operators(&bytes, 0)), [3, 3, 2, 7, 6, 5, 8, 1, 5]);
-    for payload in Parser::new(0).parse_all(&bytes) {
-        if let Payload::CodeSectionEntry(body) = payload.unwrap() {
-            let locals: Vec<_> = body
-                .get_locals_reader()
-                .unwrap()
-                .into_iter()
-                .map(Result::unwrap)
-                .collect();
-            assert_eq!(
-                locals,
-                [(1, wasmparser::ValType::I32), (1, wasmparser::ValType::I32)]
-            );
-            break;
+    for level in LEVELS {
+        let mut program = compiler_at(level).analyze("fn target(a: number[], b: number[], s: string) -> number { let body = [3]; return len(body); }").unwrap();
+        let len = expr(
+            TypedExprKind::Call {
+                func: FunctionRef::Builtin(BuiltinFunction::Len),
+                name: "len".into(),
+                args: vec![read(0, Type::Array(was_compiler::ArrayElementType::Number))],
+            },
+            Type::Number,
+        );
+        program.functions[0].contracts = vec![
+            contract(binary(
+                read(0, Type::Array(was_compiler::ArrayElementType::Number)),
+                BinaryOp::Equal,
+                read(1, Type::Array(was_compiler::ArrayElementType::Number)),
+                Type::Bool,
+            )),
+            contract(binary(
+                read(2, Type::String),
+                BinaryOp::Equal,
+                string("entry"),
+                Type::Bool,
+            )),
+            contract(binary(len, BinaryOp::GreaterThan, number("0"), Type::Bool)),
+            contract(binary(
+                binary(number("5"), BinaryOp::Remainder, number("2"), Type::Number),
+                BinaryOp::Equal,
+                number("1"),
+                Type::Bool,
+            )),
+        ];
+        let bytes = compile_at(&program, level);
+        assert_eq!(calls(&operators(&bytes, 0)), [3, 3, 2, 7, 6, 5, 8, 1, 5]);
+        for payload in Parser::new(0).parse_all(&bytes) {
+            if let Payload::CodeSectionEntry(body) = payload.unwrap() {
+                let locals: Vec<_> = body
+                    .get_locals_reader()
+                    .unwrap()
+                    .into_iter()
+                    .map(Result::unwrap)
+                    .collect();
+                assert_eq!(
+                    locals,
+                    [(1, wasmparser::ValType::I32), (1, wasmparser::ValType::I32)]
+                );
+                break;
+            }
         }
     }
 }
 
 #[test]
 fn collection_inequality_contracts_complement_content_helpers_without_allocation() {
-    let source = "fn target(a: number[], b: number[], s: string, t: string) -> number
+    for level in LEVELS {
+        let source = "fn target(a: number[], b: number[], s: string, t: string) -> number
         requires a != b requires s != t { return 7; }";
-    let mut compiler = Compiler::new();
-    let baseline = compiler.compile_source(source).unwrap();
-    let ops = operators(&baseline, 0);
-    assert_eq!(calls(&ops), [3, 3, 2, 2, 7, 6]);
-    for (left, right, helper) in [(0, 1, 7), (2, 3, 6)] {
-        assert!(ops.windows(8).any(|window| matches!(window, [
+        let compiler = compiler_at(level);
+        let baseline = compiler.compile_source(source).unwrap();
+        let ops = operators(&baseline, 0);
+        assert_eq!(calls(&ops), [3, 3, 2, 2, 7, 6]);
+        for (left, right, helper) in [(0, 1, 7), (2, 3, 6)] {
+            assert!(ops.windows(8).any(|window| matches!(window, [
             Operator::LocalGet { local_index: a },
             Operator::LocalGet { local_index: b },
             Operator::Call { function_index },
@@ -473,148 +510,166 @@ fn collection_inequality_contracts_complement_content_helpers_without_allocation
             Operator::If { blockty: BlockType::Empty },
             Operator::Unreachable, Operator::End,
         ] if *a == left && *b == right && *function_index == helper)));
-    }
+        }
 
-    for level in LEVELS {
-        compiler.set_optimization_level(level);
         assert_eq!(compiler.compile_source(source).unwrap(), baseline);
     }
 }
 
 #[test]
 fn static_strings_are_discovered_in_contract_order_before_body_and_after_prior_functions() {
-    let mut program = Compiler::new()
+    for level in LEVELS {
+        let mut program = compiler_at(level)
         .analyze(
             "fn prior() -> string { return \"prior\"; } fn target() -> string { return \"body\"; }",
         )
         .unwrap();
-    program.functions[1].contracts = vec![
-        contract(binary(
-            string("entry"),
-            BinaryOp::Equal,
-            string("entry"),
-            Type::Bool,
-        )),
-        contract(binary(
-            boolean(false),
-            BinaryOp::And,
-            binary(
-                string("hidden"),
+        program.functions[1].contracts = vec![
+            contract(binary(
+                string("entry"),
                 BinaryOp::Equal,
-                string("hidden"),
+                string("entry"),
                 Type::Bool,
-            ),
-            Type::Bool,
-        )),
-    ];
-    let bytes = compile(&program).unwrap();
-    let mut expected = vec![0; 8];
-    for (handle, text) in [
-        (8usize, "prior"),
-        (24, "entry"),
-        (40, "hidden"),
-        (56, "body"),
-    ] {
-        expected.resize(handle, 0);
-        expected.extend_from_slice(&u32::try_from(handle + 8).unwrap().to_le_bytes());
-        expected.extend_from_slice(&u32::try_from(text.len()).unwrap().to_le_bytes());
-        expected.extend_from_slice(text.as_bytes());
+            )),
+            contract(binary(
+                boolean(false),
+                BinaryOp::And,
+                binary(
+                    string("hidden"),
+                    BinaryOp::Equal,
+                    string("hidden"),
+                    Type::Bool,
+                ),
+                Type::Bool,
+            )),
+        ];
+        let bytes = compile_at(&program, level);
+        let mut expected = vec![0; 8];
+        for (handle, text) in [
+            (8usize, "prior"),
+            (24, "entry"),
+            (40, "hidden"),
+            (56, "body"),
+        ] {
+            expected.resize(handle, 0);
+            expected.extend_from_slice(&u32::try_from(handle + 8).unwrap().to_le_bytes());
+            expected.extend_from_slice(&u32::try_from(text.len()).unwrap().to_le_bytes());
+            expected.extend_from_slice(text.as_bytes());
+        }
+        let data: Vec<_> = Parser::new(0)
+            .parse_all(&bytes)
+            .filter_map(|p| match p.unwrap() {
+                Payload::DataSection(r) => Some(
+                    r.into_iter()
+                        .map(|d| d.unwrap().data.to_vec())
+                        .collect::<Vec<_>>(),
+                ),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        assert_eq!(data, [expected]);
+        let ops = operators(&bytes, 1);
+        assert_eq!(calls(&ops), [7, 7]); // two users, then StringEqual at memory offset five
+        assert!(
+            ops.iter()
+                .any(|op| matches!(op, Operator::I32Const { value: 40 }))
+        );
+        assert!(matches!(
+            &ops[ops.len() - 3..],
+            [
+                Operator::I32Const { value: 56 },
+                Operator::Return,
+                Operator::End
+            ]
+        ));
     }
-    let data: Vec<_> = Parser::new(0)
-        .parse_all(&bytes)
-        .filter_map(|p| match p.unwrap() {
-            Payload::DataSection(r) => Some(
-                r.into_iter()
-                    .map(|d| d.unwrap().data.to_vec())
-                    .collect::<Vec<_>>(),
-            ),
-            _ => None,
-        })
-        .flatten()
-        .collect();
-    assert_eq!(data, [expected]);
-    let ops = operators(&bytes, 1);
-    assert_eq!(calls(&ops), [7, 7]); // two users, then StringEqual at memory offset five
-    assert!(
-        ops.iter()
-            .any(|op| matches!(op, Operator::I32Const { value: 40 }))
-    );
-    assert!(matches!(
-        &ops[ops.len() - 3..],
-        [
-            Operator::I32Const { value: 56 },
-            Operator::Return,
-            Operator::End
-        ]
-    ));
 }
 
 #[test]
 fn contract_only_strings_enable_memory_without_body_or_signature_memory() {
-    let mut program = Compiler::new().analyze("fn target() -> void {}").unwrap();
-    program.functions[0].contracts = vec![contract(binary(
-        string("entry"),
-        BinaryOp::Equal,
-        string("entry"),
-        Type::Bool,
-    ))];
-    let bytes = compile(&program).unwrap();
-    assert_eq!(calls(&operators(&bytes, 0)), [6]);
-    assert!(
-        Parser::new(0)
-            .parse_all(&bytes)
-            .any(|p| matches!(p, Ok(Payload::MemorySection(_))))
-    );
-    assert_eq!(
-        Parser::new(0)
-            .parse_all(&bytes)
-            .filter(|p| matches!(p, Ok(Payload::CodeSectionEntry(_))))
-            .count(),
-        8
-    );
-    for payload in Parser::new(0).parse_all(&bytes) {
-        if let Payload::DataSection(reader) = payload.unwrap() {
-            let data = reader.into_iter().next().unwrap().unwrap();
-            assert_eq!(
-                data.data,
-                [
-                    0, 0, 0, 0, 0, 0, 0, 0, 16, 0, 0, 0, 5, 0, 0, 0, b'e', b'n', b't', b'r', b'y'
-                ]
-            );
+    for level in LEVELS {
+        let mut program = compiler_at(level)
+            .analyze("fn target() -> void {}")
+            .unwrap();
+        program.functions[0].contracts = vec![contract(binary(
+            string("entry"),
+            BinaryOp::Equal,
+            string("entry"),
+            Type::Bool,
+        ))];
+        let bytes = compile_at(&program, level);
+        assert_eq!(calls(&operators(&bytes, 0)), [6]);
+        assert!(
+            Parser::new(0)
+                .parse_all(&bytes)
+                .any(|p| matches!(p, Ok(Payload::MemorySection(_))))
+        );
+        assert_eq!(
+            Parser::new(0)
+                .parse_all(&bytes)
+                .filter(|p| matches!(p, Ok(Payload::CodeSectionEntry(_))))
+                .count(),
+            8
+        );
+        for payload in Parser::new(0).parse_all(&bytes) {
+            if let Payload::DataSection(reader) = payload.unwrap() {
+                let data = reader.into_iter().next().unwrap().unwrap();
+                assert_eq!(
+                    data.data,
+                    [
+                        0, 0, 0, 0, 0, 0, 0, 0, 16, 0, 0, 0, 5, 0, 0, 0, b'e', b'n', b't', b'r',
+                        b'y'
+                    ]
+                );
+            }
         }
     }
 }
 
 #[test]
 fn direct_recursive_and_default_calls_share_the_same_callee_entry_checks() {
-    let mut program = Compiler::new()
+    for level in LEVELS {
+        let mut program = compiler_at(level)
         .analyze(
             "fn target(n: number = 2) -> number { if n > 0 { return target(n - 1); } return n; }
          fn main() -> number { return target(); }",
         )
         .unwrap();
-    program.functions[0].contracts = vec![contract(binary(
-        read(0, Type::Number),
-        BinaryOp::GreaterThanOrEqual,
-        number("0"),
-        Type::Bool,
-    ))];
-    let bytes = codegen::compile(&program).unwrap();
-    let target_ops = operators(&bytes, 0);
-    assert!(matches!(&target_ops[..7], [
+        program.functions[0].contracts = vec![contract(binary(
+            read(0, Type::Number),
+            BinaryOp::GreaterThanOrEqual,
+            number("0"),
+            Type::Bool,
+        ))];
+        let bytes = compiler_at(level).compile(&program).unwrap();
+        let target_ops = operators(&bytes, 0);
+        if level == OptimizationLevel::None {
+            assert!(matches!(&target_ops[..7], [
         Operator::LocalGet { local_index: 0 }, Operator::F64Const { value }, Operator::F64Ge,
         Operator::I32Eqz, Operator::If { blockty: BlockType::Empty }, Operator::Unreachable, Operator::End,
     ] if value.bits() == 0f64.to_bits()));
-    assert_eq!(calls(&target_ops), [0]);
-    let caller_ops = operators(&bytes, 1);
-    assert!(matches!(caller_ops.as_slice(), [
+        } else {
+            assert!(matches!(&target_ops[..8], [
+        Operator::LocalGet { local_index: 0 }, Operator::I32Const { value }, Operator::F64ConvertI32S, Operator::F64Ge,
+        Operator::I32Eqz, Operator::If { blockty: BlockType::Empty }, Operator::Unreachable, Operator::End,
+    ] if *value == 0));
+        }
+        assert_eq!(calls(&target_ops), [0]);
+        let caller_ops = operators(&bytes, 1);
+        if level == OptimizationLevel::None {
+            assert!(matches!(caller_ops.as_slice(), [
         Operator::F64Const { value }, Operator::LocalSet { local_index: 0 },
         Operator::LocalGet { local_index: 0 }, Operator::Call { function_index: 0 }, Operator::Return, Operator::End,
     ] if value.bits() == 2f64.to_bits()));
-    for level in LEVELS {
-        let mut compiler = Compiler::new();
-        compiler.set_optimization_level(level);
-        assert_eq!(compiler.compile(&program).unwrap(), bytes);
+        } else {
+            assert!(matches!(caller_ops.as_slice(), [
+        Operator::I32Const { value }, Operator::F64ConvertI32S, Operator::LocalSet { local_index: 0 },
+        Operator::LocalGet { local_index: 0 }, Operator::Call { function_index: 0 }, Operator::Return, Operator::End,
+    ] if *value == 2));
+        }
+
+        assert_eq!(compiler_at(level).compile(&program).unwrap(), bytes);
     }
 }
 
@@ -661,6 +716,14 @@ fn inferred_and_explicit_contract_calls_preserve_analyzed_and_source_bytes() {
     Validator::new().validate_all(&baseline).unwrap();
     for level in LEVELS {
         compiler.set_optimization_level(level);
+        let selected_bytes = compiler.compile_source(inferred).unwrap();
+        wasmparser::Validator::new()
+            .validate_all(&selected_bytes)
+            .unwrap();
+        if level == OptimizationLevel::None {
+            assert_eq!(selected_bytes, baseline);
+        }
+        let baseline = selected_bytes;
         assert_eq!(compiler.compile_source(inferred).unwrap(), baseline);
         assert_eq!(compiler.compile_source(annotated).unwrap(), baseline);
         assert_eq!(compiler.compile(&analyzed).unwrap(), baseline);
@@ -669,101 +732,103 @@ fn inferred_and_explicit_contract_calls_preserve_analyzed_and_source_bytes() {
 
 #[test]
 fn divergent_argument_cannot_reach_contract_entry_but_later_defaults_are_checked() {
-    let source = "fn target(a: number, b: number = a + 1) -> number
+    for level in LEVELS {
+        let source = "fn target(a: number, b: number = a + 1) -> number
         requires false { return b; }
         fn main() -> number { return target(a: loop {}); }";
-    let mut compiler = Compiler::new();
-    let mut program = compiler.analyze(source).unwrap();
-    let TypedStatementKind::Return(Some(value)) = &program.functions[1].body[0].kind else {
-        panic!("return")
-    };
-    assert_eq!(value.ty, ExprResult::Never);
-    let TypedExprKind::NormalizedCall(sequence) = &value.kind else {
-        panic!("normalized call")
-    };
-    assert_eq!(sequence.call.ty, ExprResult::Value(Type::Number));
+        let compiler = compiler_at(level);
+        let mut program = compiler.analyze(source).unwrap();
+        let TypedStatementKind::Return(Some(value)) = &program.functions[1].body[0].kind else {
+            panic!("return")
+        };
+        assert_eq!(value.ty, ExprResult::Never);
+        let TypedExprKind::NormalizedCall(sequence) = &value.kind else {
+            panic!("normalized call")
+        };
+        assert_eq!(sequence.call.ty, ExprResult::Value(Type::Number));
 
-    let baseline = compiler.compile(&program).unwrap();
-    let entry = operators(&baseline, 0);
-    assert!(matches!(
-        &entry[..5],
-        [
-            Operator::I32Const { value: 0 },
-            Operator::I32Eqz,
-            Operator::If {
-                blockty: BlockType::Empty
-            },
-            Operator::Unreachable,
-            Operator::End,
-        ]
-    ));
-    let caller = operators(&baseline, 1);
-    // The empty argument loop branches to itself; the canonical call remains
-    // structurally present and checked, but cannot execute after this backedge.
-    let backedge = caller
-        .windows(2)
-        .position(|ops| {
-            matches!(
-                ops,
-                [
-                    Operator::Loop {
-                        blockty: BlockType::Empty
-                    },
-                    Operator::Br { relative_depth: 0 },
-                ]
-            )
-        })
-        .unwrap();
-    let invocation = caller
-        .iter()
-        .position(|op| matches!(op, Operator::Call { function_index: 0 }))
-        .unwrap();
-    assert!(backedge < invocation);
-    assert_eq!(calls(&caller), [0]);
-    for level in LEVELS {
-        compiler.set_optimization_level(level);
+        let baseline = compiler.compile(&program).unwrap();
+        let entry = operators(&baseline, 0);
+        assert!(matches!(
+            &entry[..5],
+            [
+                Operator::I32Const { value: 0 },
+                Operator::I32Eqz,
+                Operator::If {
+                    blockty: BlockType::Empty
+                },
+                Operator::Unreachable,
+                Operator::End,
+            ]
+        ));
+        let caller = operators(&baseline, 1);
+        // The empty argument loop branches to itself; the canonical call remains
+        // structurally present and checked, but cannot execute after this backedge.
+        let backedge = caller
+            .windows(2)
+            .position(|ops| {
+                matches!(
+                    ops,
+                    [
+                        Operator::Loop {
+                            blockty: BlockType::Empty
+                        },
+                        Operator::Br { relative_depth: 0 },
+                    ]
+                )
+            })
+            .unwrap();
+        let invocation = caller
+            .iter()
+            .position(|op| matches!(op, Operator::Call { function_index: 0 }))
+            .unwrap();
+        assert!(backedge < invocation);
+        assert_eq!(calls(&caller), [0]);
+
         assert_eq!(compiler.compile(&program).unwrap(), baseline);
-    }
 
-    let TypedStatementKind::Return(Some(value)) = &mut program.functions[1].body[0].kind else {
-        panic!("return")
-    };
-    let TypedExprKind::NormalizedCall(sequence) = &mut value.kind else {
-        panic!("normalized call")
-    };
-    let default = &mut sequence.bindings[1];
-    let span = default.span;
-    default.value = number("invalid");
-    assert_eq!(
-        compiler.compile(&program),
-        Err(CodegenError::InvalidNumberLiteral {
-            function: "main".into(),
-            literal: "invalid".into(),
-            span,
-        })
-    );
+        let TypedStatementKind::Return(Some(value)) = &mut program.functions[1].body[0].kind else {
+            panic!("return")
+        };
+        let TypedExprKind::NormalizedCall(sequence) = &mut value.kind else {
+            panic!("normalized call")
+        };
+        let default = &mut sequence.bindings[1];
+        let span = default.span;
+        default.value = number("invalid");
+        assert_eq!(
+            compiler.compile(&program),
+            Err(CodegenError::InvalidNumberLiteral {
+                function: "main".into(),
+                literal: "invalid".into(),
+                span,
+            })
+        );
+    }
 }
 
 #[test]
 fn empty_contracts_preserve_bytes_and_true_checks_are_not_eliminated() {
-    let mut program = fixture();
-    assert!(program.functions[0].contracts.is_empty());
-    let baseline = compile(&program).unwrap();
-    program.functions[0].contracts.push(contract(boolean(true)));
-    let checked = compile(&program).unwrap();
-    assert_ne!(checked, baseline);
-    assert!(matches!(
-        &operators(&checked, 0)[..5],
-        [
-            Operator::I32Const { value: 1 },
-            Operator::I32Eqz,
-            Operator::If {
-                blockty: BlockType::Empty
-            },
-            Operator::Unreachable,
-            Operator::End
-        ]
-    ));
-    program.functions[0].contracts.clear();
-    assert_eq!(compile(&program).unwrap(), baseline);
+    for level in LEVELS {
+        let mut program = fixture();
+        assert!(program.functions[0].contracts.is_empty());
+        let baseline = compile_at(&program, level);
+        program.functions[0].contracts.push(contract(boolean(true)));
+        let checked = compile_at(&program, level);
+        assert_ne!(checked, baseline);
+        assert!(matches!(
+            &operators(&checked, 0)[..5],
+            [
+                Operator::I32Const { value: 1 },
+                Operator::I32Eqz,
+                Operator::If {
+                    blockty: BlockType::Empty
+                },
+                Operator::Unreachable,
+                Operator::End
+            ]
+        ));
+        program.functions[0].contracts.clear();
+        assert_eq!(compile_at(&program, level), baseline);
+    }
 }

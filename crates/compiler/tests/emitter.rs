@@ -27,7 +27,7 @@ fn compiler() -> Compiler {
 }
 
 #[test]
-fn native_emitter_matches_pre_refactor_binary_at_all_levels_without_mutating_typed_input() {
+fn native_emitter_preserves_baseline_and_preset_determinism_without_mutating_typed_input() {
     let mut compiler = compiler();
     assert_eq!(compiler.exports(), &ExportOptions::All);
     assert_eq!(
@@ -42,9 +42,13 @@ fn native_emitter_matches_pre_refactor_binary_at_all_levels_without_mutating_typ
 
     for level in LEVELS {
         compiler.set_optimization_level(level);
+        let expected = compiler.compile(&program).unwrap();
+        if level == OptimizationLevel::None {
+            assert_eq!(expected, GOLDEN, "baseline compilation");
+        }
         for _ in 0..2 {
             let bytes = compiler.compile(&program).expect("emit typed fixture");
-            assert_eq!(bytes, GOLDEN, "typed compilation at {level:?}");
+            assert_eq!(bytes, expected, "typed compilation at {level:?}");
             Validator::new()
                 .validate_all(&bytes)
                 .expect("valid native emission");
@@ -54,7 +58,7 @@ fn native_emitter_matches_pre_refactor_binary_at_all_levels_without_mutating_typ
             compiler
                 .compile_source(SOURCE)
                 .expect("compile source fixture"),
-            GOLDEN,
+            expected,
             "source compilation at {level:?}"
         );
         assert_eq!(compiler.analyze(SOURCE).unwrap(), original);
@@ -78,14 +82,17 @@ fn non_export_sections(bytes: &[u8]) -> Vec<(u8, Vec<u8>)> {
 }
 
 #[test]
-fn export_selection_preserves_pre_refactor_non_export_sections_at_all_levels() {
+fn export_selection_preserves_non_export_sections_within_each_level() {
     let mut compiler = compiler();
     let program = compiler.analyze(SOURCE).unwrap();
     let original = program.clone();
-    let expected_sections = non_export_sections(GOLDEN);
-
     for level in LEVELS {
         compiler.set_optimization_level(level);
+        compiler.set_exports(ExportOptions::All);
+        let expected_sections = non_export_sections(&compiler.compile(&program).unwrap());
+        if level == OptimizationLevel::None {
+            assert_eq!(expected_sections, non_export_sections(GOLDEN));
+        }
         for (selection, expected_functions) in [
             (ExportOptions::None, vec![]),
             (ExportOptions::Only(vec!["main".into()]), vec!["main"]),

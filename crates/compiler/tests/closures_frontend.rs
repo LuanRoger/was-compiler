@@ -532,11 +532,12 @@ fn nested_iteration_convergence_preserves_original_capture_and_dependency_proven
         }
         let bytes = compiler.compile(&program).unwrap();
         assert_eq!(compiler.compile_source(source).unwrap(), bytes);
-        if let Some((expected_program, expected_bytes)) = &baseline {
+        assert_eq!(compiler.compile(&program).unwrap(), bytes);
+        wasmparser::Validator::new().validate_all(&bytes).unwrap();
+        if let Some(expected_program) = &baseline {
             assert_eq!(&program, expected_program, "{level:?}");
-            assert_eq!(&bytes, expected_bytes, "{level:?}");
         } else {
-            baseline = Some((program, bytes));
+            baseline = Some(program);
         }
     }
 }
@@ -584,11 +585,13 @@ fn nested_iteration_convergence_dependency_only_helpers_do_not_recapture_shadowe
         compiler.set_optimization_level(level);
         let program = compiler.analyze(source).unwrap();
         assert_eq!(program, expected, "{level:?}");
-        assert_eq!(
-            compiler.compile(&program).unwrap(),
-            expected_bytes,
-            "{level:?}"
-        );
+        let bytes = compiler.compile(&program).unwrap();
+        wasmparser::Validator::new().validate_all(&bytes).unwrap();
+        if level == OptimizationLevel::None {
+            assert_eq!(bytes, expected_bytes);
+        }
+        assert_eq!(compiler.compile(&program).unwrap(), bytes);
+        assert_eq!(compiler.compile_source(source).unwrap(), bytes);
         let TypedStatementKind::For { body, .. } = &program.functions[0].body[1].kind else {
             panic!("range for");
         };

@@ -369,6 +369,14 @@ fn normalized_calls_support_mixed_storage_types_and_void_results() {
             was_compiler::OptimizationLevel::Aggressive,
         ] {
             compiler.set_optimization_level(level);
+            let selected_bytes = compiler.compile(&program).unwrap();
+            wasmparser::Validator::new()
+                .validate_all(&selected_bytes)
+                .unwrap();
+            if level == was_compiler::OptimizationLevel::None {
+                assert_eq!(selected_bytes, bytes);
+            }
+            let bytes = selected_bytes;
             assert_eq!(compiler.compile(&program).unwrap(), bytes);
         }
     }

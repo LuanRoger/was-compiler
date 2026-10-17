@@ -288,11 +288,13 @@ fn non_export_sections(bytes: &[u8]) -> Vec<(u8, Vec<u8>)> {
 }
 
 fn run_node_at_all_levels(mut compiler: Compiler, source: &str, script: &str) {
-    let baseline = compile(&compiler, source);
+    let program = compiler.analyze(source).unwrap();
     for level in LEVELS {
         compiler.set_optimization_level(level);
         let bytes = compile(&compiler, source);
-        assert_eq!(bytes, baseline, "{level:?}");
+        assert_eq!(compiler.compile_source(source).unwrap(), bytes);
+        assert_eq!(compiler.compile(&program).unwrap(), bytes);
+        assert_eq!(compiler.analyze(source).unwrap(), program);
         let output = test_process::output(
             Command::new("node").arg("-e").arg(script),
             Some(&bytes),
@@ -321,10 +323,14 @@ fn public_fixtures_validate_and_are_deterministic_at_every_optimization_level() 
         let baseline = compile(&compiler, source);
         for level in LEVELS {
             compiler.set_optimization_level(level);
+            let expected = compile(&compiler, source);
+            if level == OptimizationLevel::None {
+                assert_eq!(expected, baseline);
+            }
             for _ in 0..2 {
                 assert_eq!(compiler.analyze(source).unwrap(), original, "{level:?}");
-                assert_eq!(compile(&compiler, source), baseline, "{level:?}");
-                assert_eq!(compiler.compile(&program).unwrap(), baseline, "{level:?}");
+                assert_eq!(compile(&compiler, source), expected, "{level:?}");
+                assert_eq!(compiler.compile(&program).unwrap(), expected, "{level:?}");
                 assert_eq!(program, original);
             }
         }
@@ -360,10 +366,12 @@ fn owned_import_snapshots_and_export_selection_preserve_bodies_and_indices() {
             vec!["exclusive", "inclusive"],
         ),
     ] {
-        compiler.set_exports(selection);
-        let expected = compiler.compile(&program).unwrap();
         for level in LEVELS {
             compiler.set_optimization_level(level);
+            compiler.set_exports(ExportOptions::All);
+            let baseline = compiler.compile(&program).unwrap();
+            compiler.set_exports(selection.clone());
+            let expected = compiler.compile(&program).unwrap();
             let bytes = compiler.compile(&program).unwrap();
             Validator::new().validate_all(&bytes).unwrap();
             assert_eq!(bytes, expected);
@@ -496,7 +504,12 @@ fn nested_and_sibling_fors_reserve_distinct_scratch_without_new_helpers() {
     for level in LEVELS {
         compiler.set_optimization_level(level);
         let bytes = compile(&compiler, source);
-        assert_eq!(bytes, baseline);
+        if level == OptimizationLevel::None {
+            assert_eq!(bytes, baseline);
+        }
+        assert_eq!(compiler.compile_source(source).unwrap(), bytes);
+        let program = compiler.analyze(source).unwrap();
+        assert_eq!(compiler.compile(&program).unwrap(), bytes);
         let mut function_count = 0;
         let mut bodies = Vec::new();
         for payload in Parser::new(0).parse_all(&bytes) {

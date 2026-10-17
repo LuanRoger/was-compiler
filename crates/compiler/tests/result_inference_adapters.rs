@@ -54,6 +54,14 @@ fn inferred_defaulted_analysis_retains_the_host_snapshot_and_private_range_expor
         .unwrap();
     for (_, level) in LEVELS {
         compiler.set_optimization_level(level);
+        let selected_bytes = compiler.compile(&program).unwrap();
+        wasmparser::Validator::new()
+            .validate_all(&selected_bytes)
+            .unwrap();
+        if level == OptimizationLevel::None {
+            assert_eq!(selected_bytes, expected);
+        }
+        let expected = selected_bytes;
         assert_eq!(compiler.compile(&program).unwrap(), expected);
         assert_ne!(compiler.compile_source(SOURCE).unwrap(), expected);
         compiler.set_exports(ExportOptions::All);

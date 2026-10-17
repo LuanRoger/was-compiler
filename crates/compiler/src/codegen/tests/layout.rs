@@ -462,8 +462,14 @@ fn external_selection_preserves_internal_signatures_snapshots_and_helpers() {
             vec![("numeric", 5), ("array", 8)],
         ),
     ] {
-        compiler.set_exports(exports);
+        compiler.set_exports(exports.clone());
+        compiler.set_optimization_level(OptimizationLevel::None);
         let expected_bytes = compiler.compile(&program).unwrap();
+        assert_eq!(
+            expected_bytes,
+            super::super::compile_with_exports(&program, &exports).unwrap()
+        );
+        let mut enabled_bytes = None;
 
         for level in [
             OptimizationLevel::None,
@@ -473,7 +479,14 @@ fn external_selection_preserves_internal_signatures_snapshots_and_helpers() {
         ] {
             compiler.set_optimization_level(level);
             let bytes = compiler.compile(&program).unwrap();
-            assert_eq!(bytes, expected_bytes);
+            assert_eq!(compiler.compile(&program).unwrap(), bytes);
+            if level == OptimizationLevel::None {
+                assert_eq!(bytes, expected_bytes);
+            } else if let Some(expected) = &enabled_bytes {
+                assert_eq!(&bytes, expected);
+            } else {
+                enabled_bytes = Some(bytes.clone());
+            }
             let module = decode(&bytes);
             let mut expected_exports: Vec<_> = expected
                 .iter()
@@ -490,7 +503,24 @@ fn external_selection_preserves_internal_signatures_snapshots_and_helpers() {
             assert_eq!(module.functions, baseline.functions);
             assert_eq!(module.locals, baseline.locals);
             assert_eq!(module.bodies.len(), baseline.bodies.len());
-            for (body, original) in module.bodies.iter().zip(&baseline.bodies) {
+            use DecodedInstruction::*;
+            let mut expected_numeric = vec![
+                LocalGet(2),
+                Call(11),
+                Drop,
+                LocalGet(3),
+                Call(12),
+                Drop,
+                LocalGet(0),
+            ];
+            if level == OptimizationLevel::None {
+                expected_numeric.push(F64Const(2.0));
+            } else {
+                expected_numeric.extend([I32Const(2), Runtime("F64ConvertI32S".into())]);
+            }
+            expected_numeric.extend([Call(17), Return, End]);
+            assert_eq!(module.bodies[0], expected_numeric);
+            for (body, original) in module.bodies[1..].iter().zip(&baseline.bodies[1..]) {
                 assert_eq!(body.len(), original.len());
                 for (instruction, original) in body.iter().zip(original) {
                     match (instruction, original) {

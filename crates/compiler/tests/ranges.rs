@@ -360,10 +360,19 @@ fn owned_pipeline_snapshots_export_selection_and_optimization_preserve_all_bodie
     for level in LEVELS {
         compiler.set_optimization_level(level);
         assert_eq!(compiler.analyze(INTERNAL_SOURCE).unwrap(), snapshot);
+        let selected_bytes = compiler.compile_source(INTERNAL_SOURCE).unwrap();
+        wasmparser::Validator::new()
+            .validate_all(&selected_bytes)
+            .unwrap();
+        if level == OptimizationLevel::None {
+            assert_eq!(selected_bytes, baseline);
+        }
+        let baseline = selected_bytes;
         assert_eq!(compiler.compile_source(INTERNAL_SOURCE).unwrap(), baseline);
         assert_eq!(compiler.compile(&program).unwrap(), baseline);
         assert_eq!(program, snapshot);
     }
+    compiler.set_optimization_level(OptimizationLevel::None);
     compiler
         .register_host_function("later", "later", "added", vec![], Type::Void)
         .unwrap();
@@ -375,14 +384,16 @@ fn owned_pipeline_snapshots_export_selection_and_optimization_preserve_all_bodie
             vec!["main", "hidden"],
         ),
     ] {
-        compiler.set_exports(selection);
-        let expected = compiler.compile(&program).unwrap();
         for level in LEVELS {
             compiler.set_optimization_level(level);
+            compiler.set_exports(ExportOptions::Only(vec!["main".into()]));
+            let expected_sections = decode(&compiler.compile(&program).unwrap()).sections;
+            compiler.set_exports(selection.clone());
+            let expected = compiler.compile(&program).unwrap();
             let bytes = compiler.compile(&program).unwrap();
             let actual = decode(&bytes);
             assert_eq!(bytes, expected);
-            assert_eq!(actual.sections, decoded.sections);
+            assert_eq!(actual.sections, expected_sections);
             assert_eq!(
                 actual
                     .exports
@@ -477,6 +488,7 @@ fn internal_range_signatures_alone_require_memory_and_parameter_validation() {
         ExportOptions::None,
         ExportOptions::Only(vec!["main".into()]),
     ] {
+        compiler.set_optimization_level(OptimizationLevel::None);
         compiler.set_exports(selection);
         let baseline = compiler.compile(&program).unwrap();
         let decoded = decode(&baseline);
@@ -500,6 +512,14 @@ fn internal_range_signatures_alone_require_memory_and_parameter_validation() {
         );
         for level in LEVELS {
             compiler.set_optimization_level(level);
+            let selected_bytes = compiler.compile(&program).unwrap();
+            wasmparser::Validator::new()
+                .validate_all(&selected_bytes)
+                .unwrap();
+            if level == OptimizationLevel::None {
+                assert_eq!(selected_bytes, baseline);
+            }
+            let baseline = selected_bytes;
             assert_eq!(compiler.compile(&program).unwrap(), baseline);
         }
     }
@@ -873,6 +893,14 @@ fn range_children_plan_nested_locals_memory_remainder_and_abrupt_flow() {
     let baseline = compile(&compiler, source);
     for level in LEVELS {
         compiler.set_optimization_level(level);
+        let selected_bytes = compile(&compiler, source);
+        wasmparser::Validator::new()
+            .validate_all(&selected_bytes)
+            .unwrap();
+        if level == OptimizationLevel::None {
+            assert_eq!(selected_bytes, baseline);
+        }
+        let baseline = selected_bytes;
         assert_eq!(compile(&compiler, source), baseline);
     }
     let hidden = "fn main() -> bool { return false && { 0..4 by missing; true }; }";
@@ -1026,6 +1054,14 @@ fn membership_lowers_to_exact_integer_congruence_without_floating_remainder() {
     assert_eq!(decoded.calls[0], vec![8, 10]);
     for level in LEVELS {
         compiler.set_optimization_level(level);
+        let selected_bytes = compile(&compiler, source);
+        wasmparser::Validator::new()
+            .validate_all(&selected_bytes)
+            .unwrap();
+        if level == OptimizationLevel::None {
+            assert_eq!(selected_bytes, bytes);
+        }
+        let bytes = selected_bytes;
         assert_eq!(compile(&compiler, source), bytes);
     }
 }

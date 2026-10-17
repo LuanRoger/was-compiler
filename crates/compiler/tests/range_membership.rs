@@ -124,7 +124,13 @@ fn public_membership_fixtures_validate_at_every_optimization_level() {
         let baseline = compile(&compiler, source);
         for level in LEVELS {
             compiler.set_optimization_level(level);
-            assert_eq!(compile(&compiler, source), baseline, "{level:?}");
+            let bytes = compile(&compiler, source);
+            if level == OptimizationLevel::None {
+                assert_eq!(bytes, baseline);
+            }
+            assert_eq!(compile(&compiler, source), bytes);
+            let program = compiler.analyze(source).unwrap();
+            assert_eq!(compiler.compile(&program).unwrap(), bytes);
         }
     }
 }

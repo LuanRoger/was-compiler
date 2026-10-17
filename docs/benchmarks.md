@@ -470,3 +470,92 @@ counts alone are insufficient, and no percentage threshold is invented in advanc
 Inconclusive or regression-only evidence remains experimental pending a decision;
 it does not establish release success or justify changing the default. Correctness,
 diagnostics and adapter parity gates remain separate mandatory evidence.
+
+## Issue #39: matched literal/add-sub subset — 2026-10-17
+
+This new working-tree comparison measures exact-i32 literal and proven add/sub
+expression specialization in `Basic` versus `None`. Local storage remains `f64`;
+this is not evidence of the broader local/comparison/negation pass. The #38 section
+and evidence above describe the historical pre-implementation baseline, not the
+current enabled subset. `None` remains the default. **These measurements are not a
+release claim or acceptance of material regressions.**
+
+See [findings, protocol and complete evidence index](benchmarks/integer-add-sub-39/README.md),
+[all-workload table](benchmarks/integer-add-sub-39/collection-1/summary.md),
+[machine-readable results](benchmarks/integer-add-sub-39/collection-1/summary.json),
+and [input stability](benchmarks/integer-add-sub-39/collection-1/stability.json).
+Two matched repetitions ran sequentially offline on the same Windows 11 / Intel
+Core Ultra 5 125H, rustc/Cargo 1.98.0 and Node 24.12.0 environment. Run 1 used
+None → Basic and run 2 reversed the order for both compiler and guest measurements.
+The #38 corpus, public-API compiler timing and guest protocols were unchanged.
+
+A separate [recorder](benchmarks/integer-add-sub-39/record_matched.py) permits
+cross-level module differences but requires source identity, within-level repeated
+module identity, and identical Basic/Standard/Aggressive verification output.
+It captures dirty status/diff, revision, environment, command metadata and hashes
+before/after every command, stopping if production or harness inputs change.
+All measured inputs stayed unchanged **during collection**; all 27 `None`
+source/module identities also matched #38. Historical evidence and its recorder
+were not modified. After timing, the integration owner applied mechanical rustfmt,
+corrected CLI `-O` help and expanded test expectations, reporting no numeric
+algorithm changes. The separate [final source/status snapshot](benchmarks/integer-add-sub-39/final-source-state-2026-10-17.json)
+records 14 changed entries in the historical `production` hash group (which includes
+`src/` unit tests); all measurement hashes still match. **Final source hashes are
+not identical to timed files.** No timing rerun was performed for these mechanical
+changes; the table and module hashes remain evidence for the timed tree, not a
+new measurement of final sources. See the [explicit reconciliation](benchmarks/integer-add-sub-39/README.md#final-integration-reconciliation-2026-10-17).
+
+Reproduce from repository root with cached tooling only and a **new** output child:
+
+```sh
+python docs/benchmarks/integer-add-sub-39/record_matched.py --self-test
+python docs/benchmarks/integer-add-sub-39/record_matched.py docs/benchmarks/integer-add-sub-39/NEW-COLLECTION
+```
+
+The collection contains two complete compiler runs per level (27 source and 27
+typed cases, 100 samples × one compilation), two guest runs per level (26 timed,
+one verify-only trap), and 108 independent-oracle checks across all four presets.
+All commands passed. Complete Divan reports preserve available aggregates/spread;
+its CLI does not expose individual compiler samples. All 20 raw guest samples per
+case/run and exact source/module hashes are preserved. Commands have 120-second
+deadlines; Node retains its 60-second bound, not guest fuel/process-tree control.
+
+The table keeps runs 1 / 2 separate. Compiler columns are typed-compilation median
+µs; guest columns are median ns/main call. Source-to-Wasm measurements and all
+fallback controls are included in the full results.
+
+| Workload | Bytes None → Basic | Typed None | Typed Basic | Guest None | Guest Basic |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `literal_32` | 1,156 → 542 | 52.54 / 52.24 | 64.74 / 82.54 | 85.9375 / 259.375 | 149.21875 / 89.84375 |
+| `locals_32` | 1,828 → 1,278 | 153.9 / 128.2 | 165 / 225.4 | 385.9375 / 383.59375 | 190.625 / 384.375 |
+| `compare_32` | 4,164 → 2,558 | 241 / 241.9 | 267.5 / 408 | 381.25 / 1,076.5625 | 628.90625 / 1,077.34375 |
+| `negate_32` | 1,668 → 1,086 | 99.24 / 114.8 | 159.6 / 215.5 | 125 / 378.90625 | 159.375 / 375.78125 |
+| `loop_local` | 1,208 → 1,179 | 29.44 / 38.94 | 75.74 / 64.59 | 300.78125 / 719.53125 | 367.1875 / 696.09375 |
+
+**Trade-offs:** 24/27 modules shrank, none grew; the synthetic sum was 13,414 →
+9,702 bytes (−27.67%), not a production workload estimate. `literal_32` shrank
+53.11%, but its typed-compilation medians rose 23.22% / 58.00%. Observed typed
+cost increases for the other four table cases span 7.21%–157.27%; source compilation
+also rose in both runs for `locals_32`, `negate_32` and `loop_local`. Controls can
+shrink from specialized literal children even when their parent operation/read
+retains floating lowering; case names do not prove broader specialization.
+
+Guest timing is inconclusive: directions reverse and spread/run variation is
+substantial. Basic guest medians were higher in both runs for `compare_32`,
+`negate_min`, `mutable`, `capture` and `multiply`. In particular, `capture` rose
+129.6875 / 117.96875 → 221.875 / 260.15625 ns (+71.08% / +120.53%). Report these
+as regression signals, not omitted outliers or established lowering overhead.
+Power, thermals and background activity were uncontrolled; stable source hashes
+do not establish an idle machine. Short scalar workloads include JS/Wasm call
+and timer overhead; V8 may independently optimize constants and finite warmup is
+not settled tiering. More controlled sampling is needed for a timing conclusion.
+
+The measured subset demonstrates a size benefit, **not a stable guest-speed
+benefit or release readiness**. Recorder self-tests (three new, four historical),
+the focused native contract and 108 oracle checks passed. Separate final
+[correctness gates](integer-specialization.md#correctness-validation-2026-10-17)
+subsequently passed, as reported by the integration owner: 1,261 workspace tests
+including ignored cases (zero failed/ignored in the [raw log](integer-specialization-validation-2026-10-17.txt)),
+25 current-source browser groups, native/browser Clippy and the core Wasm build.
+This documentation task did not rerun those gates or timings. Review against `09dcb5c` is complete; explicit acceptance of material regressions
+and the release decision remain pending. `None` remains the default.

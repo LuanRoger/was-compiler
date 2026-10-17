@@ -158,7 +158,9 @@ fn export(name: &str, index: u32) -> (String, ExternalKind, u32) {
 
 #[test]
 fn remainder_validates_deterministically_at_all_levels_without_mutating_typed_input() {
-    let mut expected = None;
+    let expected_program = compiler(OptimizationLevel::None)
+        .analyze(SCALAR_SOURCE)
+        .unwrap();
     for level in LEVELS {
         let compiler = compiler(level);
         let program = compiler.analyze(SCALAR_SOURCE).unwrap();
@@ -167,11 +169,7 @@ fn remainder_validates_deterministically_at_all_levels_without_mutating_typed_in
         assert_eq!(compiler.compile(&program).unwrap(), bytes);
         assert_eq!(compiler.compile_source(SCALAR_SOURCE).unwrap(), bytes);
         assert_eq!(program, original);
-        if let Some(expected) = &expected {
-            assert_eq!(&bytes, expected, "level {level:?}");
-        } else {
-            expected = Some(bytes);
-        }
+        assert_eq!(program, expected_program, "level {level:?}");
     }
 }
 

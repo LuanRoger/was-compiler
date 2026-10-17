@@ -104,7 +104,11 @@ impl Compiler {
     pub fn compile(&self, program: &TypedProgram) -> Result<Vec<u8>, CodegenError> {
         let optimized = optimization::optimize(program, self.options.optimization_level);
 
-        codegen::compile_with_exports(optimized.as_ref(), &self.exports)
+        codegen::compile_with_policy(
+            optimized.as_ref(),
+            &self.exports,
+            self.options.optimization_level.numeric_policy(),
+        )
     }
 
     pub fn compile_source(&self, source: &str) -> Result<Vec<u8>, CompileError> {
@@ -171,7 +175,7 @@ mod tests {
     }
 
     #[test]
-    fn optimization_levels_preserve_wasm_and_the_input_program() {
+    fn optimization_levels_preserve_analysis_and_the_input_program() {
         let mut compiler = compiler();
         let source = "
             fn main(value: number) -> number {
@@ -208,7 +212,8 @@ mod tests {
         ";
         let program = compiler.analyze(source).unwrap();
         let original = program.clone();
-        let expected = compiler.compile(&program).unwrap();
+        let baseline = compiler.compile(&program).unwrap();
+        assert_eq!(baseline, codegen::compile(&program).unwrap());
 
         for level in [
             OptimizationLevel::None,
@@ -218,6 +223,7 @@ mod tests {
         ] {
             compiler.set_optimization_level(level);
 
+            let expected = compiler.compile(&program).unwrap();
             assert_eq!(compiler.compile(&program).unwrap(), expected);
             assert_eq!(compiler.compile_source(source).unwrap(), expected);
             assert_eq!(compiler.analyze(source).unwrap(), original);

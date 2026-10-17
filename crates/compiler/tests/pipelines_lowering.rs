@@ -8,6 +8,19 @@ use was_compiler::{
 };
 use wasmparser::{Operator, Parser, Payload, ValType, Validator};
 
+const LEVELS: [OptimizationLevel; 4] = [
+    OptimizationLevel::None,
+    OptimizationLevel::Basic,
+    OptimizationLevel::Standard,
+    OptimizationLevel::Aggressive,
+];
+
+fn compiler_at(level: OptimizationLevel) -> Compiler {
+    let mut compiler = Compiler::new();
+    compiler.set_optimization_level(level);
+    compiler
+}
+
 fn inject(value: &mut TypedExpr) {
     let sequence = normalized(value);
     sequence.bindings[0].origin = CallBindingOrigin::PipelineInput;
@@ -121,52 +134,58 @@ fn named_mixed_and_default_pipeline_sources_match_checked_normalization() {
             compiler.set_optimization_level(level);
             let bytes = compiler.compile(&program).unwrap();
             Validator::new().validate_all(&bytes).unwrap();
-            assert_eq!(bytes, expected_bytes, "{pipeline}, {level:?}");
+            if level == OptimizationLevel::None {
+                assert_eq!(bytes, expected_bytes, "{pipeline}, {level:?}");
+            }
+            assert_eq!(compiler.compile(&expected).unwrap(), bytes);
+            assert_eq!(compiler.compile(&program).unwrap(), bytes);
         }
     }
 }
 
 #[test]
 fn multiple_pipeline_defaults_store_once_in_formal_order_after_written_arguments() {
-    for (call, b_slot, e_slot) in [
-        ("target(11, e: 55, b: 22)", 2, 1),
-        ("target(11, 22, e: 55)", 1, 2),
-    ] {
-        let program = multiple_default_fixture(call);
-        let snapshot = program.clone();
-        let bytes = Compiler::new().compile(&program).unwrap();
-        Validator::new().validate_all(&bytes).unwrap();
-        let body = Parser::new(0)
-            .parse_all(&bytes)
-            .filter_map(|payload| match payload.unwrap() {
-                Payload::CodeSectionEntry(body) => Some(body),
-                Payload::TableSection(_) | Payload::ElementSection(_) => {
-                    panic!("no function table")
-                }
-                _ => None,
-            })
-            .nth(1)
-            .unwrap();
-        let locals: Vec<_> = body
-            .get_locals_reader()
-            .unwrap()
-            .into_iter()
-            .map(Result::unwrap)
-            .collect();
-        assert_eq!(locals, [(1, ValType::F64); 6]);
-        let ops: Vec<_> = body
-            .get_operators_reader()
-            .unwrap()
-            .into_iter()
-            .map(Result::unwrap)
-            .collect();
-        let written = if b_slot == 2 {
-            [55f64, 22f64]
-        } else {
-            [22f64, 55f64]
-        };
-        assert!(
-            matches!(ops.as_slice(), [
+    for level in LEVELS {
+        for (call, b_slot, e_slot) in [
+            ("target(11, e: 55, b: 22)", 2, 1),
+            ("target(11, 22, e: 55)", 1, 2),
+        ] {
+            let program = multiple_default_fixture(call);
+            let snapshot = program.clone();
+            let bytes = compiler_at(level).compile(&program).unwrap();
+            Validator::new().validate_all(&bytes).unwrap();
+            let body = Parser::new(0)
+                .parse_all(&bytes)
+                .filter_map(|payload| match payload.unwrap() {
+                    Payload::CodeSectionEntry(body) => Some(body),
+                    Payload::TableSection(_) | Payload::ElementSection(_) => {
+                        panic!("no function table")
+                    }
+                    _ => None,
+                })
+                .nth(1)
+                .unwrap();
+            let locals: Vec<_> = body
+                .get_locals_reader()
+                .unwrap()
+                .into_iter()
+                .map(Result::unwrap)
+                .collect();
+            assert_eq!(locals, [(1, ValType::F64); 6]);
+            let ops: Vec<_> = body
+                .get_operators_reader()
+                .unwrap()
+                .into_iter()
+                .map(Result::unwrap)
+                .collect();
+            let written = if b_slot == 2 {
+                [55f64, 22f64]
+            } else {
+                [22f64, 55f64]
+            };
+            if level == OptimizationLevel::None {
+                assert!(
+                    matches!(ops.as_slice(), [
             Operator::F64Const { value: input }, Operator::LocalSet { local_index: 0 },
             Operator::F64Const { value: first }, Operator::LocalSet { local_index: 1 },
             Operator::F64Const { value: second }, Operator::LocalSet { local_index: 2 },
@@ -184,17 +203,33 @@ fn multiple_pipeline_defaults_store_once_in_formal_order_after_written_arguments
             && first.bits() == written[0].to_bits() && second.bits() == written[1].to_bits()
             && two.bits() == 2f64.to_bits() && three.bits() == 3f64.to_bits() && five.bits() == 5f64.to_bits()
             && *c_read == b_slot && *b_arg == b_slot && *f_read == e_slot && *e_arg == e_slot),
-            "{call}: {ops:?}"
-        );
-        assert_eq!(program, snapshot);
-        for level in [
-            OptimizationLevel::None,
-            OptimizationLevel::Basic,
-            OptimizationLevel::Standard,
-            OptimizationLevel::Aggressive,
-        ] {
-            let mut compiler = Compiler::new();
-            compiler.set_optimization_level(level);
+                    "{call}: {ops:?}"
+                );
+            } else {
+                assert!(
+                    matches!(ops.as_slice(), [
+            Operator::I32Const { value: input }, Operator::F64ConvertI32S, Operator::LocalSet { local_index: 0 },
+            Operator::I32Const { value: first }, Operator::F64ConvertI32S, Operator::LocalSet { local_index: 1 },
+            Operator::I32Const { value: second }, Operator::F64ConvertI32S, Operator::LocalSet { local_index: 2 },
+            Operator::LocalGet { local_index: c_read }, Operator::I32Const { value: two }, Operator::F64ConvertI32S,
+            Operator::F64Add, Operator::LocalSet { local_index: 3 },
+            Operator::LocalGet { local_index: 3 }, Operator::I32Const { value: three }, Operator::F64ConvertI32S,
+            Operator::F64Add, Operator::LocalSet { local_index: 4 },
+            Operator::LocalGet { local_index: f_read }, Operator::I32Const { value: five }, Operator::F64ConvertI32S,
+            Operator::F64Add, Operator::LocalSet { local_index: 5 },
+            Operator::LocalGet { local_index: 0 }, Operator::LocalGet { local_index: b_arg },
+            Operator::LocalGet { local_index: 3 }, Operator::LocalGet { local_index: 4 },
+            Operator::LocalGet { local_index: e_arg }, Operator::LocalGet { local_index: 5 },
+            Operator::Call { function_index: 0 }, Operator::Return, Operator::End,
+        ] if *input == 11
+            && *first == (if b_slot == 2 { 55 } else { 22 }) && *second == (if b_slot == 2 { 22 } else { 55 })
+            && *two == 2 && *three == 3 && *five == 5
+            && *c_read == b_slot && *b_arg == b_slot && *f_read == e_slot && *e_arg == e_slot),
+                    "{call}: {ops:?}"
+                );
+            }
+            assert_eq!(program, snapshot);
+            let compiler = compiler_at(level);
             assert_eq!(compiler.compile(&program).unwrap(), bytes);
         }
     }
@@ -202,52 +237,74 @@ fn multiple_pipeline_defaults_store_once_in_formal_order_after_written_arguments
 
 #[test]
 fn omitted_pipeline_defaults_capture_injection_then_each_dependent_default_once() {
-    let program = multiple_default_fixture("target(11)");
-    let bytes = Compiler::new().compile(&program).unwrap();
-    Validator::new().validate_all(&bytes).unwrap();
-    let body = Parser::new(0)
-        .parse_all(&bytes)
-        .filter_map(|payload| match payload.unwrap() {
-            Payload::CodeSectionEntry(body) => Some(body),
-            _ => None,
-        })
-        .nth(1)
-        .unwrap();
-    let ops: Vec<_> = body
-        .get_operators_reader()
-        .unwrap()
-        .into_iter()
-        .map(Result::unwrap)
-        .collect();
-    assert!(
-        matches!(&ops[..2], [Operator::F64Const { value }, Operator::LocalSet { local_index: 0 }] if value.bits() == 11f64.to_bits())
-    );
-    for (chunk, (read, store, increment)) in ops[2..22].as_chunks::<4>().0.iter().zip([
-        (0, 1, 1f64),
-        (1, 2, 2f64),
-        (2, 3, 3f64),
-        (3, 4, 4f64),
-        (4, 5, 5f64),
-    ]) {
-        assert!(matches!(chunk, [
+    for level in LEVELS {
+        let program = multiple_default_fixture("target(11)");
+        let bytes = compiler_at(level).compile(&program).unwrap();
+        Validator::new().validate_all(&bytes).unwrap();
+        let body = Parser::new(0)
+            .parse_all(&bytes)
+            .filter_map(|payload| match payload.unwrap() {
+                Payload::CodeSectionEntry(body) => Some(body),
+                _ => None,
+            })
+            .nth(1)
+            .unwrap();
+        let ops: Vec<_> = body
+            .get_operators_reader()
+            .unwrap()
+            .into_iter()
+            .map(Result::unwrap)
+            .collect();
+        let tail = if level == OptimizationLevel::None {
+            assert!(
+                matches!(&ops[..2], [Operator::F64Const { value }, Operator::LocalSet { local_index: 0 }] if value.bits() == 11f64.to_bits())
+            );
+            for (chunk, (read, store, increment)) in ops[2..22].as_chunks::<4>().0.iter().zip([
+                (0, 1, 1f64),
+                (1, 2, 2f64),
+                (2, 3, 3f64),
+                (3, 4, 4f64),
+                (4, 5, 5f64),
+            ]) {
+                assert!(matches!(chunk, [
             Operator::LocalGet { local_index: actual_read }, Operator::F64Const { value },
             Operator::F64Add, Operator::LocalSet { local_index: actual_store },
         ] if *actual_read == read && *actual_store == store && value.bits() == increment.to_bits()));
+            }
+            &ops[22..]
+        } else {
+            assert!(
+                matches!(&ops[..3], [Operator::I32Const { value }, Operator::F64ConvertI32S, Operator::LocalSet { local_index: 0 }] if *value == 11)
+            );
+            for (chunk, (read, store, increment)) in ops[3..28].as_chunks::<5>().0.iter().zip([
+                (0, 1, 1i32),
+                (1, 2, 2i32),
+                (2, 3, 3i32),
+                (3, 4, 4i32),
+                (4, 5, 5i32),
+            ]) {
+                assert!(matches!(chunk, [
+            Operator::LocalGet { local_index: actual_read }, Operator::I32Const { value }, Operator::F64ConvertI32S,
+            Operator::F64Add, Operator::LocalSet { local_index: actual_store },
+        ] if *actual_read == read && *actual_store == store && *value == increment));
+            }
+            &ops[28..]
+        };
+        assert!(matches!(
+            tail,
+            [
+                Operator::LocalGet { local_index: 0 },
+                Operator::LocalGet { local_index: 1 },
+                Operator::LocalGet { local_index: 2 },
+                Operator::LocalGet { local_index: 3 },
+                Operator::LocalGet { local_index: 4 },
+                Operator::LocalGet { local_index: 5 },
+                Operator::Call { function_index: 0 },
+                Operator::Return,
+                Operator::End,
+            ]
+        ));
     }
-    assert!(matches!(
-        &ops[22..],
-        [
-            Operator::LocalGet { local_index: 0 },
-            Operator::LocalGet { local_index: 1 },
-            Operator::LocalGet { local_index: 2 },
-            Operator::LocalGet { local_index: 3 },
-            Operator::LocalGet { local_index: 4 },
-            Operator::LocalGet { local_index: 5 },
-            Operator::Call { function_index: 0 },
-            Operator::Return,
-            Operator::End,
-        ]
-    ));
 }
 
 #[test]
@@ -365,57 +422,77 @@ fn multiple_default_chain() -> TypedProgram {
 
 #[test]
 fn nested_named_default_stages_have_distinct_once_only_storage_and_direct_calls() {
-    let program = multiple_default_chain();
-    let bytes = Compiler::new().compile(&program).unwrap();
-    Validator::new().validate_all(&bytes).unwrap();
-    let body = Parser::new(0)
-        .parse_all(&bytes)
-        .filter_map(|payload| match payload.unwrap() {
-            Payload::CodeSectionEntry(body) => Some(body),
-            Payload::TableSection(_) | Payload::ElementSection(_) => panic!("no function table"),
-            _ => None,
-        })
-        .nth(1)
-        .unwrap();
-    let locals: Vec<_> = body
-        .get_locals_reader()
-        .unwrap()
-        .into_iter()
-        .map(Result::unwrap)
-        .collect();
-    assert_eq!(locals, [(1, ValType::F64); 18]);
-    let mut sets = Vec::new();
-    let mut gets = Vec::new();
-    let mut calls = Vec::new();
-    let mut constants = Vec::new();
-    for op in body.get_operators_reader().unwrap() {
-        match op.unwrap() {
-            Operator::LocalSet { local_index } => sets.push(local_index),
-            Operator::LocalGet { local_index } => gets.push(local_index),
-            Operator::Call { function_index } => calls.push(function_index),
-            Operator::CallIndirect { .. } => panic!("no indirect call"),
-            Operator::F64Const { value } => constants.push(f64::from_bits(value.bits())),
-            _ => {}
+    for level in LEVELS {
+        let program = multiple_default_chain();
+        let bytes = compiler_at(level).compile(&program).unwrap();
+        Validator::new().validate_all(&bytes).unwrap();
+        let body = Parser::new(0)
+            .parse_all(&bytes)
+            .filter_map(|payload| match payload.unwrap() {
+                Payload::CodeSectionEntry(body) => Some(body),
+                Payload::TableSection(_) | Payload::ElementSection(_) => {
+                    panic!("no function table")
+                }
+                _ => None,
+            })
+            .nth(1)
+            .unwrap();
+        let locals: Vec<_> = body
+            .get_locals_reader()
+            .unwrap()
+            .into_iter()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(locals, [(1, ValType::F64); 18]);
+        let mut sets = Vec::new();
+        let mut gets = Vec::new();
+        let mut calls = Vec::new();
+        let mut constants = Vec::new();
+        let mut integer_constants = Vec::new();
+        let mut conversions = 0;
+        for op in body.get_operators_reader().unwrap() {
+            match op.unwrap() {
+                Operator::LocalSet { local_index } => sets.push(local_index),
+                Operator::LocalGet { local_index } => gets.push(local_index),
+                Operator::Call { function_index } => calls.push(function_index),
+                Operator::CallIndirect { .. } => panic!("no indirect call"),
+                Operator::F64Const { value } => constants.push(f64::from_bits(value.bits())),
+                Operator::I32Const { value } => integer_constants.push(value),
+                Operator::F64ConvertI32S => conversions += 1,
+                _ => {}
+            }
+        }
+        assert_eq!(
+            sets,
+            [2, 3, 4, 5, 6, 7, 1, 8, 9, 10, 11, 12, 0, 13, 14, 15, 16, 17]
+        );
+        assert_eq!(
+            gets,
+            [
+                4, 5, 3, 2, 4, 5, 6, 3, 7, 8, 10, 9, 1, 8, 10, 11, 9, 12, 14, 15, 13, 0, 14, 15,
+                16, 13, 17
+            ]
+        );
+        assert_eq!(calls, [0, 0, 0]);
+        if level == OptimizationLevel::None {
+            assert!(integer_constants.is_empty());
+            assert_eq!(conversions, 0);
+            assert_eq!(
+                constants,
+                [
+                    11.0, 55.0, 22.0, 2.0, 3.0, 5.0, 22.0, 55.0, 2.0, 3.0, 5.0, 55.0, 22.0, 2.0,
+                    3.0, 5.0
+                ]
+            );
+        } else {
+            assert!(constants.is_empty());
+            assert_eq!(
+                integer_constants,
+                [11, 55, 22, 2, 3, 5, 22, 55, 2, 3, 5, 55, 22, 2, 3, 5]
+            );
+            assert_eq!(conversions, 16);
         }
     }
-    assert_eq!(
-        sets,
-        [2, 3, 4, 5, 6, 7, 1, 8, 9, 10, 11, 12, 0, 13, 14, 15, 16, 17]
-    );
-    assert_eq!(
-        gets,
-        [
-            4, 5, 3, 2, 4, 5, 6, 3, 7, 8, 10, 9, 1, 8, 10, 11, 9, 12, 14, 15, 13, 0, 14, 15, 16,
-            13, 17
-        ]
-    );
-    assert_eq!(calls, [0, 0, 0]);
-    assert_eq!(
-        constants,
-        [
-            11.0, 55.0, 22.0, 2.0, 3.0, 5.0, 22.0, 55.0, 2.0, 3.0, 5.0, 55.0, 22.0, 2.0, 3.0, 5.0
-        ]
-    );
 }
 
 #[test]
@@ -550,139 +627,148 @@ fn later_named_stage_defaults_and_children_are_checked_after_never() {
 
 #[test]
 fn pipeline_helpers_follow_users_memory_remainder_and_range_order() {
-    use wasmparser::ExternalKind;
+    for level in LEVELS {
+        use wasmparser::ExternalKind;
 
-    let mut compiler = Compiler::new();
-    compiler.set_exports(ExportOptions::Only(vec!["main".into()]));
-    let program = compiler
-        .analyze(
-            "fn make(n: number) -> range { return 0..n; }
+        let mut compiler = compiler_at(level);
+        compiler.set_exports(ExportOptions::Only(vec!["main".into()]));
+        let program = compiler
+            .analyze(
+                "fn make(n: number) -> range { return 0..n; }
          fn inspect(r: range) -> number {
              let values = [5, 2];
              if (1 in r) { return values[0] % values[1]; }
              return len(values);
          }
          fn main() -> number { return 4 |> make |> inspect; }",
-        )
-        .unwrap();
-    let bytes = compiler.compile(&program).unwrap();
-    Validator::new().validate_all(&bytes).unwrap();
+            )
+            .unwrap();
+        let bytes = compiler.compile(&program).unwrap();
+        Validator::new().validate_all(&bytes).unwrap();
 
-    let mut signatures = Vec::new();
-    let mut functions = Vec::new();
-    let mut exports = Vec::new();
-    let mut calls = Vec::new();
-    for payload in Parser::new(0).parse_all(&bytes) {
-        match payload.unwrap() {
-            Payload::TypeSection(reader) => {
-                for signature in reader.into_iter_err_on_gc_types() {
-                    let signature = signature.unwrap();
-                    signatures.push((signature.params().to_vec(), signature.results().to_vec()));
-                }
-            }
-            Payload::FunctionSection(reader) => {
-                functions.extend(reader.into_iter().map(Result::unwrap))
-            }
-            Payload::ExportSection(reader) => {
-                for export in reader {
-                    let export = export.unwrap();
-                    exports.push((export.name, export.kind, export.index));
-                }
-            }
-            Payload::CodeSectionEntry(body) => {
-                let mut direct = Vec::new();
-                for op in body.get_operators_reader().unwrap() {
-                    match op.unwrap() {
-                        Operator::Call { function_index } => direct.push(function_index),
-                        Operator::CallIndirect { .. } => panic!("no indirect call"),
-                        _ => {}
+        let mut signatures = Vec::new();
+        let mut functions = Vec::new();
+        let mut exports = Vec::new();
+        let mut calls = Vec::new();
+        for payload in Parser::new(0).parse_all(&bytes) {
+            match payload.unwrap() {
+                Payload::TypeSection(reader) => {
+                    for signature in reader.into_iter_err_on_gc_types() {
+                        let signature = signature.unwrap();
+                        signatures
+                            .push((signature.params().to_vec(), signature.results().to_vec()));
                     }
                 }
-                calls.push(direct);
+                Payload::FunctionSection(reader) => {
+                    functions.extend(reader.into_iter().map(Result::unwrap))
+                }
+                Payload::ExportSection(reader) => {
+                    for export in reader {
+                        let export = export.unwrap();
+                        exports.push((export.name, export.kind, export.index));
+                    }
+                }
+                Payload::CodeSectionEntry(body) => {
+                    let mut direct = Vec::new();
+                    for op in body.get_operators_reader().unwrap() {
+                        match op.unwrap() {
+                            Operator::Call { function_index } => direct.push(function_index),
+                            Operator::CallIndirect { .. } => panic!("no indirect call"),
+                            _ => {}
+                        }
+                    }
+                    calls.push(direct);
+                }
+                Payload::ImportSection(reader) => assert_eq!(reader.count(), 0, "no imports"),
+                Payload::TableSection(_) | Payload::ElementSection(_) => {
+                    panic!("no function table")
+                }
+                _ => {}
             }
-            Payload::ImportSection(reader) => assert_eq!(reader.count(), 0, "no imports"),
-            Payload::TableSection(_) | Payload::ElementSection(_) => panic!("no function table"),
-            _ => {}
         }
-    }
 
-    use ValType::{F64, I32};
-    let function_signatures: Vec<_> = functions
-        .iter()
-        .map(|index| signatures[usize::try_from(*index).unwrap()].clone())
-        .collect();
-    assert_eq!(
-        function_signatures,
-        [
-            (vec![F64], vec![I32]),                // 0: make
-            (vec![I32], vec![F64]),                // 1: inspect
-            (vec![], vec![F64]),                   // 2: main
-            (vec![I32], vec![I32]),                // 3: Alloc
-            (vec![I32], vec![I32]),                // 4: ValidateString
-            (vec![I32], vec![I32]),                // 5: ValidateArray
-            (vec![I32, F64], vec![I32]),           // 6: ArrayAddress
-            (vec![I32], vec![F64]),                // 7: ArrayLen
-            (vec![I32, I32], vec![I32]),           // 8: StringEqual
-            (vec![I32, I32], vec![I32]),           // 9: ArrayEqual
-            (vec![F64, F64], vec![F64]),           // 10: floating remainder
-            (vec![F64, F64, F64, I32], vec![I32]), // 11: Construct
-            (vec![I32], vec![I32]),                // 12: Validate
-            (vec![F64, I32], vec![I32]),           // 13: Contains
-        ]
-    );
-    assert_eq!(
-        calls,
-        [
-            vec![11],                     // make constructs the private range
-            vec![12, 3, 13, 6, 6, 10, 7], // inspect validates, allocates, tests, indexes, computes
-            vec![0, 1],                   // pipeline stages remain direct user calls
-            vec![],
-            vec![],
-            vec![],
-            vec![5],
-            vec![5], // array address and length validate arrays
-            vec![4, 4],
-            vec![5, 5], // equality validates both complete descriptors
-            vec![],     // floating remainder needs no helpers
-            vec![3],
-            vec![],
-            vec![12], // range construction allocates; membership validates
-        ]
-    );
-    assert_eq!(exports.len(), 3);
-    assert!(exports.contains(&("main", ExternalKind::Func, 2)));
-    assert!(exports.contains(&("memory", ExternalKind::Memory, 0)));
-    assert!(exports.contains(&("__alloc", ExternalKind::Func, 3)));
+        use ValType::{F64, I32};
+        let function_signatures: Vec<_> = functions
+            .iter()
+            .map(|index| signatures[usize::try_from(*index).unwrap()].clone())
+            .collect();
+        assert_eq!(
+            function_signatures,
+            [
+                (vec![F64], vec![I32]),                // 0: make
+                (vec![I32], vec![F64]),                // 1: inspect
+                (vec![], vec![F64]),                   // 2: main
+                (vec![I32], vec![I32]),                // 3: Alloc
+                (vec![I32], vec![I32]),                // 4: ValidateString
+                (vec![I32], vec![I32]),                // 5: ValidateArray
+                (vec![I32, F64], vec![I32]),           // 6: ArrayAddress
+                (vec![I32], vec![F64]),                // 7: ArrayLen
+                (vec![I32, I32], vec![I32]),           // 8: StringEqual
+                (vec![I32, I32], vec![I32]),           // 9: ArrayEqual
+                (vec![F64, F64], vec![F64]),           // 10: floating remainder
+                (vec![F64, F64, F64, I32], vec![I32]), // 11: Construct
+                (vec![I32], vec![I32]),                // 12: Validate
+                (vec![F64, I32], vec![I32]),           // 13: Contains
+            ]
+        );
+        assert_eq!(
+            calls,
+            [
+                vec![11],                     // make constructs the private range
+                vec![12, 3, 13, 6, 6, 10, 7], // inspect validates, allocates, tests, indexes, computes
+                vec![0, 1],                   // pipeline stages remain direct user calls
+                vec![],
+                vec![],
+                vec![],
+                vec![5],
+                vec![5], // array address and length validate arrays
+                vec![4, 4],
+                vec![5, 5], // equality validates both complete descriptors
+                vec![],     // floating remainder needs no helpers
+                vec![3],
+                vec![],
+                vec![12], // range construction allocates; membership validates
+            ]
+        );
+        assert_eq!(exports.len(), 3);
+        assert!(exports.contains(&("main", ExternalKind::Func, 2)));
+        assert!(exports.contains(&("memory", ExternalKind::Memory, 0)));
+        assert!(exports.contains(&("__alloc", ExternalKind::Func, 3)));
+    }
 }
 
 #[test]
 fn injection_precedes_written_arguments_and_defaults_with_direct_formal_order_call() {
-    let program = fixture();
-    let snapshot = program.clone();
-    let bytes = Compiler::new().compile(&program).unwrap();
-    Validator::new().validate_all(&bytes).unwrap();
-    let mut bodies = Vec::new();
-    for payload in Parser::new(0).parse_all(&bytes) {
-        match payload.unwrap() {
-            Payload::TableSection(_) | Payload::ElementSection(_) => panic!("no function table"),
-            Payload::CodeSectionEntry(body) => bodies.push(body),
-            _ => {}
+    for level in LEVELS {
+        let program = fixture();
+        let snapshot = program.clone();
+        let bytes = compiler_at(level).compile(&program).unwrap();
+        Validator::new().validate_all(&bytes).unwrap();
+        let mut bodies = Vec::new();
+        for payload in Parser::new(0).parse_all(&bytes) {
+            match payload.unwrap() {
+                Payload::TableSection(_) | Payload::ElementSection(_) => {
+                    panic!("no function table")
+                }
+                Payload::CodeSectionEntry(body) => bodies.push(body),
+                _ => {}
+            }
         }
-    }
-    let locals: Vec<_> = bodies[1]
-        .get_locals_reader()
-        .unwrap()
-        .into_iter()
-        .map(Result::unwrap)
-        .collect();
-    assert_eq!(locals, [(1, ValType::F64); 4]);
-    let ops: Vec<_> = bodies[1]
-        .get_operators_reader()
-        .unwrap()
-        .into_iter()
-        .map(Result::unwrap)
-        .collect();
-    assert!(matches!(ops.as_slice(), [
+        let locals: Vec<_> = bodies[1]
+            .get_locals_reader()
+            .unwrap()
+            .into_iter()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(locals, [(1, ValType::F64); 4]);
+        let ops: Vec<_> = bodies[1]
+            .get_operators_reader()
+            .unwrap()
+            .into_iter()
+            .map(Result::unwrap)
+            .collect();
+        if level == OptimizationLevel::None {
+            assert!(matches!(ops.as_slice(), [
         Operator::F64Const { value: input }, Operator::LocalSet { local_index: 0 },
         Operator::F64Const { value: c }, Operator::LocalSet { local_index: 1 },
         Operator::F64Const { value: b }, Operator::LocalSet { local_index: 2 },
@@ -692,15 +778,20 @@ fn injection_precedes_written_arguments_and_defaults_with_direct_formal_order_ca
         Operator::LocalGet { local_index: 1 }, Operator::LocalGet { local_index: 3 },
         Operator::Call { function_index: 0 }, Operator::Return, Operator::End,
     ] if input.bits() == 11f64.to_bits() && c.bits() == 33f64.to_bits() && b.bits() == 22f64.to_bits()));
-    assert_eq!(program, snapshot);
-    for level in [
-        OptimizationLevel::None,
-        OptimizationLevel::Basic,
-        OptimizationLevel::Standard,
-        OptimizationLevel::Aggressive,
-    ] {
-        let mut compiler = Compiler::new();
-        compiler.set_optimization_level(level);
+        } else {
+            assert!(matches!(ops.as_slice(), [
+        Operator::I32Const { value: input }, Operator::F64ConvertI32S, Operator::LocalSet { local_index: 0 },
+        Operator::I32Const { value: c }, Operator::F64ConvertI32S, Operator::LocalSet { local_index: 1 },
+        Operator::I32Const { value: b }, Operator::F64ConvertI32S, Operator::LocalSet { local_index: 2 },
+        Operator::LocalGet { local_index: 0 }, Operator::LocalGet { local_index: 2 },
+        Operator::F64Add, Operator::LocalSet { local_index: 3 },
+        Operator::LocalGet { local_index: 0 }, Operator::LocalGet { local_index: 2 },
+        Operator::LocalGet { local_index: 1 }, Operator::LocalGet { local_index: 3 },
+        Operator::Call { function_index: 0 }, Operator::Return, Operator::End,
+    ] if *input == 11 && *c == 33 && *b == 22));
+        }
+        assert_eq!(program, snapshot);
+        let compiler = compiler_at(level);
         assert_eq!(compiler.compile(&program).unwrap(), bytes);
     }
 }
@@ -755,35 +846,51 @@ fn duplicate_misplaced_and_wrongly_mapped_injections_are_rejected() {
 
 #[test]
 fn nested_injections_use_distinct_slots_and_only_direct_calls() {
-    let program = nested_fixture();
-    let bytes = Compiler::new().compile(&program).unwrap();
-    Validator::new().validate_all(&bytes).unwrap();
-    let mut bodies = Vec::new();
-    for payload in Parser::new(0).parse_all(&bytes) {
-        match payload.unwrap() {
-            Payload::TableSection(_) | Payload::ElementSection(_) => panic!("no function table"),
-            Payload::CodeSectionEntry(body) => bodies.push(body),
-            _ => {}
+    for level in LEVELS {
+        let program = nested_fixture();
+        let bytes = compiler_at(level).compile(&program).unwrap();
+        Validator::new().validate_all(&bytes).unwrap();
+        let mut bodies = Vec::new();
+        for payload in Parser::new(0).parse_all(&bytes) {
+            match payload.unwrap() {
+                Payload::TableSection(_) | Payload::ElementSection(_) => {
+                    panic!("no function table")
+                }
+                Payload::CodeSectionEntry(body) => bodies.push(body),
+                _ => {}
+            }
+        }
+        let mut sets = Vec::new();
+        let mut gets = Vec::new();
+        let mut calls = Vec::new();
+        let mut constants = Vec::new();
+        let mut integer_constants = Vec::new();
+        let mut conversions = 0;
+        for op in bodies[1].get_operators_reader().unwrap() {
+            match op.unwrap() {
+                Operator::LocalSet { local_index } => sets.push(local_index),
+                Operator::LocalGet { local_index } => gets.push(local_index),
+                Operator::Call { function_index } => calls.push(function_index),
+                Operator::CallIndirect { .. } => panic!("no indirect call"),
+                Operator::F64Const { value } => constants.push(f64::from_bits(value.bits())),
+                Operator::I32Const { value } => integer_constants.push(value),
+                Operator::F64ConvertI32S => conversions += 1,
+                _ => {}
+            }
+        }
+        assert_eq!(sets, [1, 2, 3, 4, 0, 5, 6, 7]);
+        assert_eq!(gets, [1, 3, 1, 3, 2, 4, 0, 6, 0, 6, 5, 7]);
+        assert_eq!(calls, [0, 0]);
+        if level == OptimizationLevel::None {
+            assert!(integer_constants.is_empty());
+            assert_eq!(conversions, 0);
+            assert_eq!(constants, [5.0, 7.0, 6.0, 33.0, 22.0]);
+        } else {
+            assert!(constants.is_empty());
+            assert_eq!(integer_constants, [5, 7, 6, 33, 22]);
+            assert_eq!(conversions, 5);
         }
     }
-    let mut sets = Vec::new();
-    let mut gets = Vec::new();
-    let mut calls = Vec::new();
-    let mut constants = Vec::new();
-    for op in bodies[1].get_operators_reader().unwrap() {
-        match op.unwrap() {
-            Operator::LocalSet { local_index } => sets.push(local_index),
-            Operator::LocalGet { local_index } => gets.push(local_index),
-            Operator::Call { function_index } => calls.push(function_index),
-            Operator::CallIndirect { .. } => panic!("no indirect call"),
-            Operator::F64Const { value } => constants.push(f64::from_bits(value.bits())),
-            _ => {}
-        }
-    }
-    assert_eq!(sets, [1, 2, 3, 4, 0, 5, 6, 7]);
-    assert_eq!(gets, [1, 3, 1, 3, 2, 4, 0, 6, 0, 6, 5, 7]);
-    assert_eq!(calls, [0, 0]);
-    assert_eq!(constants, [5.0, 7.0, 6.0, 33.0, 22.0]);
 }
 
 #[test]
@@ -846,57 +953,60 @@ fn nested_binding_ids_cannot_collide_or_escape_to_outer_arguments() {
 
 #[test]
 fn injections_accept_caller_locals_and_each_concrete_storage_type() {
-    for (ty, initializer, storage) in [
-        ("number", "11", ValType::F64),
-        ("bool", "true", ValType::I32),
-        ("string", "\"value\"", ValType::I32),
-        ("number[]", "[1, 2]", ValType::I32),
-        ("range", "1..3", ValType::I32),
-    ] {
-        let source = format!(
-            "fn target(a: {ty}, b: number = 1) -> {ty} {{ return a; }}
+    for level in LEVELS {
+        for (ty, initializer, storage) in [
+            ("number", "11", ValType::F64),
+            ("bool", "true", ValType::I32),
+            ("string", "\"value\"", ValType::I32),
+            ("number[]", "[1, 2]", ValType::I32),
+            ("range", "1..3", ValType::I32),
+        ] {
+            let source = format!(
+                "fn target(a: {ty}, b: number = 1) -> {ty} {{ return a; }}
              fn main() -> {ty} {{ let input = {initializer}; return target(input); }}"
-        );
-        let mut program = Compiler::new().analyze(&source).unwrap();
-        let TypedStatementKind::Return(Some(value)) = &mut program.functions[1].body[1].kind else {
-            panic!("return")
-        };
-        inject(value);
-        let mut compiler = Compiler::new();
-        compiler.set_exports(ExportOptions::None);
-        let bytes = compiler.compile(&program).unwrap();
-        Validator::new().validate_all(&bytes).unwrap();
-        let body = Parser::new(0)
-            .parse_all(&bytes)
-            .filter_map(|payload| match payload.unwrap() {
-                Payload::CodeSectionEntry(body) => Some(body),
-                Payload::TableSection(_) | Payload::ElementSection(_) => {
-                    panic!("no function table")
+            );
+            let mut program = compiler_at(level).analyze(&source).unwrap();
+            let TypedStatementKind::Return(Some(value)) = &mut program.functions[1].body[1].kind
+            else {
+                panic!("return")
+            };
+            inject(value);
+            let mut compiler = compiler_at(level);
+            compiler.set_exports(ExportOptions::None);
+            let bytes = compiler.compile(&program).unwrap();
+            Validator::new().validate_all(&bytes).unwrap();
+            let body = Parser::new(0)
+                .parse_all(&bytes)
+                .filter_map(|payload| match payload.unwrap() {
+                    Payload::CodeSectionEntry(body) => Some(body),
+                    Payload::TableSection(_) | Payload::ElementSection(_) => {
+                        panic!("no function table")
+                    }
+                    _ => None,
+                })
+                .nth(1)
+                .unwrap();
+            let locals: Vec<_> = body
+                .get_locals_reader()
+                .unwrap()
+                .into_iter()
+                .map(Result::unwrap)
+                .collect();
+            assert_eq!(
+                &locals[..3],
+                [(1, storage), (1, storage), (1, ValType::F64)],
+                "{ty}"
+            );
+            let mut calls = Vec::new();
+            for op in body.get_operators_reader().unwrap() {
+                match op.unwrap() {
+                    Operator::Call { function_index } => calls.push(function_index),
+                    Operator::CallIndirect { .. } => panic!("no indirect call"),
+                    _ => {}
                 }
-                _ => None,
-            })
-            .nth(1)
-            .unwrap();
-        let locals: Vec<_> = body
-            .get_locals_reader()
-            .unwrap()
-            .into_iter()
-            .map(Result::unwrap)
-            .collect();
-        assert_eq!(
-            &locals[..3],
-            [(1, storage), (1, storage), (1, ValType::F64)],
-            "{ty}"
-        );
-        let mut calls = Vec::new();
-        for op in body.get_operators_reader().unwrap() {
-            match op.unwrap() {
-                Operator::Call { function_index } => calls.push(function_index),
-                Operator::CallIndirect { .. } => panic!("no indirect call"),
-                _ => {}
             }
+            assert_eq!(calls.last(), Some(&0), "{ty}");
         }
-        assert_eq!(calls.last(), Some(&0), "{ty}");
     }
 }
 
@@ -974,44 +1084,48 @@ fn never_injection_preserves_signature_result_and_checks_unreachable_children() 
 
 #[test]
 fn final_void_source_emits_once_only_locals_and_a_direct_call_without_drop() {
-    let source = "fn sink(a: number, b: number = a + 1, c: number = b + 2) -> void {}
+    for level in LEVELS {
+        let source = "fn sink(a: number, b: number = a + 1, c: number = b + 2) -> void {}
         fn main() -> void { ((11 |> sink(c: 33))); }";
-    let mut expected = Compiler::new()
-        .analyze(
-            "fn sink(a: number, b: number = a + 1, c: number = b + 2) -> void {}
+        let mut expected = compiler_at(level)
+            .analyze(
+                "fn sink(a: number, b: number = a + 1, c: number = b + 2) -> void {}
          fn main() -> void { sink(11, c: 33); }",
-        )
-        .unwrap();
-    let TypedStatementKind::Expression(value) = &mut expected.functions[1].body[0].kind else {
-        panic!("expression")
-    };
-    inject(value);
-    let bytes = Compiler::new().compile(&expected).unwrap();
-    Validator::new().validate_all(&bytes).unwrap();
-    let body = Parser::new(0)
-        .parse_all(&bytes)
-        .filter_map(|payload| match payload.unwrap() {
-            Payload::CodeSectionEntry(body) => Some(body),
-            Payload::TableSection(_) | Payload::ElementSection(_) => panic!("no function table"),
-            _ => None,
-        })
-        .nth(1)
-        .unwrap();
-    let locals: Vec<_> = body
-        .get_locals_reader()
-        .unwrap()
-        .into_iter()
-        .map(Result::unwrap)
-        .collect();
-    assert_eq!(locals, [(1, ValType::F64); 3]);
-    let ops: Vec<_> = body
-        .get_operators_reader()
-        .unwrap()
-        .into_iter()
-        .map(Result::unwrap)
-        .collect();
-    assert!(
-        matches!(ops.as_slice(), [
+            )
+            .unwrap();
+        let TypedStatementKind::Expression(value) = &mut expected.functions[1].body[0].kind else {
+            panic!("expression")
+        };
+        inject(value);
+        let bytes = compiler_at(level).compile(&expected).unwrap();
+        Validator::new().validate_all(&bytes).unwrap();
+        let body = Parser::new(0)
+            .parse_all(&bytes)
+            .filter_map(|payload| match payload.unwrap() {
+                Payload::CodeSectionEntry(body) => Some(body),
+                Payload::TableSection(_) | Payload::ElementSection(_) => {
+                    panic!("no function table")
+                }
+                _ => None,
+            })
+            .nth(1)
+            .unwrap();
+        let locals: Vec<_> = body
+            .get_locals_reader()
+            .unwrap()
+            .into_iter()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(locals, [(1, ValType::F64); 3]);
+        let ops: Vec<_> = body
+            .get_operators_reader()
+            .unwrap()
+            .into_iter()
+            .map(Result::unwrap)
+            .collect();
+        if level == OptimizationLevel::None {
+            assert!(
+                matches!(ops.as_slice(), [
         Operator::F64Const { value: input }, Operator::LocalSet { local_index: 0 },
         Operator::F64Const { value: written }, Operator::LocalSet { local_index: 1 },
         Operator::LocalGet { local_index: 0 }, Operator::F64Const { value: increment },
@@ -1020,16 +1134,23 @@ fn final_void_source_emits_once_only_locals_and_a_direct_call_without_drop() {
         Operator::LocalGet { local_index: 1 }, Operator::Call { function_index: 0 }, Operator::End,
     ] if input.bits() == 11f64.to_bits() && written.bits() == 33f64.to_bits()
         && increment.bits() == 1f64.to_bits()),
-        "{ops:?}"
-    );
-    for level in [
-        OptimizationLevel::None,
-        OptimizationLevel::Basic,
-        OptimizationLevel::Standard,
-        OptimizationLevel::Aggressive,
-    ] {
-        let mut compiler = Compiler::new();
-        compiler.set_optimization_level(level);
+                "{ops:?}"
+            );
+        } else {
+            assert!(
+                matches!(ops.as_slice(), [
+        Operator::I32Const { value: input }, Operator::F64ConvertI32S, Operator::LocalSet { local_index: 0 },
+        Operator::I32Const { value: written }, Operator::F64ConvertI32S, Operator::LocalSet { local_index: 1 },
+        Operator::LocalGet { local_index: 0 }, Operator::I32Const { value: increment }, Operator::F64ConvertI32S,
+        Operator::F64Add, Operator::LocalSet { local_index: 2 },
+        Operator::LocalGet { local_index: 0 }, Operator::LocalGet { local_index: 2 },
+        Operator::LocalGet { local_index: 1 }, Operator::Call { function_index: 0 }, Operator::End,
+    ] if *input == 11 && *written == 33
+        && *increment == 1),
+                "{ops:?}"
+            );
+        }
+        let compiler = compiler_at(level);
         assert_eq!(compiler.compile(&expected).unwrap(), bytes);
         let program = compiler.analyze(source).unwrap();
         assert_eq!(compiler.compile(&program).unwrap(), bytes);
@@ -1039,70 +1160,64 @@ fn final_void_source_emits_once_only_locals_and_a_direct_call_without_drop() {
 
 #[test]
 fn final_void_discard_regions_are_empty_and_keep_direct_calls() {
-    let declarations = "fn sink(x: number, y: number = x + 1) -> void {}";
-    for expression in [
-        "{ ((1 |> sink)) }",
-        "(if true { 1 |> sink } else { 2 |> sink() })",
-        "{ if true { { 1 |> sink } } else { 2 |> sink } }",
-        "{ match true { true => { 1 |> sink }, false => { if true { 2 |> sink } else { 3 |> sink } }, } }",
-        "{ match true { true => (1 |> sink), false => 9, }; }",
-    ] {
-        let source = format!("{declarations} fn main() -> void {{ {expression}; }}");
-        let program = Compiler::new()
-            .analyze(&source)
-            .unwrap_or_else(|error| panic!("{expression}: {error}"));
-        let bytes = Compiler::new().compile(&program).unwrap();
-        Validator::new().validate_all(&bytes).unwrap();
-        let body = Parser::new(0)
-            .parse_all(&bytes)
-            .filter_map(|payload| match payload.unwrap() {
-                Payload::CodeSectionEntry(body) => Some(body),
-                _ => None,
-            })
-            .nth(1)
-            .unwrap();
-        let ops: Vec<_> = body
-            .get_operators_reader()
-            .unwrap()
-            .into_iter()
-            .map(Result::unwrap)
-            .collect();
-        let expected_calls = expression.matches("|>").count();
-        assert_eq!(
-            ops.iter()
-                .filter(|op| matches!(op, Operator::Call { function_index: 0 }))
-                .count(),
-            expected_calls,
-            "{expression}"
-        );
-        assert!(
-            !ops.iter()
-                .any(|op| matches!(op, Operator::CallIndirect { .. })),
-            "{expression}"
-        );
-        for op in &ops {
-            if let Operator::Block { blockty } | Operator::If { blockty } = op {
-                assert_eq!(
-                    *blockty,
-                    wasmparser::BlockType::Empty,
-                    "{expression}: {ops:?}"
-                );
-            }
-        }
-        let drops = ops.iter().filter(|op| matches!(op, Operator::Drop)).count();
-        assert_eq!(
-            drops,
-            usize::from(expression.contains("false => 9")),
-            "{expression}: {ops:?}"
-        );
-        for level in [
-            OptimizationLevel::None,
-            OptimizationLevel::Basic,
-            OptimizationLevel::Standard,
-            OptimizationLevel::Aggressive,
+    for level in LEVELS {
+        let declarations = "fn sink(x: number, y: number = x + 1) -> void {}";
+        for expression in [
+            "{ ((1 |> sink)) }",
+            "(if true { 1 |> sink } else { 2 |> sink() })",
+            "{ if true { { 1 |> sink } } else { 2 |> sink } }",
+            "{ match true { true => { 1 |> sink }, false => { if true { 2 |> sink } else { 3 |> sink } }, } }",
+            "{ match true { true => (1 |> sink), false => 9, }; }",
         ] {
-            let mut compiler = Compiler::new();
-            compiler.set_optimization_level(level);
+            let source = format!("{declarations} fn main() -> void {{ {expression}; }}");
+            let program = compiler_at(level)
+                .analyze(&source)
+                .unwrap_or_else(|error| panic!("{expression}: {error}"));
+            let bytes = compiler_at(level).compile(&program).unwrap();
+            Validator::new().validate_all(&bytes).unwrap();
+            let body = Parser::new(0)
+                .parse_all(&bytes)
+                .filter_map(|payload| match payload.unwrap() {
+                    Payload::CodeSectionEntry(body) => Some(body),
+                    _ => None,
+                })
+                .nth(1)
+                .unwrap();
+            let ops: Vec<_> = body
+                .get_operators_reader()
+                .unwrap()
+                .into_iter()
+                .map(Result::unwrap)
+                .collect();
+            let expected_calls = expression.matches("|>").count();
+            assert_eq!(
+                ops.iter()
+                    .filter(|op| matches!(op, Operator::Call { function_index: 0 }))
+                    .count(),
+                expected_calls,
+                "{expression}"
+            );
+            assert!(
+                !ops.iter()
+                    .any(|op| matches!(op, Operator::CallIndirect { .. })),
+                "{expression}"
+            );
+            for op in &ops {
+                if let Operator::Block { blockty } | Operator::If { blockty } = op {
+                    assert_eq!(
+                        *blockty,
+                        wasmparser::BlockType::Empty,
+                        "{expression}: {ops:?}"
+                    );
+                }
+            }
+            let drops = ops.iter().filter(|op| matches!(op, Operator::Drop)).count();
+            assert_eq!(
+                drops,
+                usize::from(expression.contains("false => 9")),
+                "{expression}: {ops:?}"
+            );
+            let compiler = compiler_at(level);
             assert_eq!(compiler.compile_source(&source).unwrap(), bytes);
         }
     }
@@ -1150,53 +1265,47 @@ fn outer_discard_does_not_authorize_void_pipeline_values_or_nonfinal_stages() {
 
 #[test]
 fn forged_final_void_reconstructs_never_flow_and_checks_later_bindings() {
-    use was_compiler::typed_ast::{ExprResult, TypedStatement, TypedValueBlock};
+    for level in LEVELS {
+        use was_compiler::typed_ast::{ExprResult, TypedStatement, TypedValueBlock};
 
-    let mut program = Compiler::new()
-        .analyze(
-            "fn sink(a: number, b: number, c: number = a + b) -> void {}
+        let mut program = compiler_at(level)
+            .analyze(
+                "fn sink(a: number, b: number, c: number = a + b) -> void {}
          fn main() -> void { sink({ return; 1 }, 2); }",
-        )
-        .unwrap();
-    let TypedStatementKind::Expression(value) = &mut program.functions[1].body[0].kind else {
-        panic!("expression")
-    };
-    inject(value);
-    assert_eq!(value.ty, ExprResult::Never);
-    assert_eq!(normalized(value).call.ty, ExprResult::Void);
-    let bytes = Compiler::new().compile(&program).unwrap();
-    Validator::new().validate_all(&bytes).unwrap();
-    let body = Parser::new(0)
-        .parse_all(&bytes)
-        .filter_map(|payload| match payload.unwrap() {
-            Payload::CodeSectionEntry(body) => Some(body),
-            _ => None,
-        })
-        .nth(1)
-        .unwrap();
-    let ops: Vec<_> = body
-        .get_operators_reader()
-        .unwrap()
-        .into_iter()
-        .map(Result::unwrap)
-        .collect();
-    assert!(ops.iter().any(|op| matches!(op, Operator::Return)));
-    assert!(
-        ops.iter()
-            .any(|op| matches!(op, Operator::Call { function_index: 0 }))
-    );
-    assert!(
-        !ops.iter()
-            .any(|op| matches!(op, Operator::LocalSet { local_index: 0 } | Operator::Drop))
-    );
-    for level in [
-        OptimizationLevel::None,
-        OptimizationLevel::Basic,
-        OptimizationLevel::Standard,
-        OptimizationLevel::Aggressive,
-    ] {
-        let mut compiler = Compiler::new();
-        compiler.set_optimization_level(level);
+            )
+            .unwrap();
+        let TypedStatementKind::Expression(value) = &mut program.functions[1].body[0].kind else {
+            panic!("expression")
+        };
+        inject(value);
+        assert_eq!(value.ty, ExprResult::Never);
+        assert_eq!(normalized(value).call.ty, ExprResult::Void);
+        let bytes = compiler_at(level).compile(&program).unwrap();
+        Validator::new().validate_all(&bytes).unwrap();
+        let body = Parser::new(0)
+            .parse_all(&bytes)
+            .filter_map(|payload| match payload.unwrap() {
+                Payload::CodeSectionEntry(body) => Some(body),
+                _ => None,
+            })
+            .nth(1)
+            .unwrap();
+        let ops: Vec<_> = body
+            .get_operators_reader()
+            .unwrap()
+            .into_iter()
+            .map(Result::unwrap)
+            .collect();
+        assert!(ops.iter().any(|op| matches!(op, Operator::Return)));
+        assert!(
+            ops.iter()
+                .any(|op| matches!(op, Operator::Call { function_index: 0 }))
+        );
+        assert!(
+            !ops.iter()
+                .any(|op| matches!(op, Operator::LocalSet { local_index: 0 } | Operator::Drop))
+        );
+        let compiler = compiler_at(level);
         assert_eq!(compiler.compile(&program).unwrap(), bytes);
         let mut forged = program.clone();
         let TypedStatementKind::Expression(value) = &mut forged.functions[1].body[0].kind else {
@@ -1217,44 +1326,44 @@ fn forged_final_void_reconstructs_never_flow_and_checks_later_bindings() {
         assert!(
             matches!(compiler.compile(&forged), Err(CodegenError::InvalidNumberLiteral { span: actual, .. }) if actual == span)
         );
-    }
-    let TypedStatementKind::Expression(value) = &mut program.functions[1].body[0].kind else {
-        panic!("expression")
-    };
-    let sequence = normalized(value);
-    let span = sequence.bindings[1].span;
-    sequence.bindings[1].origin = CallBindingOrigin::PipelineInput;
-    assert_invalid(
-        &program,
-        "pipeline input must be the first and only injected binding",
-        span,
-    );
-
-    // A typed Void tail needs no source-discard marker, but its category is checked.
-    let mut program = Compiler::new()
-        .analyze("fn sink(a: number, b: number = a) -> void {} fn main() -> void { sink(5); }")
-        .unwrap();
-    let TypedStatementKind::Expression(value) = &mut program.functions[1].body[0].kind else {
-        panic!("expression")
-    };
-    inject(value);
-    let span = program.functions[1].body[0].span;
-    let TypedStatementKind::Expression(value) = &mut program.functions[1].body[0].kind else {
-        panic!("expression")
-    };
-    let tail = value.clone();
-    *value = TypedExpr {
-        kind: TypedExprKind::Block(TypedValueBlock {
-            statements: Vec::<TypedStatement>::new(),
-            tail: Some(Box::new(tail)),
+        let TypedStatementKind::Expression(value) = &mut program.functions[1].body[0].kind else {
+            panic!("expression")
+        };
+        let sequence = normalized(value);
+        let span = sequence.bindings[1].span;
+        sequence.bindings[1].origin = CallBindingOrigin::PipelineInput;
+        assert_invalid(
+            &program,
+            "pipeline input must be the first and only injected binding",
             span,
-        }),
-        ty: ExprResult::Void,
-    };
-    Validator::new()
-        .validate_all(&Compiler::new().compile(&program).unwrap())
-        .unwrap();
-    value_category_forgery_is_rejected(&program);
+        );
+
+        // A typed Void tail needs no source-discard marker, but its category is checked.
+        let mut program = compiler_at(level)
+            .analyze("fn sink(a: number, b: number = a) -> void {} fn main() -> void { sink(5); }")
+            .unwrap();
+        let TypedStatementKind::Expression(value) = &mut program.functions[1].body[0].kind else {
+            panic!("expression")
+        };
+        inject(value);
+        let span = program.functions[1].body[0].span;
+        let TypedStatementKind::Expression(value) = &mut program.functions[1].body[0].kind else {
+            panic!("expression")
+        };
+        let tail = value.clone();
+        *value = TypedExpr {
+            kind: TypedExprKind::Block(TypedValueBlock {
+                statements: Vec::<TypedStatement>::new(),
+                tail: Some(Box::new(tail)),
+                span,
+            }),
+            ty: ExprResult::Void,
+        };
+        Validator::new()
+            .validate_all(&compiler_at(level).compile(&program).unwrap())
+            .unwrap();
+        value_category_forgery_is_rejected(&program);
+    }
 }
 
 fn value_category_forgery_is_rejected(program: &TypedProgram) {

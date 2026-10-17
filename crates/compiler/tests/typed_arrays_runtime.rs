@@ -22,7 +22,12 @@ fn run_with_compiler(mut compiler: Compiler, source: &str, script: &str) {
     ] {
         compiler.set_optimization_level(level);
         let bytes = compiler.compile_source(source).unwrap();
-        assert_eq!(bytes, baseline);
+        if level == OptimizationLevel::None {
+            assert_eq!(bytes, baseline);
+        }
+        assert_eq!(compiler.compile_source(source).unwrap(), bytes);
+        let program = compiler.analyze(source).unwrap();
+        assert_eq!(compiler.compile(&program).unwrap(), bytes);
         wasmparser::Validator::new().validate_all(&bytes).unwrap();
         let output = test_process::output(
             Command::new("node").arg("-e").arg(script),

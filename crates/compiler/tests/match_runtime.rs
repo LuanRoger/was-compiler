@@ -31,16 +31,14 @@ fn run(source: &str, selected: &[&str], assertions: &str) {
     compiler.set_exports(ExportOptions::Only(
         selected.iter().map(|name| (*name).into()).collect(),
     ));
-    let mut baseline = None;
+    let program = compiler.analyze(source).unwrap();
     for level in LEVELS {
         compiler.set_optimization_level(level);
         let bytes = compiler.compile_source(source).unwrap();
         Validator::new().validate_all(&bytes).unwrap();
-        if let Some(expected) = &baseline {
-            assert_eq!(&bytes, expected, "{level:?}");
-        } else {
-            baseline = Some(bytes.clone());
-        }
+        assert_eq!(compiler.compile_source(source).unwrap(), bytes);
+        assert_eq!(compiler.compile(&program).unwrap(), bytes);
+        assert_eq!(compiler.analyze(source).unwrap(), program);
         let script = format!(
             r#"
             const assert = require('node:assert/strict');
@@ -99,16 +97,14 @@ fn run(source: &str, selected: &[&str], assertions: &str) {
 fn scalar_match_caches_scrutinee_and_uses_ordered_typed_regions_not_a_jump_table() {
     let source = "fn choose(x: number) -> number { return 10 + (match mark(x) { 1 => 11, 1 => 22, 0.5..=2.5 => 33, _ => 44 }); }";
     let mut compiler = compiler();
-    let mut baseline = None;
+    let program = compiler.analyze(source).unwrap();
     for level in LEVELS {
         compiler.set_optimization_level(level);
         let bytes = compiler.compile_source(source).unwrap();
         Validator::new().validate_all(&bytes).unwrap();
-        if let Some(expected) = &baseline {
-            assert_eq!(&bytes, expected);
-        } else {
-            baseline = Some(bytes.clone());
-        }
+        assert_eq!(compiler.compile_source(source).unwrap(), bytes);
+        assert_eq!(compiler.compile(&program).unwrap(), bytes);
+        assert_eq!(compiler.analyze(source).unwrap(), program);
         let mut calls = Vec::new();
         let mut sets = 0;
         let mut typed_ifs = 0;

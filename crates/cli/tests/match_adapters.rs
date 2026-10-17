@@ -107,11 +107,12 @@ fn cli_match_wasm_and_wat_equal_library_at_all_levels() {
     let scratch = Scratch::new();
     fs::write(scratch.0.join("program.was"), SOURCE).unwrap();
     let mut native = compiler();
-    let baseline = native.compile_source(SOURCE).unwrap();
+
     for (flag, level) in LEVELS {
         native.set_optimization_level(level);
         let bytes = native.compile_source(SOURCE).unwrap();
-        assert_eq!(bytes, baseline);
+        let program = native.analyze(SOURCE).unwrap();
+        assert_eq!(bytes, native.compile(&program).unwrap());
         Validator::new().validate_all(&bytes).unwrap();
         for (emit, destination) in [("wasm", "program.wasm"), ("wat", "program.wat")] {
             let output = scratch.cli(&[

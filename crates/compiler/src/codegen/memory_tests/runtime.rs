@@ -54,13 +54,27 @@ fn run_node(bytes: &[u8], script: &str) {
 }
 
 fn run_at_all_levels(source: &str, hosts: &[HostFunction], script: &str) {
+    run_checked_at_all_levels(source, hosts, script, |_, _| {});
+}
+
+fn run_checked_at_all_levels(
+    source: &str,
+    hosts: &[HostFunction],
+    script: &str,
+    check: impl Fn(&MemoryModule, OptimizationLevel),
+) {
     let mut snapshot = None;
     for level in LEVELS {
-        let bytes = compiler(level, hosts)
+        let compiler = compiler(level, hosts);
+        let bytes = compiler
             .compile_source(source)
             .expect("compile memory runtime");
-        decode(&bytes);
-        if let Some(expected) = &snapshot {
+        let module = decode(&bytes);
+        check(&module, level);
+        assert_eq!(compiler.compile_source(source).unwrap(), bytes);
+        if level == OptimizationLevel::None {
+            assert_eq!(compile(&compiler.analyze(source).unwrap()).unwrap(), bytes);
+        } else if let Some(expected) = &snapshot {
             assert_eq!(&bytes, expected, "level {level:?}");
         } else {
             snapshot = Some(bytes.clone());
@@ -101,7 +115,7 @@ fn node_arrays_sum_len_mutation_alias_reassignment_and_fresh_literals() {
         }
         fn nested() -> number { return sum(recurse(3)); }
     "#;
-    run_at_all_levels(
+    run_checked_at_all_levels(
         source,
         &[host(
             0,
@@ -134,6 +148,31 @@ fn node_arrays_sum_len_mutation_alias_reassignment_and_fresh_literals() {
         assert.deepEqual(readArray(e.recurse(4)), [5]);
         assert.equal(e.nested(), 4);
     "#,
+        |module, level| {
+            let mut expected = vec![
+                "LocalGet { local_index: 0 }",
+                "Call { function_index: 12 }",
+                "Drop",
+            ];
+            if level == OptimizationLevel::None {
+                expected.extend([
+                    "F64Const { value: Ieee64(0) }",
+                    "LocalSet { local_index: 1 }",
+                    "F64Const { value: Ieee64(0) }",
+                    "LocalSet { local_index: 2 }",
+                ]);
+            } else {
+                expected.extend([
+                    "I32Const { value: 0 }",
+                    "F64ConvertI32S",
+                    "LocalSet { local_index: 1 }",
+                    "I32Const { value: 0 }",
+                    "F64ConvertI32S",
+                    "LocalSet { local_index: 2 }",
+                ]);
+            }
+            assert_eq!(&module.bodies[0][..expected.len()], expected);
+        },
     );
 }
 
@@ -294,7 +333,7 @@ fn node_guest_large_array_growth_and_bounded_allocator_exhaustion() {
         .collect::<Vec<_>>()
         .join(",");
     let source = format!("fn large() -> number[] {{ return [{elements}]; }}");
-    run_at_all_levels(
+    run_checked_at_all_levels(
         &source,
         &[],
         r#"
@@ -306,6 +345,39 @@ fn node_guest_large_array_growth_and_bounded_allocator_exhaustion() {
         assert.equal(values.length, 9000);
         assert.equal(values[0], 0); assert.equal(values[8999], 8999);
     "#,
+        |module, level| {
+            let mut expected: Vec<String> = [
+                "I32Const { value: 72008 }",
+                "Call { function_index: 1 }",
+                "LocalSet { local_index: 0 }",
+                "LocalGet { local_index: 0 }",
+                "LocalGet { local_index: 0 }",
+                "I32Const { value: 8 }",
+                "I32Add",
+                "I32Store { memarg: MemArg { align: 2, max_align: 2, offset: 0, memory: 0 } }",
+                "LocalGet { local_index: 0 }",
+                "I32Const { value: 9000 }",
+                "I32Store { memarg: MemArg { align: 2, max_align: 2, offset: 4, memory: 0 } }",
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+            for value in 0..9000 {
+                expected.push("LocalGet { local_index: 0 }".into());
+                if level == OptimizationLevel::None {
+                    expected.push(format!(
+                        "F64Const {{ value: Ieee64({}) }}",
+                        f64::from(value).to_bits()
+                    ));
+                } else {
+                    expected.push(format!("I32Const {{ value: {value} }}"));
+                    expected.push("F64ConvertI32S".into());
+                }
+                expected.push(format!("F64Store {{ memarg: MemArg {{ align: 3, max_align: 3, offset: {}, memory: 0 }} }}", 8 + value * 8));
+            }
+            expected.extend(["LocalGet { local_index: 0 }", "Return", "End"].map(str::to_owned));
+            assert_eq!(module.bodies[0], expected);
+        },
     );
     let bytes = compile_source("fn empty() -> number[] { return []; }");
     let initial = decode(&bytes).memories[0].0;
@@ -439,7 +511,7 @@ fn node_memory_expression_order_live_prefixes_and_assignment_bounds_before_rhs()
         host(2, "position", &[], Type::Number),
         host(3, "rhs", &[], Type::Number),
     ];
-    run_at_all_levels(
+    run_checked_at_all_levels(
         r#"
         fn identity(a: number[]) -> number[] { return a; }
         fn combine(n: number, a: number[], s: string, b: bool) -> number {
@@ -489,5 +561,48 @@ fn node_memory_expression_order_live_prefixes_and_assignment_bounds_before_rhs()
         assert.equal(e.live(array([9, 8, 7])), 32);
         assert.deepEqual(events.splice(0), [10, 20, 1]);
     "#,
+        |module, level| {
+            let expected = if level == OptimizationLevel::None {
+                vec![
+                    "LocalGet { local_index: 0 }",
+                    "F64Const { value: Ieee64(4607182418800017408) }",
+                    "Call { function_index: 0 }",
+                    "F64Store { memarg: MemArg { align: 3, max_align: 3, offset: 8, memory: 0 } }",
+                    "LocalGet { local_index: 0 }",
+                    "F64Const { value: Ieee64(4611686018427387904) }",
+                    "Call { function_index: 0 }",
+                    "F64Store { memarg: MemArg { align: 3, max_align: 3, offset: 16, memory: 0 } }",
+                    "LocalGet { local_index: 0 }",
+                    "F64Const { value: Ieee64(4613937818241073152) }",
+                    "Call { function_index: 0 }",
+                    "F64Store { memarg: MemArg { align: 3, max_align: 3, offset: 24, memory: 0 } }",
+                    "LocalGet { local_index: 0 }",
+                    "Return",
+                    "End",
+                ]
+            } else {
+                vec![
+                    "LocalGet { local_index: 0 }",
+                    "I32Const { value: 1 }",
+                    "F64ConvertI32S",
+                    "Call { function_index: 0 }",
+                    "F64Store { memarg: MemArg { align: 3, max_align: 3, offset: 8, memory: 0 } }",
+                    "LocalGet { local_index: 0 }",
+                    "I32Const { value: 2 }",
+                    "F64ConvertI32S",
+                    "Call { function_index: 0 }",
+                    "F64Store { memarg: MemArg { align: 3, max_align: 3, offset: 16, memory: 0 } }",
+                    "LocalGet { local_index: 0 }",
+                    "I32Const { value: 3 }",
+                    "F64ConvertI32S",
+                    "Call { function_index: 0 }",
+                    "F64Store { memarg: MemArg { align: 3, max_align: 3, offset: 24, memory: 0 } }",
+                    "LocalGet { local_index: 0 }",
+                    "Return",
+                    "End",
+                ]
+            };
+            assert_eq!(&module.bodies[2][11..], expected);
+        },
     );
 }

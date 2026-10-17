@@ -25,16 +25,14 @@ fn compiler() -> Compiler {
 
 fn run(source: &str, assertions: &str) {
     let mut compiler = compiler();
-    let mut baseline = None;
+    let program = compiler.analyze(source).unwrap();
     for level in LEVELS {
         compiler.set_optimization_level(level);
         let bytes = compiler.compile_source(source).unwrap();
         Validator::new().validate_all(&bytes).unwrap();
-        if let Some(expected) = &baseline {
-            assert_eq!(&bytes, expected, "{level:?}");
-        } else {
-            baseline = Some(bytes.clone());
-        }
+        assert_eq!(compiler.compile_source(source).unwrap(), bytes);
+        assert_eq!(compiler.compile(&program).unwrap(), bytes);
+        assert_eq!(compiler.analyze(source).unwrap(), program);
         let indices = Parser::new(0)
             .parse_all(&bytes)
             .filter_map(|payload| match payload.unwrap() {
@@ -397,16 +395,11 @@ fn selected_export_calls_private_contracts_using_the_analyzed_import_snapshot() 
     compiler
         .register_host_function("later", "later", "later", vec![], Type::Void)
         .unwrap();
-    let mut baseline = None;
     for level in LEVELS {
         compiler.set_optimization_level(level);
         let bytes = compiler.compile(&program).unwrap();
         Validator::new().validate_all(&bytes).unwrap();
-        if let Some(expected) = &baseline {
-            assert_eq!(&bytes, expected);
-        } else {
-            baseline = Some(bytes.clone());
-        }
+        assert_eq!(compiler.compile(&program).unwrap(), bytes);
         let script = r#"
             const assert = require('node:assert/strict');
             const module = new WebAssembly.Module(require('node:fs').readFileSync(0));
@@ -450,7 +443,10 @@ fn selected_exports_and_analyzed_host_snapshot_preserve_contracts_at_all_levels(
     for level in LEVELS {
         compiler.set_optimization_level(level);
         let bytes = compiler.compile(&program).unwrap();
-        assert_eq!(bytes, baseline);
+        if level == OptimizationLevel::None {
+            assert_eq!(bytes, baseline);
+        }
+        assert_eq!(compiler.compile(&program).unwrap(), bytes);
         Validator::new().validate_all(&bytes).unwrap();
         let mut exports = Vec::new();
         let mut imports = Vec::new();

@@ -68,7 +68,7 @@ fn non_export_sections(bytes: &[u8]) -> Vec<(u8, Vec<u8>)> {
 }
 
 #[test]
-fn public_pipeline_is_owned_deterministic_and_independent_of_optimization() {
+fn public_pipeline_is_owned_and_deterministic_at_each_optimization_level() {
     let mut compiler = compiler();
     let program = compiler.analyze(SOURCE).unwrap();
     let original = program.clone();
@@ -77,6 +77,8 @@ fn public_pipeline_is_owned_deterministic_and_independent_of_optimization() {
 
     for level in LEVELS {
         compiler.set_optimization_level(level);
+        let expected = compiler.compile(&program).unwrap();
+        validate(&expected);
         for _ in 0..2 {
             assert_eq!(compiler.compile(&program).unwrap(), expected, "{level:?}");
             assert_eq!(compiler.compile_source(SOURCE).unwrap(), expected);
@@ -85,6 +87,7 @@ fn public_pipeline_is_owned_deterministic_and_independent_of_optimization() {
         }
     }
 
+    compiler.set_optimization_level(OptimizationLevel::None);
     compiler
         .register_host_function("later", "later", "added", vec![], Type::Void)
         .unwrap();
@@ -102,9 +105,11 @@ fn public_pipeline_is_owned_deterministic_and_independent_of_optimization() {
             vec!["main", "items"],
         ),
     ] {
-        compiler.set_exports(selection);
         for level in LEVELS {
             compiler.set_optimization_level(level);
+            compiler.set_exports(ExportOptions::All);
+            let expected = compiler.compile(&program).unwrap();
+            compiler.set_exports(selection.clone());
             let bytes = compiler.compile(&program).unwrap();
             validate(&bytes);
             assert_eq!(non_export_sections(&bytes), non_export_sections(&expected));
@@ -215,7 +220,14 @@ fn analyzed_value_and_never_joins_keep_concrete_storage_and_region_spans() {
             validate(&baseline);
             for level in LEVELS {
                 compiler.set_optimization_level(level);
-                assert_eq!(compiler.compile_source(&source).unwrap(), baseline);
+                let bytes = compiler.compile_source(&source).unwrap();
+                validate(&bytes);
+                if level == OptimizationLevel::None {
+                    assert_eq!(bytes, baseline);
+                }
+                assert_eq!(compiler.compile(&program).unwrap(), bytes);
+                assert_eq!(compiler.compile_source(&source).unwrap(), bytes);
+                assert_eq!(compiler.analyze(&source).unwrap(), program);
             }
         }
 
@@ -627,20 +639,35 @@ fn legacy_statement_if_followed_by_unary_minus_keeps_independent_mvp_bytes() {
         97, 105, 110, 0, 0, 10, 30, 1, 28, 0, 65, 1, 4, 64, 11, 68, 0, 0, 0, 0, 0, 0, 240, 63, 154,
         26, 68, 0, 0, 0, 0, 0, 0, 0, 64, 15, 11,
     ];
+    // Enabled presets retain f64 negation, converting each exact i32 literal first.
+    const ENABLED: &[u8] = &[
+        0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 124, 2, 1, 0, 3, 2, 1, 0, 7, 8, 1, 4, 109,
+        97, 105, 110, 0, 0, 10, 18, 1, 16, 0, 65, 1, 4, 64, 11, 65, 1, 183, 154, 26, 65, 2, 183,
+        15, 11,
+    ];
     validate(LEGACY);
+    validate(ENABLED);
     let mut compiler = Compiler::new();
     for source in [
         "fn main() -> number { if true {} -1; return 2; }",
         "fn main() -> number { if true {}\n-1; return 2; }",
         "fn main() -> number { if true {} /* boundary */ -1; return 2; }",
     ] {
+        let program = compiler.analyze(source).unwrap();
+        assert_eq!(was_compiler::codegen::compile(&program).unwrap(), LEGACY);
         for level in LEVELS {
             compiler.set_optimization_level(level);
-            assert_eq!(
-                compiler.compile_source(source).unwrap(),
-                LEGACY,
-                "{source}, {level:?}"
-            );
+            let bytes = compiler.compile_source(source).unwrap();
+            validate(&bytes);
+            let expected = if level == OptimizationLevel::None {
+                LEGACY
+            } else {
+                ENABLED
+            };
+            assert_eq!(bytes, expected, "{source}, {level:?}");
+            assert_eq!(compiler.compile_source(source).unwrap(), bytes);
+            assert_eq!(compiler.compile(&program).unwrap(), bytes);
+            assert_eq!(compiler.analyze(source).unwrap(), program);
         }
     }
 }

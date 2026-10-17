@@ -32,14 +32,16 @@ fn scalar_parameters_locals_and_mutations_emit_dense_slots_at_all_optimization_l
 
         assert_eq!(program, original);
         assert_eq!(compiler.compile_source(source).unwrap(), bytes);
+        if level == OptimizationLevel::None {
+            assert_eq!(compile(&program).unwrap(), bytes);
+        }
         assert_eq!(
             module.signatures,
             vec![(vec![ValType::F64, ValType::I32], vec![ValType::F64])],
         );
         assert_eq!(module.locals, vec![vec![ValType::F64, ValType::I32]]);
-        assert_eq!(
-            module.bodies,
-            vec![vec![
+        let expected = if level == OptimizationLevel::None {
+            vec![
                 LocalGet(0),
                 F64Const(2.0),
                 F64Mul,
@@ -62,14 +64,49 @@ fn scalar_parameters_locals_and_mutations_emit_dense_slots_at_all_optimization_l
                 LocalGet(2),
                 Return,
                 End,
-            ]],
-            "optimization level {level:?}",
+            ]
+        } else {
+            vec![
+                LocalGet(0),
+                I32Const(2),
+                Runtime("F64ConvertI32S".into()),
+                F64Mul,
+                I32Const(1),
+                Runtime("F64ConvertI32S".into()),
+                F64Add,
+                LocalSet(2),
+                LocalGet(1),
+                LocalSet(3),
+                LocalGet(2),
+                I32Const(3),
+                Runtime("F64ConvertI32S".into()),
+                F64Sub,
+                LocalSet(0),
+                I32Const(0),
+                LocalSet(3),
+                LocalGet(0),
+                F64Neg,
+                I32Const(2),
+                Runtime("F64ConvertI32S".into()),
+                F64Div,
+                LocalSet(2),
+                LocalGet(2),
+                Return,
+                End,
+            ]
+        };
+        assert_eq!(
+            module.bodies,
+            vec![expected],
+            "optimization level {level:?}"
         );
 
-        if let Some(expected) = &expected_bytes {
-            assert_eq!(&bytes, expected, "optimization level {level:?}");
-        } else {
-            expected_bytes = Some(bytes);
+        if level != OptimizationLevel::None {
+            if let Some(expected) = &expected_bytes {
+                assert_eq!(&bytes, expected, "optimization level {level:?}");
+            } else {
+                expected_bytes = Some(bytes);
+            }
         }
     }
 }

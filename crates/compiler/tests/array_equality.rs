@@ -70,7 +70,7 @@ fn compile(compiler: &Compiler, source: &str) -> Vec<u8> {
 
 #[test]
 fn array_equality_validates_and_is_deterministic_without_mutating_typed_input() {
-    let mut expected = None;
+    let expected_program = compiler(OptimizationLevel::None).analyze(SOURCE).unwrap();
     for level in LEVELS {
         let compiler = compiler(level);
         let program = compiler.analyze(SOURCE).unwrap();
@@ -79,11 +79,7 @@ fn array_equality_validates_and_is_deterministic_without_mutating_typed_input() 
         assert_eq!(compiler.compile(&program).unwrap(), bytes);
         assert_eq!(compiler.compile_source(SOURCE).unwrap(), bytes);
         assert_eq!(program, original);
-        if let Some(expected) = &expected {
-            assert_eq!(&bytes, expected, "level {level:?}");
-        } else {
-            expected = Some(bytes);
-        }
+        assert_eq!(program, expected_program, "level {level:?}");
     }
 }
 

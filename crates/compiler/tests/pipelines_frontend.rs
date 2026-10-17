@@ -709,7 +709,17 @@ fn inferred_forward_nested_chains_and_diamonds_keep_source_order() {
         OptimizationLevel::Aggressive,
     ] {
         compiler.set_optimization_level(level);
+        let selected_bytes = compiler.compile_source(source).unwrap();
+        wasmparser::Validator::new()
+            .validate_all(&selected_bytes)
+            .unwrap();
+        if level == OptimizationLevel::None {
+            assert_eq!(selected_bytes, baseline);
+        }
+        let baseline = selected_bytes;
         assert_eq!(compiler.compile_source(source).unwrap(), baseline);
+        assert_eq!(compiler.compile(&typed).unwrap(), baseline);
+        assert_eq!(compiler.analyze(source).unwrap(), typed);
     }
 }
 
@@ -802,7 +812,10 @@ fn pipeline_compilation_uses_owned_import_snapshot_after_registry_changes() {
     ] {
         compiler.set_optimization_level(level);
         let bytes = compiler.compile(&typed).unwrap();
-        assert_eq!(bytes, baseline);
+        if level == OptimizationLevel::None {
+            assert_eq!(bytes, baseline);
+        }
+        assert_eq!(compiler.compile(&typed).unwrap(), bytes);
         wasmparser::Validator::new().validate_all(&bytes).unwrap();
         let mut imports = Vec::new();
         for payload in wasmparser::Parser::new(0).parse_all(&bytes) {
