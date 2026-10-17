@@ -11,6 +11,10 @@ wasm-encoder.workspace = true
 name = "compiler"
 harness = false
 
+[[bench]]
+name = "integer_specialization"
+harness = false
+
 [dev-dependencies]
 divan = "0.1.21"
 wasmparser.workspace = true

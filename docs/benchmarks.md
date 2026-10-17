@@ -321,3 +321,152 @@ and controlled repeated measurements. Allocation removal can alter observable
 allocator positions, memory capacity and OOM/effect order; those are contract
 questions, not incidental cleanup. No heap rewind, reclamation, general legacy
 helper pruning or unchecked consumed-value fast path is authorized here.
+
+## Issue #38: integer-specialization baseline and comparison
+
+**Status:** Integrated baseline harness for 27 workloads and four presets.
+No production specialization is implemented by #38. See
+[proof, preset and release contracts](integer-specialization.md)
+and [the scheduling exception](was_language_extensions_plan.md#issue-38--proven-integer-specialization-baseline-exception).
+All levels currently remain identical no-ops; `None` is the default byte baseline.
+
+### Separate harness and timing boundaries
+
+The shared corpus is `tests/support/integer_corpus.rs`, the Node verifier
+and timing harness is `tests/support/integer_measure.cjs`, and the compiler-owned
+integration target is `crates/compiler/tests/integer_baselines.rs`. The new
+`crates/compiler/benches/integer_specialization.rs` is a **separate Divan target**
+using existing tooling. It does not extend or reinterpret the original 45-case
+`compiler` benchmark or change its default-option baseline. Historical #37 M0/M4
+inputs, outputs, allocation observations and timing protocols remain historical;
+their 8-warmup/20-by-4 guest protocol is not replaced by this one.
+
+| Observation | Timing / comparison boundary |
+| --- | --- |
+| Compilation cost | Separate typed-program and source-to-Wasm measurements through public APIs; prerequisite inputs outside timing, fresh compiler construction/host registration and output destruction inside timing, inputs/outputs black-boxed. Corpus generation and validation remain outside timing. |
+| Module size | Exact emitted Wasm byte length and module hash recorded outside timing, matched by workload and preset; not WAT length or an instruction-count proxy. |
+| Guest execution | 128 warmup calls on a separate warm instance, then 20 samples of 64 calls with a fresh instance per sample and shared compiled module/JIT state. Timer includes guest work, JS/Wasm calls, batch-loop overhead and host JS mark bookkeeping for `effects`. Raw samples are nanoseconds per main call, not batch durations. |
+| Correctness / trap controls | Independent assertions, expected effects and expected traps outside timing. Trapping controls are verify-only and receive no guest-time result. |
+
+Guest timing excludes source generation, compiler execution, Node startup, Wasm
+module compilation, instantiation, warmup, assertions, hashing and reporting.
+Runtime flags are recorded so matched runs use the same conditions. Warmup is
+finite, not proof of settled JIT tiering. Correctness assertions are outside timing;
+the guest's host calls and JS effect-array pushes remain inside timing for `effects`.
+There are 26 timed workloads per guest run; `trap_order` is verify-only. The
+[independent oracle and corpus table](integer-specialization.md#workloads-and-correctness-evidence)
+define results, special inputs and effect/trap expectations. All modules declare
+`env.mark: number -> number` and `main(x: number) -> number`, even when the import
+or argument is unused. Retain bounded workloads and subprocess deadlines, not an
+unbounded guest benchmark. No new dependencies, production instrumentation or
+automatic installation is needed.
+
+### Reproduction commands
+
+Prerequisites are cached Rust dependencies, Node.js 24+ and Python 3 with only its
+standard library for the recorder. Nothing is installed or fetched. Run from the
+repository root with a **new** directory under `docs/benchmarks`; the recorder
+rejects another working directory and any existing output directory, even empty:
+
+```sh
+python tests/support/record_integer_baseline.py docs/benchmarks/NEW-DIRECTORY
+```
+
+[`record_integer_baseline.py`](../tests/support/record_integer_baseline.py) records
+commands/environment, revision/status and source/production hashes before and
+after the run. It runs correctness and all-preset verification first, then two
+compiler runs and two guest runs sequentially, with 120-second command deadlines.
+It preserves raw output and failure metadata, checks input stability, and generates
+`summary.md` / `summary.json` only after validating the run records and current
+cross-preset source/module identity. The Node subprocess retains its 60-second
+bound; neither deadline is guest fuel or process-tree cancellation.
+
+Recorder safety/parsing/summary tests are available without measurements:
+
+```sh
+python tests/support/record_integer_baseline.py --self-test
+```
+
+Direct component commands, run sequentially:
+
+```sh
+cargo test --offline -p was-compiler --test integer_baselines
+cargo test --offline -p was-compiler --test integer_baselines execute_integer_workloads -- --ignored --exact
+cargo test --offline -p was-compiler --test integer_baselines record_integer_guest_timing -- --ignored --exact --nocapture --test-threads=1
+cargo bench --offline -p was-compiler --bench integer_specialization -- --sample-count 100 --sample-size 1 --timer os --color never
+```
+
+`INTEGER_BASELINE_LEVEL` selects `None` (default), `Basic`, `Standard` or
+`Aggressive` for both compiler benchmarks and guest timing. For example, prefix a
+direct command with `INTEGER_BASELINE_LEVEL=Basic` in a compatible shell, or set
+that environment variable before invoking the recorder. Verification always
+executes all four presets, independent of this measurement selection.
+
+When recording manually, run the Divan timing command twice and repeat the guest
+recording command twice, not concurrently. Preserve both complete runs and raw
+samples rather than only selected medians. Default tests skip the ignored execution/recording cases;
+default Cargo success alone does not establish guest coverage. Report missing
+prerequisites or failed commands without installing tools or inventing evidence.
+
+### Recorded baseline — 2026-10-17
+
+The baseline uses `None` on Windows 11 (OS build 10.0.26300), Intel Core Ultra 5
+125H, rustc/Cargo 1.98.0, and Node 24.12.0 / V8 13.6.233.17-node.37. The work was
+uncommitted atop `2889396f3f5f4878f7818e2946d56ba9fa62dde5`; revision/status logs and
+before/after manifests identify the exact measured sources. All recording commands
+succeeded and measured inputs remained unchanged. Verification checked 108
+workload/preset pairs; source/module identities match all presets and both runs.
+
+Representative medians below preserve the two runs separately. Compiler columns
+are microseconds per compilation; guest columns are nanoseconds per main call.
+Complete results, spread and raw guest samples are in the adjacent evidence files.
+
+| Workload | Module bytes | Source compile µs (1 / 2) | Typed compile µs (1 / 2) | Guest ns (1 / 2) |
+| --- | ---: | ---: | ---: | ---: |
+| `literal_32` | 1156 | 146.3 / 155.7 | 28.64 / 60.84 | 95.3125 / 90.625 |
+| `locals_32` | 1828 | 330.5 / 523.7 | 77.49 / 99.64 | 164.0625 / 121.09375 |
+| `compare_32` | 4164 | 922.9 / 1515 | 139.8 / 297.9 | 403.90625 / 379.6875 |
+| `negate_32` | 1668 | 296.6 / 617.9 | 68.69 / 141.9 | 166.40625 / 125 |
+| `loop_local` | 1208 | 37.29 / 80.49 | 36.99 / 28.79 | 408.59375 / 296.875 |
+
+These are usable byte/workload baselines and initial timing observations, **not a
+stable performance budget**. Power, thermals and background activity were not
+controlled. Compilation and guest timings both show run-to-run variation; small
+scalar cases include substantial JS/Wasm call and timer overhead. V8 may optimize
+constant guest expressions independently of compiler lowering, and finite warmup
+does not establish steady-state tiering. A future comparison must remeasure matched
+`None` and enabled runs on the same machine, preferably interleaving paired runs
+under controlled conditions and increasing sampling when spread obscures a result.
+These measurements alone cannot establish a benefit, regression, or release decision
+for a pass that does not yet exist.
+
+### Evidence and future matched comparison
+
+Consult the [summary](benchmarks/integer-specialization/summary.md) and
+[environment](benchmarks/integer-specialization/environment.json) for recorded
+results under `docs/benchmarks/integer-specialization/`. The recorder writes
+`hashes-before.json`, `hashes-after.json`, `stability.json`, command metadata and
+raw `.txt` outputs, including `compiler-1/2` and `guest-1/2`. Node records include
+CPU/OS, Node/V8, flags, source/module sizes and hashes, and raw per-call samples;
+separate logs preserve Rust/Cargo versions and revision/dirty-tree identity.
+The summary reports guest medians and byte/hash identity, leaving complete
+compiler output unparsed. Power/thermal/background activity is uncontrolled;
+interpret sampling spread rather than attributing all variation to compiler code.
+This procedure itself asserts no baseline numbers or enabled-pass benefit.
+
+Before transformations, record the unoptimized baseline and confirm current
+cross-level byte parity. After separately authorized implementation, compare
+matched `None` versus enabled presets using identical workloads and measurement
+boundaries, machine, toolchains and runtime. Record any implementation revision
+change; rerun matched pairs if harness inputs change. Cross-machine or historical
+M0/M4 timings are not attributable integer-specialization comparisons. Compare
+all presets against independent expected behavior, with current-source rebuilt
+browser byte parity checked within each level, not byte identity across future
+optimized and unoptimized levels.
+
+Release needs demonstrated size **or** guest-time benefit, reported compilation
+trade-offs, and explicit user acceptance of material regressions. Integer opcode
+counts alone are insufficient, and no percentage threshold is invented in advance.
+Inconclusive or regression-only evidence remains experimental pending a decision;
+it does not establish release success or justify changing the default. Correctness,
+diagnostics and adapter parity gates remain separate mandatory evidence.

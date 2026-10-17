@@ -1,0 +1,16 @@
+{
+  "utc": "2026-10-17T11:31:45.234592+00:00",
+  "recorder_command": [
+    "tests/support/record_integer_baseline.py",
+    "docs/benchmarks/integer-specialization"
+  ],
+  "cwd": "C:\\Users\\luanr\\Documents\\Jobs\\rust\\was-compiler",
+  "level": "None",
+  "level_environment_input": null,
+  "python": "3.13.14 (tags/v3.13.14:fd17997, Jun 10 2026, 13:03:48) [MSC v.1944 64 bit (AMD64)]",
+  "notes": "Current presets are identical no-ops. These baseline observations make no enabled optimization benefit or release-validation claim. Power, thermal state and background activity are uncontrolled. Compiler timings and guest timings are separate; complete compiler output is retained without parsing.",
+  "environment_overrides": {
+    "INTEGER_BASELINE_LEVEL": "None",
+    "CARGO_NET_OFFLINE": "true"
+  }
+}

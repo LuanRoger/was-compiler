@@ -1,0 +1,12 @@
+{
+  "command": [
+    "cargo",
+    "--version"
+  ],
+  "utc_started": "2026-10-17T11:31:45.523898+00:00",
+  "timeout_seconds": 120,
+  "exit_code": 0,
+  "timed_out": false,
+  "output": "cargo.txt",
+  "utc_finished": "2026-10-17T11:31:45.618342+00:00"
+}

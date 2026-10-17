@@ -32,6 +32,7 @@ execution engine. Host registration declares imports; it does not install callba
 | [Compilation roadmap](docs/compilation-roadmap.md) | Architecture, milestones, acceptance criteria |
 | [Memory ABI](docs/memory-abi.md) | Authoritative descriptor, allocation, ownership, and host contract |
 | [Typed arrays #37](docs/typed-arrays.md) | Contextual typing, Rust migration, consumed validation, adapter copy contract and final release evidence |
+| [Integer specialization #38](docs/integer-specialization.md) | Baseline/proof contracts, narrow scheduling exception, future preset parity and measurement gates |
 | [Limitations](docs/limitations.md) | Implemented restrictions versus possible alternatives |
 | [Runtime integration](docs/runtime-integration.md) | CLI, raw execution, imports, explicit marshaling |
 | [Browser guide](docs/browser.md) | Compiler-in-Wasm API, packaging, playground integration |
@@ -143,7 +144,11 @@ pipeline and is not authoritative for the Rust compiler's language behavior.
   arbitrary malformed tree produces a recoverable error.
 - Keep `CompilerOptions` small and `Copy`; owned `ExportOptions` stays separate.
   Optimization levels `None`, `Basic`, `Standard`, and `Aggressive` currently have
-  identical output and diagnostics. Do not add optimization as incidental cleanup.
+  identical output and diagnostics; `None` remains default and the byte baseline.
+  Before changing numeric representation, preset parity, or integer benchmarks,
+  read [the #38 contracts](docs/integer-specialization.md). Its narrow scope may
+  precede WP12, but production implementation still needs separate authorization;
+  it does not authorize general WP13 or optimization as incidental cleanup.
 
 ## Current language support
 

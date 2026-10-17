@@ -24,6 +24,24 @@ release manifest. See [contracts, Rust migration and release evidence](typed-arr
 Earlier milestone/extension records below retain their historical scope.
 This work adds neither reclamation nor optimization transformations.
 
+## Proven integer specialization baseline (#38)
+
+[The integer-specialization contract](integer-specialization.md) establishes the
+first pass's proof scope and baseline gates before production changes. This is a
+narrow scheduling exception ahead of WP12, not authorization for general WP13.
+Only proven signed-i32 literals/reads, addition/subtraction, comparisons, restricted
+negation and never-reassigned uncaptured ordinary locals (including loop-local
+bindings) are in scope; language types, public AST and ABI remain unchanged.
+
+All levels currently remain identical no-ops. `None` stays default and preserves
+baseline bytes. A separately authorized implementation would give `Basic`,
+`Standard`, and `Aggressive` the same initial pass, preserving semantics/diagnostics
+across levels and library/CLI/browser byte parity within each level. See the
+[measurement procedure](benchmarks.md#issue-38-integer-specialization-baseline-and-comparison)
+for the integrated harness, matched comparisons and release gates, and the
+[baseline summary](benchmarks/integer-specialization/summary.md) for recorded evidence.
+No implementation or performance benefit is claimed by this baseline work.
+
 ## Pipeline and ownership
 
 ```text

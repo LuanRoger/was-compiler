@@ -1,0 +1,10 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.19s
+     Running tests\integer_baselines.rs (target\debug\deps\integer_baselines-34a34b31e1051676.exe)
+
+running 3 tests
+test execute_integer_workloads ... ignored, requires Node.js 24+ on PATH
+test integer_workloads_preserve_the_unoptimized_public_compilation_contract ... ok
+test record_integer_guest_timing ... ignored, manual bounded baseline; requires Node.js 24+
+
+test result: ok. 1 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.12s
+

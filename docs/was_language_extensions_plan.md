@@ -9,6 +9,11 @@ Use [current validation](validation.md) for package selection and rebuild comman
 [the roadmap](compilation-roadmap.md#structure) lists current source locations.
 
 **Status:** WP1–WP9 implemented; WP5, WP6 (#13), WP7 (#16), and WP8 release gates passed (exact evidence in §5). WP9 frontend/backend are integrated and [release gates passed](#wp9-release-validation). WP10 named-only pipelines, including positional/named/default binding and final-Void discard support (#27), are implemented with [release gates passed](#wp10-release-validation). WP11's local callable (#29), immediate-creator shared parameter/let capture (#30), captured numeric compound (#31), and nested capture/live callable-context forwarding (#32) subsets are implemented in the frontend/backend; [#32 validation passed](local-callable-interface.md#issue-32-validation-2026-10-14); [#31 validation passed](local-callable-interface.md#issue-31-validation-2026-10-14); [#30 subset validation passed](local-callable-interface.md#issue-30-validation-2026-10-14). #33 implements [read-only iteration captures](local-callable-interface.md#implemented-read-only-iteration-captures-33) ([validation passed](local-callable-interface.md#issue-33-validation-2026-10-15)); nested read-only range/array captures and transitive live callable contexts compose with captured compounds and invocation-local lifetime behavior (#34). WP11 is implemented; full native/browser [release gates passed on 2026-10-15](local-callable-interface.md#issue-35-wp11-release-validation-2026-10-15) under #35. Earlier subset evidence retains its historical scope. WP12 remains deferred and unauthorized; WP13 requires separate authorization.
+**Narrow scheduling exception (#38):** [Proven integer specialization](integer-specialization.md)
+may precede WP12 within its agreed scope; #38 establishes contracts and measurements
+only. Production implementation needs separate authorization. General WP13 remains
+unauthorized and all current presets remain identical no-ops.
+
 **Baseline:** Extension specification v0.3.
 
 Follow the [agent guide](../AGENTS.md), [extension specification](was_language_extensions_spec.md),
@@ -65,8 +70,13 @@ Evidence: `src/lexer.rs`, `src/parser.rs`, `src/semantic.rs`, `src/codegen/numer
 - Keep `number = f64`, canonical boolean boundaries, string/array descriptors,
   shared mutable arrays, allocation lifetime, mandatory memory exports, and the
   default export-all policy. `--export` and browser `setExports` already exist.
-- Through WP12, all four optimization levels retain identical output and diagnostics.
-  No new implicit imports, start function, general callable ABI, or execution engine.
+- All four optimization levels currently retain identical no-op output and diagnostics.
+  The [#38 exception](#issue-38--proven-integer-specialization-baseline-exception)
+  replaces the blanket through-WP12 scheduling restriction only for its narrow scope.
+  Future separately authorized specialization preserves semantic/diagnostic parity
+  across levels and adapter byte parity within each level; `None` remains default
+  and the byte baseline. No new implicit imports, start function, general callable
+  ABI, or execution engine.
 - Old-source Wasm fixtures must remain unchanged unless an explicit contract decision
   justifies a difference. Never regenerate goldens to conceal incidental drift.
 
@@ -116,7 +126,7 @@ These paths exist today; ownership denotes responsibility, not mandatory edits f
 | `browser/src/lib.rs`, `tests/browser.rs`, `tests/browser.cjs` | Browser registration/configuration/diagnostics and emitted-module execution |
 | `src/diagnostic.rs`, `tests/diagnostics.rs` | Exhaustive span extraction/delegation and shared native/browser rendering |
 | `tests/support/process.rs`, `tests/runtime.rs`, `runtime/abi.cjs` | Bounded subprocesses, lifetime/view refresh, unchanged explicit marshaling |
-| `src/optimization.rs` | Existing no-op boundary through correctness work; WP13 only |
+| `src/optimization.rs` | Existing no-op orchestration boundary; #38 establishes a narrow future policy contract, not production implementation; general WP13 remains separately gated |
 | `README.md`, `docs/`, `AGENTS.md` | Supported-versus-proposed status, contracts, restrictions and validation workflow |
 
 **Implemented WP5 module:** `src/codegen/range.rs` owns range discovery,
@@ -185,7 +195,8 @@ Use existing dependencies and sequential planning; no new dependencies or thread
 Deliver WP1 → WP2 → WP3 → WP4 → WP5 in exactly this order. WP6–WP12 retain ordered
 integration and release gates, but development may overlap after the relevant shared
 interface gate. WP13 is separately authorized performance work, not prerequisite
-correctness infrastructure. Every package also inherits the common gates.
+correctness infrastructure. The narrow [#38 baseline exception](#issue-38--proven-integer-specialization-baseline-exception)
+may precede WP12 without opening general WP13. Every package also inherits the common gates.
 
 ### Parallel development and ownership
 
@@ -1162,6 +1173,40 @@ WP11 excludes immediate invocation, first-class callable values and callable
 pipeline stages. WP12 placeholders/stages, reclamation and separately authorized
 WP13 optimization are outside its release contract.
 
+### Issue #38 — Proven integer specialization baseline exception
+
+**Status:** Contracts and baseline measurements before any production transformation.
+This narrow numeric scope may precede deferred WP12; it does not authorize WP12,
+general WP13, or production implementation without separate approval. All current
+presets remain identical no-ops. [The maintained contract](integer-specialization.md)
+records the agreed scope and requires final user confirmation of the complete
+design before compiler implementation.
+
+**Scope:** Proven signed-i32 literal/read/add/sub/comparison/restricted-negation
+expressions and never-reassigned uncaptured ordinary locals, including loop-local
+bindings. Conservative bounds and negative-zero facts determine eligibility;
+negation excludes zero and i32 minimum. Unknown/unsupported values stay f64;
+branch/caller/contract refinement and constant folding are excluded. Public AST,
+language types, ABI, array elements, captured cells and range records stay unchanged.
+
+**Baseline exit:** Bounded workloads with independent expected results/effects/traps,
+negative controls, reproducible separate compilation/size/guest measurements and
+repeated raw evidence. The integrated harness covers 27 workloads across four
+presets, with independent execution expectations and a separate Divan target.
+The stdlib-only recorder writes evidence under `docs/benchmarks/integer-specialization/`;
+consult its [summary](benchmarks/integer-specialization/summary.md) for recorded results.
+Commands and isolation are in [benchmarks](benchmarks.md#issue-38-integer-specialization-baseline-and-comparison).
+Historical compiler/M0/M4 measurement boundaries remain unchanged.
+
+**Future implementation/release gate:** Separate authorization, checked forged-tree
+and unreachable/skipped-child coverage, decoded representation checks and differential
+execution. `None` remains default and preserves baseline bytes; `Basic`, `Standard`,
+and `Aggressive` receive the same initial pass. Require semantic/diagnostic parity
+across levels and library/CLI/current-source browser byte parity within each level.
+Matched baseline-versus-enabled measurements must demonstrate size or guest-time
+benefit, report compilation trade-offs and obtain explicit user acceptance of
+material regressions. Inconclusive or regression-only evidence remains experimental.
+
 ### WP12 — Placeholder sugar and closure pipeline stages (spec §§11–12)
 
 **Status:** Deferred; implementation is not authorized. WP11's release satisfies
@@ -1181,7 +1226,11 @@ once-only effects. No claim of general `map`/`filter` or pipeline fusion support
 
 ### WP13 — Benchmark-gated optimization, separate authorization (spec §17)
 
-**Status:** Not authorized; WP11's release does not authorize optimizer work.
+**Status:** General WP13 is not authorized; WP11's release does not authorize it.
+The [#38 exception](#issue-38--proven-integer-specialization-baseline-exception)
+permits only its narrow numeric scheduling scope ahead of WP12, with baseline work
+before separately authorized implementation; it does not waive the gates below
+for other transformations.
 
 **Entry:** WP1–WP12 correctness exits and explicit agreement on optimizer contracts.
 First measure compile time, binary size, instantiation/call/steady-state time and
@@ -1194,7 +1243,8 @@ allocation/trap order and checks of invalid public trees. No algebraic f64 rewri
 Invalid constant ranges may lower to traps at their original positions, not static
 errors. General collection fusion requires a separately specified intrinsic API.
 **Exit:** independent differential results/effects/traps plus benchmarks justify the
-change. Until approval, exact optimization-level parity remains required. Approved
+change. Until implementation approval, exact optimization-level parity remains
+required; #38 documents the future narrow pass's parity contract, not changed output. Approved
 passes may change optimized bytes only under a documented new parity contract;
 retain semantic/diagnostic equivalence and the unoptimized compatibility baseline.
 

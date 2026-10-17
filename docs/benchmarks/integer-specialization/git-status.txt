@@ -1,0 +1,14 @@
+ M AGENTS.md
+ M GLOSSARY.md
+ M crates/compiler/Cargo.toml
+ M docs/benchmarks.md
+ M docs/compilation-roadmap.md
+ M docs/was_language_extensions_plan.md
+?? crates/compiler/benches/integer_specialization.rs
+?? crates/compiler/tests/integer_baselines.rs
+?? docs/adr/0007-proven-integer-specialization.md
+?? docs/benchmarks/integer-specialization/
+?? docs/integer-specialization.md
+?? tests/support/integer_corpus.rs
+?? tests/support/integer_measure.cjs
+?? tests/support/record_integer_baseline.py
